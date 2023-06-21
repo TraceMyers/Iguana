@@ -550,6 +550,15 @@ pub const Vec3 = struct {
         return self.x * self.x + self.y * self.y + self.z * self.z;
     }
 
+    pub inline fn size2d(self: Vec3) f32 {
+        return @sqrt(self.x * self.x + self.y * self.y);
+    }
+
+    pub inline fn sizeSq2d(self: Vec3) f32 {
+        return self.x * self.x + self.y * self.y;
+    }
+
+
     // -------------------------------------------------------------------------------------------------------- distance
 
     pub inline fn dist(self: Vec3, other: Vec3) f32 {
