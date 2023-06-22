@@ -1,4 +1,7 @@
 
+pub fn whatever() void {
+}
+
 pub fn main() !void {
     try mem6.perfMicroRun();
 }

@@ -4,43 +4,52 @@
 
 // Usage:
 // {
-//      const scope_timer_var = ScopeTimer(0, "Scope Name").start();
+//      var scope_timer_var = ScopeTimer().start(getScopeTimerID(), "Scope Name");
 //      defer scope_timer_var.stop();
 //      .. code you want to benchmark
 // }
 //
-// After creating any new scope timer, run timerid.py with python to automatically replace the passed-in id (the zero)
-// with a unique id. this should ensure that each timer has a unique id. In practice, you can put any number inside
-// the parentheses and it will likely be changed. I will be working this into the build process to be handled
-// automatically per some build args.
-//
 // Names are limited to 63 characters.
 //
 // At the end of the program (or whenever you're interested in the times), call printAllScopeTimers().
-//
+
+pub inline fn getScopeTimerID() usize {
+    const LocalID = struct {
+        var id: i32 = -1;
+    };
+    if (LocalID.id == -1) {
+        LocalID.id = scopeTimerIDCounter();
+    }
+    return @intCast(usize, LocalID.id);
+}
+
+fn scopeTimerIDCounter() i32 {
+    const Counter = struct {
+        var ctr: i32 = -1;
+    };
+    Counter.ctr += 1;
+    return Counter.ctr;
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- public
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub fn ScopeTimer(comptime in_idx: usize, comptime in_name: []const u8) type {
-    return struct {
-        const Self = @This();
-        idx: usize = undefined,
-        start: u64 = undefined,
+pub const ScopeTimer = struct {
+    idx: usize = undefined,
+    start: u64 = undefined,
 
-        pub fn start() Self {
-            addTimer(in_idx, in_name);
-            var start_inst = time.Instant.now() catch time.Instant{.timestamp=0};
-            return Self{.idx=in_idx, .start=start_inst.timestamp};
-        }
+    pub inline fn start(comptime in_name: []const u8, in_idx: usize) ScopeTimer {
+        addTimer(in_idx, in_name);
+        var start_inst = time.Instant.now() catch time.Instant{.timestamp=0};
+        return ScopeTimer{.idx=in_idx, .start=start_inst.timestamp};
+    }
 
-        pub fn stop(self: Self) void {
-            var end_inst = time.Instant.now() catch time.Instant{.timestamp=self.start};
-            logEndTime(self.idx, end_inst.timestamp - self.start);
-        }
-    };
-}
+    pub inline fn stop(self: *ScopeTimer) void {
+        var end_inst = time.Instant.now() catch time.Instant{.timestamp=self.start};
+        logEndTime(self.idx, end_inst.timestamp - self.start);
+    }
+};
 
 pub fn printAllScopeTimers() void {
     for (0..timers.count()) |idx| {
@@ -159,8 +168,8 @@ fn fibonacci(x: u64) u64 {
 fn doStuff() void {
     var rand = RandGen.init(0);
 
-    const d = ScopeTimer(3, "d").start(); defer d.stop();
-    const e = ScopeTimer(4, "e").start(); defer e.stop();
+    var d = ScopeTimer.start("d", 3); defer d.stop();
+    var e = ScopeTimer.start("e", 4); defer e.stop();
     for (0..100) |i| {
         _ = i;
         var random_number = @mod(rand.random().int(u64), 64);
@@ -177,9 +186,9 @@ test "multi scope test" {
 
     for (0..100) |j| {
         _ = j;
-        const a = ScopeTimer(0, "a").start(); defer a.stop();
-        const b = ScopeTimer(1, "b").start(); defer b.stop();
-        const c = ScopeTimer(2, "c").start(); defer c.stop();
+        var a = ScopeTimer.start("a", 0); defer a.stop();
+        var b = ScopeTimer.start("b", 1); defer b.stop();
+        var c = ScopeTimer.start("c", 2); defer c.stop();
         for (0..100) |i| {
             _ = i;
             var random_number = @mod(rand.random().int(u64), 64);

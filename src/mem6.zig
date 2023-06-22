@@ -411,6 +411,7 @@ const mem = std.mem;
 const expect = std.testing.expect;
 const benchmark = @import("benchmark.zig");
 const ScopeTimer = benchmark.ScopeTimer;
+const getScopeTimerID = benchmark.getScopeTimerID;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- test
@@ -554,10 +555,10 @@ test "Small Allocation Multi-Page" {
 }
 
 pub fn perfMicroRun () !void {
-
     try startup();
     for (0..100_000) |i| {
-        const t = ScopeTimer(0, "m6 small alloc/free x5").start(); defer t.stop();
+        var t = ScopeTimer.start("m6 small alloc/free x5", getScopeTimerID());
+        defer t.stop();
         _ = i;
         var testalloc = try alloc(u8, 4);
         try free(&testalloc);
@@ -574,13 +575,15 @@ pub fn perfMicroRun () !void {
     var allocations: [100_000][]u8 = undefined;
 
     {
-        const t = ScopeTimer(1, "m6 small alloc 100k").start(); defer t.stop();
+        var t = ScopeTimer.start("m6 small alloc 100k", getScopeTimerID());
+        defer t.stop();
         for (0..100_000) |i| {
             allocations[i] = try alloc(u8, 16);
         }
     }
     {
-        const t = ScopeTimer(2, "m6 small free 100k").start(); defer t.stop();
+        var t = ScopeTimer.start("m6 small free 100k", getScopeTimerID());
+        defer t.stop();
         for (0..100_000) |i| {
             try free(&allocations[i]);
         }
@@ -595,8 +598,8 @@ pub fn perfMicroRun () !void {
     }
 
     for (0..100_000) |i| {
-        const t = ScopeTimer(3, "gpa small alloc/free x5").start(); defer t.stop();
         _ = i;
+        var t = ScopeTimer.start("gpa small alloc/free x5", getScopeTimerID()); defer t.stop();
         var testalloc = try gpa_allocator.alloc(u8, 4);
         gpa_allocator.free(testalloc);
         testalloc = try gpa_allocator.alloc(u8, 8);
@@ -610,13 +613,13 @@ pub fn perfMicroRun () !void {
     }
 
     {
-        const t = ScopeTimer(4, "gpa small alloc 100k").start(); defer t.stop();
+        var t = ScopeTimer.start("gpa small alloc 100k", getScopeTimerID()); defer t.stop();
         for (0..100_000) |i| {
             allocations[i] = try gpa_allocator.alloc(u8, 16);
         }
     }
     {
-        const t = ScopeTimer(5, "gpa small free 100k").start(); defer t.stop();
+        var t = ScopeTimer.start("gpa small free 100k", getScopeTimerID()); defer t.stop();
         for (0..100_000) |i| {
             gpa_allocator.free(allocations[i]);
         }
