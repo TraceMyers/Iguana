@@ -1,5 +1,5 @@
-// :::::::::::::::::: For easy scope-based benchmarking. For now, meant to be used with scripts/timerid.py to set the
-// ::: ScopeTimer ::: timer ids. Usage assumes python 3.x is installed and python.exe is in your environment variables.
+// :::::::::::::::::: For easy scope-based benchmarking. 
+// ::: ScopeTimer ::: 
 // ::::::::::::::::::
 
 // Usage:
