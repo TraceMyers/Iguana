@@ -12,7 +12,21 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    exe.addIncludePath("D:/programs/zig-windows-x86_64-0.11.0-dev.3105+e46d7a369.lib/libc/include/any-windows-any");
+
+    exe.linkLibC();
+
+    exe.addLibraryPath("D:/libs/glfw-3.3.8.bin.WIN64/lib-mingw-w64");
+    exe.linkSystemLibraryName("glfw3");
+
+    exe.addLibraryPath("D:/libs/VulkanSDK/1.3.243.0/Lib");
+    exe.linkSystemLibrary("vulkan-1");
+
+    exe.addLibraryPath("C:/Windows/System32");
+    exe.linkSystemLibrary("gdi32");
+
     b.installArtifact(exe);
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
 

@@ -1,9 +1,18 @@
-
-pub fn whatever() void {
-}
-
 pub fn main() !void {
-    try mem6.perfMicroRun();
+
+    try window.init(512, 512, "yay");
+    try vk.init();
+
+    var should_run: bool = true;
+    while (should_run) {
+
+        window.pollEvents();
+        if (window.shouldClose()) {
+            should_run = false;
+        }
+    }
+
+    window.cleanup();
 }
 
 const std = @import("std");
@@ -20,3 +29,5 @@ const linalg = @import("linalg.zig");
 const Vec2 = linalg.Vec2;
 const Vec3 = linalg.Vec3;
 const Plane = linalg.Plane;
+const window = @import("window.zig");
+const vk = @import("vkinterface.zig");
