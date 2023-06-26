@@ -1,18 +1,18 @@
 pub fn main() !void {
 
+    defer window.cleanup();
     try window.init(512, 512, "yay");
+
+    defer vk.cleanup();
     try vk.init();
 
     var should_run: bool = true;
     while (should_run) {
-
         window.pollEvents();
         if (window.shouldClose()) {
             should_run = false;
         }
     }
-
-    window.cleanup();
 }
 
 const std = @import("std");

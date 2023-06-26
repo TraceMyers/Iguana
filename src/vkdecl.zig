@@ -3,7 +3,7 @@
 // #define GLFW_INCLUDE_VULKAN
 // #include <GLFW/glfw3.h>
 //
-// ... with 'zig translate-c'
+// ... and with 'zig translate-c' (thanks to andrewrk for showing this method on a livestream)
 
 pub const __builtin_bswap16 = @import("std").zig.c_builtins.__builtin_bswap16;
 pub const __builtin_bswap32 = @import("std").zig.c_builtins.__builtin_bswap32;

@@ -40,8 +40,8 @@ pub inline fn shouldClose() bool {
 }
 
 pub inline fn cleanup() void {
-    if (window) |w| {
-        vk.glfwDestroyWindow(w);
+    if (window) |win| {
+        vk.glfwDestroyWindow(win);
     }
     vk.glfwTerminate();
 }
@@ -67,3 +67,4 @@ const GLFWError = error {
 
 const vk = @import("vkdecl.zig");
 const GLFWwindow = vk.GLFWwindow;
+const print = @import("std").debug.print;
