@@ -12,10 +12,26 @@ pub fn init() !void {
     try createLogicalDevice();
     try createSwapchain();
     try createImageViews();
+    try createRenderPass();
+    try createGraphicsPipeline();
+    try createFramebuffers();
+    try createCommandPool();
+    try createCommandBuffer();
+    try createSyncObjects();
 }
 
 pub fn cleanup() void {
-
+    _ = vk.vkWaitForFences(vk_logical, 1, &in_flight_fence, vk.VK_TRUE, 4096);
+    vk.vkDestroySemaphore(vk_logical, sem_image_available, null);
+    vk.vkDestroySemaphore(vk_logical, sem_render_finished, null);
+    vk.vkDestroyFence(vk_logical, in_flight_fence, null);
+    vk.vkDestroyCommandPool(vk_logical, vk_command_pool, null);
+    for (swapchain.framebuffers.items[0..swapchain.framebuffers.count()]) |buf| {
+        vk.vkDestroyFramebuffer(vk_logical, buf, null);
+    }
+    vk.vkDestroyPipelineLayout(vk_logical, vk_pipeline_layout, null);
+    vk.vkDestroyRenderPass(vk_logical, vk_render_pass, null);
+    vk.vkDestroyPipeline(vk_logical, vk_pipeline, null);
     for (swapchain.image_views.items[0..swapchain.image_views.count()]) |view| {
         vk.vkDestroyImageView(vk_logical, view, null);
     }
@@ -24,6 +40,120 @@ pub fn cleanup() void {
     vk.vkDestroyDevice(vk_logical, null);
     vk.vkDestroySurfaceKHR(vk_instance, vk_surface, null);
     vk.vkDestroyInstance(vk_instance, null);
+}
+
+pub fn drawFrame() !void {
+    _ = vk.vkWaitForFences(vk_logical, 1, &in_flight_fence, vk.VK_TRUE, std.math.maxInt(u64));
+    _ = vk.vkResetFences(vk_logical, 1, &in_flight_fence);
+
+    var image_idx: u32 = undefined;
+    _ = vk.vkAcquireNextImageKHR(
+        vk_logical, swapchain.vk_swapchain, std.math.maxInt(u64), sem_image_available, null, &image_idx
+    );
+
+    _ = vk.vkResetCommandBuffer(vk_command_buffer, 0);
+
+    try recordCommandBuffer(vk_command_buffer, image_idx);
+
+    const wait_stage: vk.VkPipelineStageFlags = vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+    const submit_info = vk.VkSubmitInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .pNext = null,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &sem_image_available,
+        .pWaitDstStageMask = &wait_stage,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &vk_command_buffer,
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores = &sem_render_finished,
+    };
+
+    const result = vk.vkQueueSubmit(graphics_queue, 1, &submit_info, in_flight_fence);
+    if (result != VK_SUCCESS) {
+        return VkError.DrawFrame;
+    }
+
+    const present_info = vk.VkPresentInfoKHR{
+        .sType = vk.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+        .pNext = null,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &sem_render_finished,
+        .swapchainCount = 1,
+        .pSwapchains = &swapchain.vk_swapchain,
+        .pImageIndices = &image_idx,
+        .pResults = null,
+    };
+
+    _ = vk.vkQueuePresentKHR(present_queue, &present_info);
+}
+
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ------------------------------------------------------------------------------------------------------ frame-by-frame
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+fn recordCommandBuffer(command_buffer: VkCommandBuffer, image_idx: u32) !void {
+    const begin_info = vk.VkCommandBufferBeginInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .pNext = null,
+        .flags = 0,
+        .pInheritanceInfo = null,
+    };
+
+    {
+        const result = vk.vkBeginCommandBuffer(command_buffer, &begin_info);
+        if (result != VK_SUCCESS) {
+            return VkError.RecordCommandBuffer;
+        }
+    }
+
+    const clear_color = vk.VkClearValue{
+        .color = vk.VkClearColorValue{.float32 = .{0.0, 0.0, 0.0, 1.0}},
+    };
+
+    const render_begin_info = vk.VkRenderPassBeginInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+        .pNext = null,
+        .renderPass = vk_render_pass,
+        .framebuffer = swapchain.framebuffers.items[image_idx],
+        .renderArea = vk.VkRect2D { 
+            .offset = vk.VkOffset2D { .x = 0, .y = 0},
+            .extent = swapchain.extent
+        },
+        .clearValueCount = 1,
+        .pClearValues = &clear_color,
+    };
+
+    vk.vkCmdBeginRenderPass(command_buffer, &render_begin_info, vk.VK_SUBPASS_CONTENTS_INLINE);
+    vk.vkCmdBindPipeline(command_buffer, vk.VK_PIPELINE_BIND_POINT_GRAPHICS, vk_pipeline);
+
+    const viewport = vk.VkViewport{
+        .x = 0.0,
+        .y = 0.0,
+        .width = @intToFloat(f32, swapchain.extent.width),
+        .height = @intToFloat(f32, swapchain.extent.height),
+        .minDepth = 0.0,
+        .maxDepth = 1.0,
+    };
+
+    vk.vkCmdSetViewport(command_buffer, 0, 1, &viewport);
+
+    const scissor = vk.VkRect2D{
+        .offset = vk.VkOffset2D{ .x = 0, .y = 0},
+        .extent = swapchain.extent
+    };
+
+    vk.vkCmdSetScissor(command_buffer, 0, 1, &scissor);
+
+    vk.vkCmdDraw(command_buffer, 3, 1, 0, 0);
+    vk.vkCmdEndRenderPass(command_buffer);
+
+    {
+        const result = vk.vkEndCommandBuffer(command_buffer);
+        if (result != VK_SUCCESS) {
+            return VkError.RecordCommandBuffer;
+        }
+    }
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -231,7 +361,6 @@ fn createSwapchain() !void {
     var qfam_index_ct: u32 = undefined;
     var qfam_indices: [*c]u32 = undefined;
 
-    // TODO: transfer and compute queues
     if (unique_qfam_idx_ct > 1) {
         image_share_mode = vk.VK_SHARING_MODE_CONCURRENT;
         qfam_index_ct = unique_qfam_idx_ct;
@@ -318,6 +447,334 @@ fn createImageViews() !void {
         const result = vk.vkCreateImageView(vk_logical, &create_info, null, &swapchain.image_views.items[i]);
         if (result != VK_SUCCESS) {
             return VkError.CreateImageViews;
+        }
+    }
+}
+
+fn createRenderPass() !void {
+    const color_attachment = vk.VkAttachmentDescription{
+        .flags = 0,
+        .format = swapchain.image_fmt,
+        .samples = vk.VK_SAMPLE_COUNT_1_BIT,
+        .loadOp = vk.VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = vk.VK_ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp = vk.VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = vk.VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = vk.VK_IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = vk.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+    };
+
+    const color_attachment_ref = vk.VkAttachmentReference{
+        .attachment = 0,
+        .layout = vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    };
+
+    const subpass = vk.VkSubpassDescription{
+        .flags = 0,
+        .pipelineBindPoint = vk.VK_PIPELINE_BIND_POINT_GRAPHICS,
+        .inputAttachmentCount = 0,
+        .pInputAttachments = 0,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &color_attachment_ref,
+        .pResolveAttachments = null,
+        .pDepthStencilAttachment = null,
+        .preserveAttachmentCount = 0,
+        .pPreserveAttachments = null,
+    };
+
+    const dependency = vk.VkSubpassDependency{
+        .srcSubpass = vk.VK_SUBPASS_EXTERNAL,
+        .dstSubpass = 0,
+        .srcStageMask = vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .dstStageMask = vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .srcAccessMask = 0,
+        .dstAccessMask = vk.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        .dependencyFlags = 0,
+    };
+
+    const render_pass_info = vk.VkRenderPassCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .attachmentCount = 1,
+        .pAttachments = &color_attachment,
+        .subpassCount = 1,
+        .pSubpasses = &subpass,
+        .dependencyCount = 1,
+        .pDependencies = &dependency,
+    };
+
+    const result = vk.vkCreateRenderPass(vk_logical, &render_pass_info, null, &vk_render_pass);
+    if (result != VK_SUCCESS) {
+        return VkError.CreateRenderPass;
+    }
+}
+
+fn createGraphicsPipeline() !void {
+    var vert_module: vk.VkShaderModule = try createShaderModule("test/shaders/trivert.spv");
+    defer vk.vkDestroyShaderModule(vk_logical, vert_module, null);
+    var frag_module: vk.VkShaderModule = try createShaderModule("test/shaders/trifrag.spv");
+    defer vk.vkDestroyShaderModule(vk_logical, frag_module, null);
+
+    const vert_shader_info = vk.VkPipelineShaderStageCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .stage = vk.VK_SHADER_STAGE_VERTEX_BIT,
+        .module = vert_module,
+        .pName = "main",
+        .pSpecializationInfo = null,
+    };
+
+    const frag_shader_info = vk.VkPipelineShaderStageCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .stage = vk.VK_SHADER_STAGE_FRAGMENT_BIT,
+        .module = frag_module,
+        .pName = "main",
+        .pSpecializationInfo = null,
+    };
+
+    var shader_stages: [2]vk.VkPipelineShaderStageCreateInfo = .{vert_shader_info, frag_shader_info};
+
+    const vertex_input_info = vk.VkPipelineVertexInputStateCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .vertexBindingDescriptionCount = 0,
+        .pVertexBindingDescriptions = null,
+        .vertexAttributeDescriptionCount = 0,
+        .pVertexAttributeDescriptions = null,
+    };
+
+    const pipeline_assembly_info = vk.VkPipelineInputAssemblyStateCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .topology = vk.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+        .primitiveRestartEnable = vk.VK_FALSE,
+    };
+
+    const viewport = vk.VkViewport{
+        .x = 0.0,
+        .y = 0.0,
+        .width = @intToFloat(f32, swapchain.extent.width),
+        .height = @intToFloat(f32, swapchain.extent.height),
+        .minDepth = 0.0,
+        .maxDepth = 1.0,
+    };
+
+    const scissor = vk.VkRect2D{
+        .offset = vk.VkOffset2D { .x = 0.0, .y = 0.0 },
+        .extent = swapchain.extent, 
+    };
+
+    var dynamic_states: [2]vk.VkDynamicState = .{vk.VK_DYNAMIC_STATE_VIEWPORT, vk.VK_DYNAMIC_STATE_SCISSOR};
+
+    const dynamic_state_info = vk.VkPipelineDynamicStateCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .dynamicStateCount = 2,
+        .pDynamicStates = &dynamic_states[0],
+    };
+
+    const viewport_info = vk.VkPipelineViewportStateCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .viewportCount = 1,
+        .pViewports = &viewport,
+        .scissorCount = 1,
+        .pScissors = &scissor,
+    };
+
+    const raster_info = vk.VkPipelineRasterizationStateCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .depthClampEnable = vk.VK_FALSE,
+        .rasterizerDiscardEnable = vk.VK_FALSE,
+        .polygonMode = vk.VK_POLYGON_MODE_FILL,
+        .cullMode = vk.VK_CULL_MODE_BACK_BIT,
+        .frontFace = vk.VK_FRONT_FACE_CLOCKWISE,
+        .depthBiasEnable = vk.VK_FALSE,
+        .depthBiasConstantFactor = 0.0,
+        .depthBiasClamp = 0.0,
+        .depthBiasSlopeFactor = 0.0,
+        .lineWidth = 1.0,
+    };
+
+    const multisample_info = vk.VkPipelineMultisampleStateCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .rasterizationSamples = vk.VK_SAMPLE_COUNT_1_BIT,
+        .sampleShadingEnable = vk.VK_FALSE,
+        .minSampleShading = 1.0,
+        .pSampleMask = null,
+        .alphaToCoverageEnable = vk.VK_FALSE,
+        .alphaToOneEnable = vk.VK_FALSE,
+    };
+
+    const color_blend = vk.VkPipelineColorBlendAttachmentState{
+        .blendEnable = vk.VK_FALSE,
+        .srcColorBlendFactor = vk.VK_BLEND_FACTOR_ONE,
+        .dstColorBlendFactor = vk.VK_BLEND_FACTOR_ZERO,
+        .colorBlendOp = vk.VK_BLEND_OP_ADD,
+        .srcAlphaBlendFactor = vk.VK_BLEND_FACTOR_ONE,
+        .dstAlphaBlendFactor = vk.VK_BLEND_FACTOR_ZERO,
+        .alphaBlendOp = vk.VK_BLEND_OP_ADD,
+        .colorWriteMask = 
+            vk.VK_COLOR_COMPONENT_R_BIT 
+            | vk.VK_COLOR_COMPONENT_B_BIT 
+            | vk.VK_COLOR_COMPONENT_G_BIT 
+            | vk.VK_COLOR_COMPONENT_A_BIT,
+    };
+
+    const color_blend_info = vk.VkPipelineColorBlendStateCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .logicOpEnable = vk.VK_FALSE,
+        .logicOp = vk.VK_LOGIC_OP_COPY,
+        .attachmentCount = 1,
+        .pAttachments = &color_blend,
+        .blendConstants = .{0.0, 0.0, 0.0, 0.0},
+    };
+
+    const pipeline_layout_info = vk.VkPipelineLayoutCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .setLayoutCount = 0,
+        .pSetLayouts = null,
+        .pushConstantRangeCount = 0,
+        .pPushConstantRanges = null,
+    };
+
+    {
+        const result = vk.vkCreatePipelineLayout(vk_logical, &pipeline_layout_info, null, &vk_pipeline_layout);
+        if (result != VK_SUCCESS) {
+            return VkError.CreatePipelineLayout;
+        }
+    }
+
+    const pipeline_info = vk.VkGraphicsPipelineCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .stageCount = 2,
+        .pStages = &shader_stages[0],
+        .pVertexInputState = &vertex_input_info,
+        .pInputAssemblyState = &pipeline_assembly_info,
+        .pTessellationState = null,
+        .pViewportState = &viewport_info,
+        .pRasterizationState = &raster_info,
+        .pMultisampleState = &multisample_info,
+        .pDepthStencilState = null,
+        .pColorBlendState = &color_blend_info,
+        .pDynamicState = &dynamic_state_info,
+        .layout = vk_pipeline_layout,
+        .renderPass = vk_render_pass,
+        .subpass = 0,
+        .basePipelineHandle = null,
+        .basePipelineIndex = -1,
+    };
+
+    {
+        const result = vk.vkCreateGraphicsPipelines(vk_logical, null, 1, &pipeline_info, null, &vk_pipeline);
+        if (result != VK_SUCCESS) {
+            return VkError.CreatePipeline;
+        }
+    }
+}
+
+fn createFramebuffers() !void {
+    swapchain.framebuffers.sZero();
+    swapchain.framebuffers.setCount(swapchain.images.count());
+
+    for (0..swapchain.framebuffers.count()) |i| {
+        var attachment: *vk.VkImageView = &swapchain.image_views.items[i];
+
+        const frame_buffer_info = vk.VkFramebufferCreateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+            .renderPass = vk_render_pass,
+            .attachmentCount = 1,
+            .pAttachments = attachment,
+            .width = swapchain.extent.width,
+            .height = swapchain.extent.height,
+            .layers = 1,
+        };
+
+        const result = vk.vkCreateFramebuffer(vk_logical, &frame_buffer_info, null, &swapchain.framebuffers.items[i]);
+        if (result != VK_SUCCESS) {
+            return VkError.CreateFramebuffers;
+        }
+    }
+}
+
+fn createCommandPool() !void {
+    const command_pool_info = vk.VkCommandPoolCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .pNext = null,
+        .flags = vk.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = physical.graphics_idx.?,
+    };
+
+    const result = vk.vkCreateCommandPool(vk_logical, &command_pool_info, null, &vk_command_pool);
+    if (result != VK_SUCCESS) {
+        return VkError.CreateCommandPool;
+    }
+}
+
+fn createCommandBuffer() !void {
+    const buffer_allocate_info = vk.VkCommandBufferAllocateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .pNext = null,
+        .commandPool = vk_command_pool,
+        .level = vk.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1,
+    };
+
+    const result = vk.vkAllocateCommandBuffers(vk_logical, &buffer_allocate_info, &vk_command_buffer);
+    if (result != VK_SUCCESS) {
+        return VkError.CreateCommandBuffer;
+    }
+}
+
+fn createSyncObjects() !void {
+    const semaphore_info = vk.VkSemaphoreCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+    };
+
+    const fence_info = vk.VkFenceCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .pNext = null,
+        .flags = vk.VK_FENCE_CREATE_SIGNALED_BIT,
+    };
+
+    {
+        const result = vk.vkCreateSemaphore(vk_logical, &semaphore_info, null, &sem_image_available);
+        if (result != VK_SUCCESS) {
+            return VkError.CreateSyncObjects;
+        }
+    }
+    {
+        const result = vk.vkCreateSemaphore(vk_logical, &semaphore_info, null, &sem_render_finished);
+        if (result != VK_SUCCESS) {
+            return VkError.CreateSyncObjects;
+        }
+    }
+    {
+        const result = vk.vkCreateFence(vk_logical, &fence_info, null, &in_flight_fence);
+        if (result != VK_SUCCESS) {
+            return VkError.CreateSyncObjects;
         }
     }
 }
@@ -566,6 +1023,39 @@ fn chooseSwapchainExtent(swapc: *Swapchain) vk.VkExtent2D {
     return pixel_extent;
 }
 
+fn createShaderModule(file_name: []const u8) !vk.VkShaderModule {
+    var file = std.fs.cwd().openFile(file_name, .{}) catch return VkError.BadShaderModuleName;
+    defer file.close();
+
+    var stat = try file.stat();
+    if (stat.size > 65536) {
+        return VkError.ShaderTooLarge;
+    }
+
+    var buffer: [65536]u8 = undefined;
+    const bytes_read: usize = file.reader().readAll(&buffer) catch return VkError.UnknownReadError;
+
+    if (bytes_read == 0 or @mod(bytes_read, 4) != 0) {
+        return VkError.BadShaderSize;
+    }
+
+    const shader_info = vk.VkShaderModuleCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .codeSize = bytes_read,
+        .pCode = @ptrCast([*c]u32, @alignCast(@alignOf(u32), &buffer[0])),
+    };
+
+    var shader_module: vk.VkShaderModule = undefined;
+    const result = vk.vkCreateShaderModule(vk_logical, &shader_info, null, &shader_module);
+    if (result != VK_SUCCESS) {
+        return VkError.CreateShaderModule;
+    }
+
+    return shader_module;
+}
+
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // --------------------------------------------------------------------------------------------------------------- types
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -627,6 +1117,7 @@ const Swapchain = struct {
     images: LocalArray(vk.VkImage, MAX_IMAGE_CT) = LocalArray(vk.VkImage, MAX_IMAGE_CT).new(),
     image_fmt: vk.VkFormat = undefined,
     image_views: LocalArray(vk.VkImageView, MAX_IMAGE_CT) = LocalArray(vk.VkImageView, MAX_IMAGE_CT).new(),
+    framebuffers: LocalArray(vk.VkFramebuffer, MAX_IMAGE_CT) = LocalArray(vk.VkFramebuffer, MAX_IMAGE_CT).new(),
     surface_capabilities: vk.VkSurfaceCapabilitiesKHR = vk.VkSurfaceCapabilitiesKHR {
         .minImageCount = 0,
         .maxImageCount = 0,
@@ -664,6 +1155,15 @@ const Swapchain = struct {
 var vk_instance: VkInstance = null;
 var vk_surface: VkSurfaceKHR = null;
 var vk_logical: VkDevice = null;
+var vk_render_pass: VkRenderPass = null;
+var vk_pipeline_layout: VkPipelineLayout = null;
+var vk_pipeline: VkPipeline = null;
+var vk_command_pool: VkCommandPool = null;
+var vk_command_buffer: VkCommandBuffer = null;
+var sem_image_available: VkSemaphore = null;
+var sem_render_finished: VkSemaphore = null;
+var in_flight_fence: VkFence = null;
+
 var present_queue: VkQueue = null;
 var graphics_queue: VkQueue = null;
 var compute_queue: VkQueue = null;
@@ -688,6 +1188,20 @@ const VkError = error {
     CreateLogicalDevice,
     CreateSwapchain,
     CreateImageViews,
+    CreateRenderPass,
+    BadShaderModuleName,
+    BadShaderSize,
+    ShaderTooLarge,
+    UnknownReadError, // hate this
+    CreateShaderModule,
+    CreatePipelineLayout,
+    CreatePipeline,
+    CreateFramebuffers,
+    CreateCommandPool,
+    CreateCommandBuffer,
+    CreateSyncObjects,
+    RecordCommandBuffer,
+    DrawFrame,
 };
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -703,6 +1217,13 @@ const VkPhysicalDevice = vk.VkPhysicalDevice;
 const VkSurfaceKHR = vk.VkSurfaceKHR;
 const VkDevice = vk.VkDevice;
 const VkQueue = vk.VkQueue;
+const VkRenderPass = vk.VkRenderPass;
+const VkPipelineLayout = vk.VkPipelineLayout;
+const VkPipeline = vk.VkPipeline;
+const VkCommandPool = vk.VkCommandPool;
+const VkCommandBuffer = vk.VkCommandBuffer;
+const VkSemaphore = vk.VkSemaphore;
+const VkFence = vk.VkFence;
 
 const std = @import("std");
 const print = std.debug.print;

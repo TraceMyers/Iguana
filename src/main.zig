@@ -1,7 +1,7 @@
 pub fn main() !void {
 
     defer window.cleanup();
-    try window.init(512, 512, "yay");
+    try window.init(1024, 768, "yay");
 
     defer vk.cleanup();
     try vk.init();
@@ -12,6 +12,7 @@ pub fn main() !void {
         if (window.shouldClose()) {
             should_run = false;
         }
+        try vk.drawFrame();
     }
 }
 
