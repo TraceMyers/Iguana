@@ -15,6 +15,11 @@ pub fn LocalArray(comptime ItemType: type, comptime array_size: usize) type {
             return Self{};
         }
 
+        // get a c-style pointer to many @ this array's items.
+        pub fn cptr(self: *Self) [*c]ItemType {
+            return &self.items[0];
+        }
+
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
         // ------------------------------------------------------------------------------------------ general operations
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
