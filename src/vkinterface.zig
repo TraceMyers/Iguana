@@ -10,9 +10,18 @@ pub fn init() !void {
     try createSurface();
     try getPhysicalDevice();
     try createLogicalDevice();
+    try createSwapchain();
+    try createImageViews();
 }
 
 pub fn cleanup() void {
+
+    for (swapchain.image_views.items[0..swapchain.image_views.count()]) |view| {
+        vk.vkDestroyImageView(vk_logical, view, null);
+    }
+    vk.vkDestroySwapchainKHR(vk_logical, swapchain.vk_swapchain, null);
+    swapchain.reset();
+    vk.vkDestroyDevice(vk_logical, null);
     vk.vkDestroySurfaceKHR(vk_instance, vk_surface, null);
     vk.vkDestroyInstance(vk_instance, null);
 }
@@ -157,7 +166,160 @@ fn getPhysicalDevice() !void {
 }
 
 fn createLogicalDevice() !void {
+    var unique_qfam_indices = LocalArray(u32, 4).new();
+    const unique_qfam_ct: usize = physical.getUniqueQueueFamilyIndices(&unique_qfam_indices);
 
+    var queue_infos = LocalArray(vk.VkDeviceQueueCreateInfo, 4).new();
+    queue_infos.setCount(unique_qfam_ct);
+
+    const queue_priority: f32 = 1.0;
+    for (0..unique_qfam_ct) |i| {
+        queue_infos.items[i] = vk.VkDeviceQueueCreateInfo {
+            .sType = vk.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueFamilyIndex = unique_qfam_indices.items[i],
+            .queueCount = 1,
+            .pQueuePriorities = &queue_priority,
+            .pNext = null,
+            .flags = 0
+        };
+    }
+
+    const required_extension: [*c]const u8 = vk.VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+
+    var device_info = vk.VkDeviceCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .queueCreateInfoCount = @intCast(u32, unique_qfam_ct),
+        .pQueueCreateInfos = queue_infos.cptr(),
+        .enabledLayerCount = 0,
+        .ppEnabledLayerNames = null,
+        .enabledExtensionCount = 1,
+        .ppEnabledExtensionNames = &required_extension,
+        .pEnabledFeatures = null
+    };
+
+    const result = vk.vkCreateDevice(physical.vk_physical, &device_info, null, &vk_logical);
+    if (result != VK_SUCCESS) {
+        return VkError.CreateLogicalDevice;
+    }
+
+    vk.vkGetDeviceQueue(vk_logical, physical.present_idx.?, 0, &present_queue);
+    vk.vkGetDeviceQueue(vk_logical, physical.graphics_idx.?, 0, &graphics_queue);
+    if (physical.compute_idx) |compute_idx| {
+        vk.vkGetDeviceQueue(vk_logical, compute_idx, 0, &compute_queue);
+    }
+    if (physical.transfer_idx) |transfer_idx| {
+        vk.vkGetDeviceQueue(vk_logical, transfer_idx, 0, &compute_queue);
+    }
+}
+
+fn createSwapchain() !void {
+    const surface_format: vk.VkSurfaceFormatKHR = chooseSwapchainSurfaceFormat(&swapchain);
+    const present_mode: vk.VkPresentModeKHR = chooseSwapchainPresentMode(&swapchain);
+    const extent: vk.VkExtent2D = chooseSwapchainExtent(&swapchain);
+    var image_ct: u32 = swapchain.surface_capabilities.minImageCount + 1;
+
+    if (image_ct > Swapchain.MAX_IMAGE_CT) {
+        return VkError.CreateSwapchain;
+    }
+
+    var qfam_indices_array = LocalArray(u32, 4).new();
+    const unique_qfam_idx_ct = @intCast(u32, physical.getUniqueQueueFamilyIndices(&qfam_indices_array));
+
+    var image_share_mode: vk.VkSharingMode = undefined;
+    var qfam_index_ct: u32 = undefined;
+    var qfam_indices: [*c]u32 = undefined;
+
+    // TODO: transfer and compute queues
+    if (unique_qfam_idx_ct > 1) {
+        image_share_mode = vk.VK_SHARING_MODE_CONCURRENT;
+        qfam_index_ct = unique_qfam_idx_ct;
+        qfam_indices = qfam_indices_array.cptr();
+    }
+    else {
+        image_share_mode = vk.VK_SHARING_MODE_EXCLUSIVE;
+        qfam_index_ct = 0;
+        qfam_indices = null;
+    }
+
+    const swapchain_info = vk.VkSwapchainCreateInfoKHR{
+        .sType = vk.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+        .pNext = null,
+        .flags = 0,
+        .surface = vk_surface,
+        .minImageCount = image_ct,
+        .imageFormat = surface_format.format,
+        .imageColorSpace = surface_format.colorSpace,
+        .imageExtent = extent,
+        .imageArrayLayers = 1,
+        .imageUsage = vk.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .imageSharingMode = image_share_mode,
+        .queueFamilyIndexCount = qfam_index_ct,
+        .pQueueFamilyIndices = qfam_indices,
+        .preTransform = swapchain.surface_capabilities.currentTransform,
+        .compositeAlpha = vk.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+        .presentMode = present_mode,
+        .clipped = vk.VK_TRUE,
+        .oldSwapchain = null,
+    };
+
+    {
+        const result = vk.vkCreateSwapchainKHR(vk_logical, &swapchain_info, null, &swapchain.vk_swapchain);
+        if (result != VK_SUCCESS) {
+            return VkError.CreateSwapchain;
+        }
+    }
+    {
+        const result = vk.vkGetSwapchainImagesKHR(vk_logical, swapchain.vk_swapchain, &image_ct, null);
+        if (result != VK_SUCCESS) {
+            return VkError.CreateSwapchain;
+        }
+    }
+    {
+        const result = vk.vkGetSwapchainImagesKHR(vk_logical, swapchain.vk_swapchain, &image_ct, swapchain.images.cptr());
+        if (result != VK_SUCCESS) {
+            return VkError.CreateSwapchain;
+        }
+        swapchain.images.setCount(image_ct);
+    }
+
+    swapchain.extent = extent;
+    swapchain.image_fmt = surface_format.format;
+}
+
+fn createImageViews() !void {
+    swapchain.image_views.sZero();
+    swapchain.image_views.setCount(swapchain.images.count());
+
+    var create_info = vk.VkImageViewCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .image = null,
+        .viewType = vk.VK_IMAGE_VIEW_TYPE_2D,
+        .format = swapchain.image_fmt,
+        .components = vk.VkComponentMapping{
+            .r = vk.VK_COMPONENT_SWIZZLE_IDENTITY,
+            .g = vk.VK_COMPONENT_SWIZZLE_IDENTITY,
+            .b = vk.VK_COMPONENT_SWIZZLE_IDENTITY,
+            .a = vk.VK_COMPONENT_SWIZZLE_IDENTITY,
+        },
+        .subresourceRange = vk.VkImageSubresourceRange{
+            .aspectMask = vk.VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1
+        },
+    };
+    for (0..swapchain.image_views.count()) |i| {
+        create_info.image = swapchain.images.items[i];
+        const result = vk.vkCreateImageView(vk_logical, &create_info, null, &swapchain.image_views.items[i]);
+        if (result != VK_SUCCESS) {
+            return VkError.CreateImageViews;
+        }
+    }
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -215,7 +377,6 @@ fn physicalDeviceHasAdequateExtensionProperties(device: VkPhysicalDevice) bool {
 
 fn getPhysicalDeviceSurfaceCapabilities(device: VkPhysicalDevice, swapc_details: *Swapchain) bool {
     swapc_details.reset();
-
     {
         const result = vk.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
             device, vk_surface, &swapc_details.surface_capabilities
@@ -364,8 +525,45 @@ fn getPhysicalDeviceVRAMSize(device: VkPhysicalDevice) vk.VkDeviceSize {
             return heap.size;
         }
     }
-    
     return 0;
+}
+
+fn chooseSwapchainSurfaceFormat(swapc: *Swapchain) vk.VkSurfaceFormatKHR {
+    for (swapc.surface_formats.items[0..swapc.surface_formats.count()]) |*format| {
+        if (format.format == vk.VK_FORMAT_B8G8R8A8_SRGB and format.colorSpace == vk.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+            return format.*;
+        }
+    }
+    return swapc.surface_formats.items[0];
+}
+
+fn chooseSwapchainPresentMode(swapc: *Swapchain) vk.VkPresentModeKHR {
+    for (swapc.present_modes.items[0..swapc.present_modes.count()]) |mode| {
+        if (mode == vk.VK_PRESENT_MODE_MAILBOX_KHR) {
+            return mode;
+        }
+    }
+    return vk.VK_PRESENT_MODE_FIFO_KHR;
+}
+
+fn chooseSwapchainExtent(swapc: *Swapchain) vk.VkExtent2D {
+    if (swapc.surface_capabilities.currentExtent.width != std.math.maxInt(u32)) {
+        return swapc.surface_capabilities.currentExtent;
+    }
+
+    var width: i32 = 0;
+    var height: i32 = 0;
+    vk.glfwGetFramebufferSize(window.get(), &width, &height);
+
+    var pixel_extent = vk.VkExtent2D{ .width = @intCast(u32, width), .height = @intCast(u32, height) };
+    pixel_extent.width = std.math.clamp(
+        pixel_extent.width, swapc.surface_capabilities.minImageExtent.width, swapc.surface_capabilities.maxImageExtent.width
+    );
+    pixel_extent.height = std.math.clamp(
+        pixel_extent.height, swapc.surface_capabilities.minImageExtent.height, swapc.surface_capabilities.maxImageExtent.height
+    );
+
+    return pixel_extent;
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -397,13 +595,38 @@ const PhysicalDevice = struct {
     pub fn reset(self: *PhysicalDevice) void {
         self.* = PhysicalDevice{};
     }
+
+    pub fn getUniqueQueueFamilyIndices(self: *PhysicalDevice, indices: *LocalArray(u32, 4)) usize {
+        indices.resetCount();
+        if (self.present_idx != null) {
+            indices.push(self.present_idx.?);
+        }
+        if (self.graphics_idx != null and indices.find(self.graphics_idx.?) == null) {
+            indices.push(self.graphics_idx.?);
+        }
+        if (self.compute_idx != null and indices.find(self.compute_idx.?) == null) {
+            indices.push(self.compute_idx.?);
+        }
+        if (self.transfer_idx != null and indices.find(self.transfer_idx.?) == null) {
+            indices.push(self.transfer_idx.?);
+        }
+        return indices.count();
+    } 
 };
 
 const Swapchain = struct {
     const MAX_FORMAT_CT: u32 = 8;
     const MAX_MODE_CT: u32 = 8;
+    const MAX_IMAGE_CT: u32 = 4;
     
     vk_swapchain: vk.VkSwapchainKHR = null,
+    extent: vk.VkExtent2D = vk.VkExtent2D {
+        .width = 0,
+        .height = 0,
+    },
+    images: LocalArray(vk.VkImage, MAX_IMAGE_CT) = LocalArray(vk.VkImage, MAX_IMAGE_CT).new(),
+    image_fmt: vk.VkFormat = undefined,
+    image_views: LocalArray(vk.VkImageView, MAX_IMAGE_CT) = LocalArray(vk.VkImageView, MAX_IMAGE_CT).new(),
     surface_capabilities: vk.VkSurfaceCapabilitiesKHR = vk.VkSurfaceCapabilitiesKHR {
         .minImageCount = 0,
         .maxImageCount = 0,
@@ -425,13 +648,11 @@ const Swapchain = struct {
         .supportedCompositeAlpha = 0,
         .supportedUsageFlags = 0,
     },
-    surface_formats : LocalArray(vk.VkSurfaceFormatKHR, MAX_FORMAT_CT) = undefined,
-    present_modes : LocalArray(vk.VkPresentModeKHR, MAX_MODE_CT) = undefined,
+    surface_formats : LocalArray(vk.VkSurfaceFormatKHR, MAX_FORMAT_CT) = LocalArray(vk.VkSurfaceFormatKHR, MAX_FORMAT_CT).new(),
+    present_modes : LocalArray(vk.VkPresentModeKHR, MAX_MODE_CT) = LocalArray(vk.VkPresentModeKHR, MAX_MODE_CT).new(),
 
     pub fn reset(self: *Swapchain) void {
         self.* = Swapchain{};
-        self.surface_formats.resetCount();
-        self.present_modes.resetCount();
     }
 };
 
@@ -443,6 +664,10 @@ const Swapchain = struct {
 var vk_instance: VkInstance = null;
 var vk_surface: VkSurfaceKHR = null;
 var vk_logical: VkDevice = null;
+var present_queue: VkQueue = null;
+var graphics_queue: VkQueue = null;
+var compute_queue: VkQueue = null;
+var transfer_queue: VkQueue = null;
 
 var swapchain : Swapchain = Swapchain{};
 var physical: PhysicalDevice = PhysicalDevice{};
@@ -460,6 +685,9 @@ const VkError = error {
     ZeroPhysicalDevices,
     NoAdequatePhysicalDevice,
     NotEnoughPhysicalDeviceStorage,
+    CreateLogicalDevice,
+    CreateSwapchain,
+    CreateImageViews,
 };
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -474,6 +702,7 @@ const GLFWwindow = vk.GLFWwindow;
 const VkPhysicalDevice = vk.VkPhysicalDevice;
 const VkSurfaceKHR = vk.VkSurfaceKHR;
 const VkDevice = vk.VkDevice;
+const VkQueue = vk.VkQueue;
 
 const std = @import("std");
 const print = std.debug.print;
