@@ -16,26 +16,23 @@ pub fn init() !void {
     try createGraphicsPipeline();
     try createFramebuffers();
     try createCommandPool();
-    try createCommandBuffer();
+    try createCommandBuffers();
     try createSyncObjects();
 }
 
 pub fn cleanup() void {
-    _ = vk.vkWaitForFences(vk_logical, 1, &in_flight_fence, vk.VK_TRUE, 4096);
-    vk.vkDestroySemaphore(vk_logical, sem_image_available, null);
-    vk.vkDestroySemaphore(vk_logical, sem_render_finished, null);
-    vk.vkDestroyFence(vk_logical, in_flight_fence, null);
-    vk.vkDestroyCommandPool(vk_logical, vk_command_pool, null);
-    for (swapchain.framebuffers.items[0..swapchain.framebuffers.count()]) |buf| {
-        vk.vkDestroyFramebuffer(vk_logical, buf, null);
+    _ = vk.vkWaitForFences(vk_logical, MAX_FRAMES_IN_FLIGHT, &in_flight_fences[0], vk.VK_TRUE, ONE_SECOND_IN_NANOSECONDS);
+    cleanupSwapchain();
+    for (0..MAX_FRAMES_IN_FLIGHT) |i| {
+        vk.vkDestroySemaphore(vk_logical, sem_image_available[i], null);
+        vk.vkDestroySemaphore(vk_logical, sem_render_finished[i], null);
+        vk.vkDestroyFence(vk_logical, in_flight_fences[i], null);
     }
+    vk.vkDestroyCommandPool(vk_logical, vk_command_pool, null);
     vk.vkDestroyPipelineLayout(vk_logical, vk_pipeline_layout, null);
     vk.vkDestroyRenderPass(vk_logical, vk_render_pass, null);
     vk.vkDestroyPipeline(vk_logical, vk_pipeline, null);
-    for (swapchain.image_views.items[0..swapchain.image_views.count()]) |view| {
-        vk.vkDestroyImageView(vk_logical, view, null);
-    }
-    vk.vkDestroySwapchainKHR(vk_logical, swapchain.vk_swapchain, null);
+    
     swapchain.reset();
     vk.vkDestroyDevice(vk_logical, null);
     vk.vkDestroySurfaceKHR(vk_instance, vk_surface, null);
@@ -43,17 +40,24 @@ pub fn cleanup() void {
 }
 
 pub fn drawFrame() !void {
-    _ = vk.vkWaitForFences(vk_logical, 1, &in_flight_fence, vk.VK_TRUE, std.math.maxInt(u64));
-    _ = vk.vkResetFences(vk_logical, 1, &in_flight_fence);
+    _ = vk.vkWaitForFences(vk_logical, 1, &in_flight_fences[current_frame], vk.VK_TRUE, std.math.maxInt(u64));
+    _ = vk.vkResetFences(vk_logical, 1, &in_flight_fences[current_frame]);
 
     var image_idx: u32 = undefined;
-    _ = vk.vkAcquireNextImageKHR(
-        vk_logical, swapchain.vk_swapchain, std.math.maxInt(u64), sem_image_available, null, &image_idx
+
+    var result: vk.VkResult = vk.vkAcquireNextImageKHR(
+        vk_logical, swapchain.vk_swapchain, std.math.maxInt(u64), sem_image_available[current_frame], null, &image_idx
     );
+    if (result == vk.VK_ERROR_OUT_OF_DATE_KHR) {
+        try recreateSwapchain();
+        return;
+    }
+    else if (result != vk.VK_SUCCESS and result != vk.VK_SUBOPTIMAL_KHR) {
+        return VkError.AcquireSwapchainImage;
+    }
 
-    _ = vk.vkResetCommandBuffer(vk_command_buffer, 0);
-
-    try recordCommandBuffer(vk_command_buffer, image_idx);
+    _ = vk.vkResetCommandBuffer(vk_command_buffers[current_frame], 0);
+    try recordCommandBuffer(vk_command_buffers[current_frame], image_idx);
 
     const wait_stage: vk.VkPipelineStageFlags = vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 
@@ -61,15 +65,15 @@ pub fn drawFrame() !void {
         .sType = vk.VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .pNext = null,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &sem_image_available,
+        .pWaitSemaphores = &sem_image_available[current_frame],
         .pWaitDstStageMask = &wait_stage,
         .commandBufferCount = 1,
-        .pCommandBuffers = &vk_command_buffer,
+        .pCommandBuffers = &vk_command_buffers[current_frame],
         .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &sem_render_finished,
+        .pSignalSemaphores = &sem_render_finished[current_frame],
     };
 
-    const result = vk.vkQueueSubmit(graphics_queue, 1, &submit_info, in_flight_fence);
+    result = vk.vkQueueSubmit(graphics_queue, 1, &submit_info, in_flight_fences[current_frame]);
     if (result != VK_SUCCESS) {
         return VkError.DrawFrame;
     }
@@ -78,14 +82,22 @@ pub fn drawFrame() !void {
         .sType = vk.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .pNext = null,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &sem_render_finished,
+        .pWaitSemaphores = &sem_render_finished[current_frame],
         .swapchainCount = 1,
         .pSwapchains = &swapchain.vk_swapchain,
         .pImageIndices = &image_idx,
         .pResults = null,
     };
 
-    _ = vk.vkQueuePresentKHR(present_queue, &present_info);
+    result = vk.vkQueuePresentKHR(present_queue, &present_info);
+    if (result == vk.VK_ERROR_OUT_OF_DATE_KHR or result == vk.VK_SUBOPTIMAL_KHR) {
+        try recreateSwapchain();
+    }
+    else if (result != vk.VK_SUCCESS) {
+        return VkError.PresentSwapchainImage;
+    }
+
+    current_frame = @mod((current_frame + 1), MAX_FRAMES_IN_FLIGHT);
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -108,7 +120,7 @@ fn recordCommandBuffer(command_buffer: VkCommandBuffer, image_idx: u32) !void {
     }
 
     const clear_color = vk.VkClearValue{
-        .color = vk.VkClearColorValue{.float32 = .{0.0, 0.0, 0.0, 1.0}},
+        .color = vk.VkClearColorValue{.float32 = .{0.1, 0.0, 0.3, 1.0}},
     };
 
     const render_begin_info = vk.VkRenderPassBeginInfo{
@@ -117,7 +129,7 @@ fn recordCommandBuffer(command_buffer: VkCommandBuffer, image_idx: u32) !void {
         .renderPass = vk_render_pass,
         .framebuffer = swapchain.framebuffers.items[image_idx],
         .renderArea = vk.VkRect2D { 
-            .offset = vk.VkOffset2D { .x = 0, .y = 0},
+            .offset = vk.VkOffset2D { .x = 0, .y = 0 },
             .extent = swapchain.extent
         },
         .clearValueCount = 1,
@@ -144,7 +156,6 @@ fn recordCommandBuffer(command_buffer: VkCommandBuffer, image_idx: u32) !void {
     };
 
     vk.vkCmdSetScissor(command_buffer, 0, 1, &scissor);
-
     vk.vkCmdDraw(command_buffer, 3, 1, 0, 0);
     vk.vkCmdEndRenderPass(command_buffer);
 
@@ -154,6 +165,30 @@ fn recordCommandBuffer(command_buffer: VkCommandBuffer, image_idx: u32) !void {
             return VkError.RecordCommandBuffer;
         }
     }
+}
+
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ---------------------------------------------------------------------------------------------------------- infrequent
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+fn recreateSwapchain() !void {
+    _ = vk.vkDeviceWaitIdle(vk_logical);
+
+    cleanupSwapchain();
+
+    try createSwapchain();
+    try createImageViews();
+    try createFramebuffers();
+}
+
+fn cleanupSwapchain() void {
+    for (swapchain.framebuffers.items[0..swapchain.framebuffers.count()]) |buf| {
+        vk.vkDestroyFramebuffer(vk_logical, buf, null);
+    }
+    for (swapchain.image_views.items[0..swapchain.image_views.count()]) |view| {
+        vk.vkDestroyImageView(vk_logical, view, null);
+    }
+    vk.vkDestroySwapchainKHR(vk_logical, swapchain.vk_swapchain, null);
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -731,16 +766,16 @@ fn createCommandPool() !void {
     }
 }
 
-fn createCommandBuffer() !void {
+fn createCommandBuffers() !void {
     const buffer_allocate_info = vk.VkCommandBufferAllocateInfo{
         .sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .pNext = null,
         .commandPool = vk_command_pool,
         .level = vk.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = 1,
+        .commandBufferCount = MAX_FRAMES_IN_FLIGHT,
     };
 
-    const result = vk.vkAllocateCommandBuffers(vk_logical, &buffer_allocate_info, &vk_command_buffer);
+    const result = vk.vkAllocateCommandBuffers(vk_logical, &buffer_allocate_info, &vk_command_buffers[0]);
     if (result != VK_SUCCESS) {
         return VkError.CreateCommandBuffer;
     }
@@ -759,22 +794,24 @@ fn createSyncObjects() !void {
         .flags = vk.VK_FENCE_CREATE_SIGNALED_BIT,
     };
 
-    {
-        const result = vk.vkCreateSemaphore(vk_logical, &semaphore_info, null, &sem_image_available);
-        if (result != VK_SUCCESS) {
-            return VkError.CreateSyncObjects;
+    for (0..MAX_FRAMES_IN_FLIGHT) |i| {
+        {
+            const result = vk.vkCreateSemaphore(vk_logical, &semaphore_info, null, &sem_image_available[i]);
+            if (result != VK_SUCCESS) {
+                return VkError.CreateSyncObjects;
+            }
         }
-    }
-    {
-        const result = vk.vkCreateSemaphore(vk_logical, &semaphore_info, null, &sem_render_finished);
-        if (result != VK_SUCCESS) {
-            return VkError.CreateSyncObjects;
+        {
+            const result = vk.vkCreateSemaphore(vk_logical, &semaphore_info, null, &sem_render_finished[i]);
+            if (result != VK_SUCCESS) {
+                return VkError.CreateSyncObjects;
+            }
         }
-    }
-    {
-        const result = vk.vkCreateFence(vk_logical, &fence_info, null, &in_flight_fence);
-        if (result != VK_SUCCESS) {
-            return VkError.CreateSyncObjects;
+        {
+            const result = vk.vkCreateFence(vk_logical, &fence_info, null, &in_flight_fences[i]);
+            if (result != VK_SUCCESS) {
+                return VkError.CreateSyncObjects;
+            }
         }
     }
 }
@@ -1159,10 +1196,10 @@ var vk_render_pass: VkRenderPass = null;
 var vk_pipeline_layout: VkPipelineLayout = null;
 var vk_pipeline: VkPipeline = null;
 var vk_command_pool: VkCommandPool = null;
-var vk_command_buffer: VkCommandBuffer = null;
-var sem_image_available: VkSemaphore = null;
-var sem_render_finished: VkSemaphore = null;
-var in_flight_fence: VkFence = null;
+var vk_command_buffers: [MAX_FRAMES_IN_FLIGHT]VkCommandBuffer = .{null, null};
+var sem_image_available: [MAX_FRAMES_IN_FLIGHT]VkSemaphore = .{null, null};
+var sem_render_finished: [MAX_FRAMES_IN_FLIGHT]VkSemaphore = .{null, null};
+var in_flight_fences: [MAX_FRAMES_IN_FLIGHT]VkFence = .{null, null};
 
 var present_queue: VkQueue = null;
 var graphics_queue: VkQueue = null;
@@ -1173,6 +1210,15 @@ var swapchain : Swapchain = Swapchain{};
 var physical: PhysicalDevice = PhysicalDevice{};
 
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+
+var current_frame: u32 = 0;
+
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ----------------------------------------------------------------------------------------------------------- constants
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+const ONE_SECOND_IN_NANOSECONDS: u32 = 1_000_000_000;
+const MAX_FRAMES_IN_FLIGHT: u32 = 2;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- errors
@@ -1202,6 +1248,8 @@ const VkError = error {
     CreateSyncObjects,
     RecordCommandBuffer,
     DrawFrame,
+    AcquireSwapchainImage,
+    PresentSwapchainImage,
 };
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

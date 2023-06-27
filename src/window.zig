@@ -10,7 +10,9 @@ pub fn init(width: i32, height: i32, name_opt: ?[*c]const u8) !void {
     }
 
     vk.glfwWindowHint(vk.GLFW_CLIENT_API, vk.GLFW_NO_API);
-    vk.glfwWindowHint(vk.GLFW_RESIZABLE, vk.GLFW_FALSE);
+    vk.glfwWindowHint(vk.GLFW_RESIZABLE, vk.GLFW_TRUE);
+    // TODO: check back after swapchain recreation - may not need this
+    // _ = vk.glfwSetFramebufferSizeCallback(window, resizeCallback);
 
     if (name_opt) |name| {
         window = vk.glfwCreateWindow(width, height, name, null, null);
@@ -45,6 +47,16 @@ pub inline fn cleanup() void {
     }
     vk.glfwTerminate();
 }
+
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// --------------------------------------------------------------------------------------------------------- interaction
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// fn resizeCallback(win: ?*GLFWwindow, width: c_int, height: c_int) callconv(.C) void {
+//     // glViewport is unlinked (opengl? glew? glem?)
+//     vk.glViewport(0, 0, width, height);
+//     _ = win;
+// }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- data
