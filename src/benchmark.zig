@@ -4,7 +4,7 @@
 
 // Usage:
 // {
-//      var scope_timer_var = ScopeTimer.start(getScopeTimerID(), "Scope Name");
+//      var scope_timer_var = ScopeTimer.start("Scope Name", getScopeTimerID());
 //      defer scope_timer_var.stop();
 //      .. code you want to benchmark
 // }

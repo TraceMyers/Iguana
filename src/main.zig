@@ -14,6 +14,8 @@ pub fn main() !void {
         }
         try vk.drawFrame();
     }
+
+    benchmark.printAllScopeTimers();
 }
 
 const std = @import("std");

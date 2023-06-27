@@ -21,7 +21,9 @@ pub fn init() !void {
 }
 
 pub fn cleanup() void {
-    _ = vk.vkWaitForFences(vk_logical, MAX_FRAMES_IN_FLIGHT, &in_flight_fences[0], vk.VK_TRUE, ONE_SECOND_IN_NANOSECONDS);
+    if (in_flight_fences[0] != null) {
+        _ = vk.vkWaitForFences(vk_logical, MAX_FRAMES_IN_FLIGHT, &in_flight_fences[0], vk.VK_TRUE, ONE_SECOND_IN_NANOSECONDS);
+    }
     cleanupSwapchain();
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
         vk.vkDestroySemaphore(vk_logical, sem_image_available[i], null);
@@ -40,10 +42,14 @@ pub fn cleanup() void {
 }
 
 pub fn drawFrame() !void {
-    _ = vk.vkWaitForFences(vk_logical, 1, &in_flight_fences[current_frame], vk.VK_TRUE, std.math.maxInt(u64));
-    _ = vk.vkResetFences(vk_logical, 1, &in_flight_fences[current_frame]);
+    // var t1 = ScopeTimer.start("vkinterface.drawFrame", getScopeTimerID());
+    // defer t1.stop();
 
+    _ = vk.vkWaitForFences(vk_logical, 1, &in_flight_fences[current_frame], vk.VK_TRUE, std.math.maxInt(u64));
     var image_idx: u32 = undefined;
+
+    // var t2 = ScopeTimer.start("vkinterface.drawFrame(after fence)", getScopeTimerID());
+    // defer t2.stop();
 
     var result: vk.VkResult = vk.vkAcquireNextImageKHR(
         vk_logical, swapchain.vk_swapchain, std.math.maxInt(u64), sem_image_available[current_frame], null, &image_idx
@@ -55,6 +61,7 @@ pub fn drawFrame() !void {
     else if (result != vk.VK_SUCCESS and result != vk.VK_SUBOPTIMAL_KHR) {
         return VkError.AcquireSwapchainImage;
     }
+    _ = vk.vkResetFences(vk_logical, 1, &in_flight_fences[current_frame]);
 
     _ = vk.vkResetCommandBuffer(vk_command_buffers[current_frame], 0);
     try recordCommandBuffer(vk_command_buffers[current_frame], image_idx);
@@ -90,7 +97,8 @@ pub fn drawFrame() !void {
     };
 
     result = vk.vkQueuePresentKHR(present_queue, &present_info);
-    if (result == vk.VK_ERROR_OUT_OF_DATE_KHR or result == vk.VK_SUBOPTIMAL_KHR) {
+    if (result == vk.VK_ERROR_OUT_OF_DATE_KHR or result == vk.VK_SUBOPTIMAL_KHR or framebuffer_resized) {
+        framebuffer_resized = false;
         try recreateSwapchain();
     }
     else if (result != vk.VK_SUCCESS) {
@@ -98,6 +106,10 @@ pub fn drawFrame() !void {
     }
 
     current_frame = @mod((current_frame + 1), MAX_FRAMES_IN_FLIGHT);
+}
+
+pub fn setFramebufferResized() void {
+    framebuffer_resized = true;
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -172,9 +184,26 @@ fn recordCommandBuffer(command_buffer: VkCommandBuffer, image_idx: u32) !void {
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 fn recreateSwapchain() !void {
+    // wait out minimization until the window has width or height
+    var width: i32 = 0;
+    var height: i32 = 0;
+    vk.glfwGetFramebufferSize(window.get(), &width, &height);
+    while (width == 0 or height == 0) {
+        vk.glfwGetFramebufferSize(window.get(), &width, &height);
+        vk.glfwWaitEvents();
+    }
+    // var t1 = ScopeTimer.start("vkinterface.recreateSwapchain", getScopeTimerID());
+    // defer t1.stop();
+
     _ = vk.vkDeviceWaitIdle(vk_logical);
 
     cleanupSwapchain();
+
+    // this was added to re-get the surface's current dimensions, but obviously that's already done above. this
+    // may be otherwise useful; TODO: check if this updates anything else in a useful way
+    _ = vk.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+        physical.vk_physical, vk_surface, &swapchain.surface_capabilities
+    );
 
     try createSwapchain();
     try createImageViews();
@@ -1212,6 +1241,7 @@ var physical: PhysicalDevice = PhysicalDevice{};
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 
 var current_frame: u32 = 0;
+var framebuffer_resized: bool = false;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------- constants
@@ -1278,3 +1308,6 @@ const print = std.debug.print;
 const array = @import("array.zig");
 const window = @import("window.zig");
 const LocalArray = array.LocalArray;
+const benchmark = @import("benchmark.zig");
+const ScopeTimer = benchmark.ScopeTimer;
+const getScopeTimerID = benchmark.getScopeTimerID;
