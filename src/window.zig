@@ -11,7 +11,6 @@ pub fn init(width: i32, height: i32, name_opt: ?[*c]const u8) !void {
 
     vk.glfwWindowHint(vk.GLFW_CLIENT_API, vk.GLFW_NO_API);
     vk.glfwWindowHint(vk.GLFW_RESIZABLE, vk.GLFW_TRUE);
-    // TODO: check back after swapchain recreation - may not need this
 
     if (name_opt) |name| {
         window = vk.glfwCreateWindow(width, height, name, null, null);

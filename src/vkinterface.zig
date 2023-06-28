@@ -16,6 +16,7 @@ pub fn init() !void {
     try createGraphicsPipeline();
     try createFramebuffers();
     try createCommandPool();
+    try createVertexBuffer();
     try createCommandBuffers();
     try createSyncObjects();
 }
@@ -25,6 +26,8 @@ pub fn cleanup() void {
         _ = vk.vkWaitForFences(vk_logical, MAX_FRAMES_IN_FLIGHT, &in_flight_fences[0], vk.VK_TRUE, ONE_SECOND_IN_NANOSECONDS);
     }
     cleanupSwapchain();
+    vk.vkDestroyBuffer(vk_logical, vertex_buffer, null);
+    vk.vkFreeMemory(vk_logical, vertex_buffer_memory, null);
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
         vk.vkDestroySemaphore(vk_logical, sem_image_available[i], null);
         vk.vkDestroySemaphore(vk_logical, sem_render_finished[i], null);
@@ -151,6 +154,9 @@ fn recordCommandBuffer(command_buffer: VkCommandBuffer, image_idx: u32) !void {
     vk.vkCmdBeginRenderPass(command_buffer, &render_begin_info, vk.VK_SUBPASS_CONTENTS_INLINE);
     vk.vkCmdBindPipeline(command_buffer, vk.VK_PIPELINE_BIND_POINT_GRAPHICS, vk_pipeline);
 
+    const offset: vk.VkDeviceSize = 0;
+    vk.vkCmdBindVertexBuffers(command_buffer, 0, 1, &vertex_buffer, &offset);
+
     const viewport = vk.VkViewport{
         .x = 0.0,
         .y = 0.0,
@@ -168,7 +174,7 @@ fn recordCommandBuffer(command_buffer: VkCommandBuffer, image_idx: u32) !void {
     };
 
     vk.vkCmdSetScissor(command_buffer, 0, 1, &scissor);
-    vk.vkCmdDraw(command_buffer, 3, 1, 0, 0);
+    vk.vkCmdDraw(command_buffer, @intCast(u32, vertices.len), 1, 0, 0);
     vk.vkCmdEndRenderPass(command_buffer);
 
     {
@@ -184,7 +190,8 @@ fn recordCommandBuffer(command_buffer: VkCommandBuffer, image_idx: u32) !void {
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 fn recreateSwapchain() !void {
-    // wait out minimization until the window has width or height
+    // wait out minimization until the window has width or height; note this halts the game sim as well... which
+    // seems like a silly thing to give up to the renderer. TODO: change renderer halting sim
     var width: i32 = 0;
     var height: i32 = 0;
     vk.glfwGetFramebufferSize(window.get(), &width, &height);
@@ -200,7 +207,7 @@ fn recreateSwapchain() !void {
     cleanupSwapchain();
 
     // this was added to re-get the surface's current dimensions, but obviously that's already done above. this
-    // may be otherwise useful; TODO: check if this updates anything else in a useful way
+    // may be otherwise useful; TODO: check if this updates anything else in a useful way and check if this is slow
     _ = vk.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
         physical.vk_physical, vk_surface, &swapchain.surface_capabilities
     );
@@ -457,25 +464,15 @@ fn createSwapchain() !void {
         .oldSwapchain = null,
     };
 
-    {
-        const result = vk.vkCreateSwapchainKHR(vk_logical, &swapchain_info, null, &swapchain.vk_swapchain);
-        if (result != VK_SUCCESS) {
-            return VkError.CreateSwapchain;
-        }
+    var result = vk.vkCreateSwapchainKHR(vk_logical, &swapchain_info, null, &swapchain.vk_swapchain);
+    if (result != VK_SUCCESS) {
+        return VkError.CreateSwapchain;
     }
-    {
-        const result = vk.vkGetSwapchainImagesKHR(vk_logical, swapchain.vk_swapchain, &image_ct, null);
-        if (result != VK_SUCCESS) {
-            return VkError.CreateSwapchain;
-        }
+    result = vk.vkGetSwapchainImagesKHR(vk_logical, swapchain.vk_swapchain, &image_ct, swapchain.images.cptr());
+    if (result != VK_SUCCESS) {
+        return VkError.CreateSwapchain;
     }
-    {
-        const result = vk.vkGetSwapchainImagesKHR(vk_logical, swapchain.vk_swapchain, &image_ct, swapchain.images.cptr());
-        if (result != VK_SUCCESS) {
-            return VkError.CreateSwapchain;
-        }
-        swapchain.images.setCount(image_ct);
-    }
+    swapchain.images.setCount(image_ct);
 
     swapchain.extent = extent;
     swapchain.image_fmt = surface_format.format;
@@ -602,14 +599,18 @@ fn createGraphicsPipeline() !void {
 
     var shader_stages: [2]vk.VkPipelineShaderStageCreateInfo = .{vert_shader_info, frag_shader_info};
 
+    const binding_description: vk.VkVertexInputBindingDescription = gfxmath.getVertexInputBindingDescription();
+    var attribute_descriptions = LocalArray(vk.VkVertexInputAttributeDescription, 2).new();
+    gfxmath.getAttributeDescriptions(&attribute_descriptions);
+
     const vertex_input_info = vk.VkPipelineVertexInputStateCreateInfo{
         .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
         .pNext = null,
         .flags = 0,
-        .vertexBindingDescriptionCount = 0,
-        .pVertexBindingDescriptions = null,
-        .vertexAttributeDescriptionCount = 0,
-        .pVertexAttributeDescriptions = null,
+        .vertexBindingDescriptionCount = 1,
+        .pVertexBindingDescriptions = &binding_description,
+        .vertexAttributeDescriptionCount = @intCast(u32, attribute_descriptions.count()),
+        .pVertexAttributeDescriptions = attribute_descriptions.cptr(),
     };
 
     const pipeline_assembly_info = vk.VkPipelineInputAssemblyStateCreateInfo{
@@ -793,6 +794,48 @@ fn createCommandPool() !void {
     if (result != VK_SUCCESS) {
         return VkError.CreateCommandPool;
     }
+}
+
+fn createVertexBuffer() !void {
+    const buffer_info = vk.VkBufferCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .size = @sizeOf(@TypeOf(vertices[0])) * vertices.len,
+        .usage = vk.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        .sharingMode = vk.VK_SHARING_MODE_EXCLUSIVE,
+        .queueFamilyIndexCount = 0,
+        .pQueueFamilyIndices = null,
+    };
+
+    var result = vk.vkCreateBuffer(vk_logical, &buffer_info, null, &vertex_buffer);
+    if (result != VK_SUCCESS) {
+        return VkError.CreateVertexBuffer;
+    }
+
+    var memory_requirements: vk.VkMemoryRequirements = undefined;
+    vk.vkGetBufferMemoryRequirements(vk_logical, vertex_buffer, &memory_requirements);
+
+    const memory_property_flags: vk.VkMemoryPropertyFlags = 
+        vk.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    const memory_type: u32 = try findMemoryType(memory_requirements.memoryTypeBits, memory_property_flags);
+    const allocate_info = vk.VkMemoryAllocateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .pNext = null,
+        .allocationSize = memory_requirements.size,
+        .memoryTypeIndex = memory_type,
+    };
+
+    result = vk.vkAllocateMemory(vk_logical, &allocate_info, null, &vertex_buffer_memory);
+    if (result != VK_SUCCESS) {
+        return VkError.AllocatevertexBufferMemory;
+    }
+    _ = vk.vkBindBufferMemory(vk_logical, vertex_buffer, vertex_buffer_memory, 0);
+
+    var vertex_data : ?[*]Vertex = null;
+    _ = vk.vkMapMemory(vk_logical, vertex_buffer_memory, 0, buffer_info.size, 0, @ptrCast([*c]?*anyopaque, &vertex_data));
+    @memcpy(vertex_data.?[0..vertices.len], &vertices);
+    vk.vkUnmapMemory(vk_logical, vertex_buffer_memory);
 }
 
 fn createCommandBuffers() !void {
@@ -1213,6 +1256,22 @@ const Swapchain = struct {
     }
 };
 
+fn findMemoryType(type_filter: u32, props: vk.VkMemoryPropertyFlags) !u32 {
+    var memory_properties: vk.VkPhysicalDeviceMemoryProperties = undefined;
+    vk.vkGetPhysicalDeviceMemoryProperties(physical.vk_physical, &memory_properties);
+
+    for (0..memory_properties.memoryTypeCount) |i| {
+        const i_u32 = @intCast(u32, i);
+        const suitable_type = (type_filter & @shlExact(@as(u32, 1), @intCast(u5, i_u32))) != 0;
+        const cpu_accessible = (memory_properties.memoryTypes[i].propertyFlags & @intCast(u32, props)) == @intCast(u32, props);
+        if (suitable_type and cpu_accessible) {
+            return i_u32;
+        }
+    }
+
+    return VkError.NoSuitableGraphicsMemoryType;
+}
+
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- data
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1230,6 +1289,9 @@ var sem_image_available: [MAX_FRAMES_IN_FLIGHT]VkSemaphore = .{null, null};
 var sem_render_finished: [MAX_FRAMES_IN_FLIGHT]VkSemaphore = .{null, null};
 var in_flight_fences: [MAX_FRAMES_IN_FLIGHT]VkFence = .{null, null};
 
+var vertex_buffer: VkBuffer = null;
+var vertex_buffer_memory: VkDeviceMemory = null;
+
 var present_queue: VkQueue = null;
 var graphics_queue: VkQueue = null;
 var compute_queue: VkQueue = null;
@@ -1242,6 +1304,12 @@ var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 
 var current_frame: u32 = 0;
 var framebuffer_resized: bool = false;
+
+var vertices: [3]Vertex = .{
+    Vertex{.position = Vec2.init(0.0, -0.5), .color = Vec3.init(1.0, 1.0, 0.8)},
+    Vertex{.position = Vec2.init(0.5, 0.5),  .color = Vec3.init(0.0, 1.0, 0.0)},
+    Vertex{.position = Vec2.init(-0.5, 0.5),  .color = Vec3.init(0.0, 0.0, 1.0)},
+};
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------- constants
@@ -1280,6 +1348,9 @@ const VkError = error {
     DrawFrame,
     AcquireSwapchainImage,
     PresentSwapchainImage,
+    CreateVertexBuffer,
+    NoSuitableGraphicsMemoryType,
+    AllocatevertexBufferMemory,
 };
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1302,6 +1373,8 @@ const VkCommandPool = vk.VkCommandPool;
 const VkCommandBuffer = vk.VkCommandBuffer;
 const VkSemaphore = vk.VkSemaphore;
 const VkFence = vk.VkFence;
+const VkBuffer = vk.VkBuffer;
+const VkDeviceMemory = vk.VkDeviceMemory;
 
 const std = @import("std");
 const print = std.debug.print;
@@ -1311,3 +1384,8 @@ const LocalArray = array.LocalArray;
 const benchmark = @import("benchmark.zig");
 const ScopeTimer = benchmark.ScopeTimer;
 const getScopeTimerID = benchmark.getScopeTimerID;
+const gfxmath = @import("gfxmath.zig");
+const Vertex = gfxmath.Vertex;
+const linalg = @import("linalg.zig");
+const Vec2 = linalg.Vec2;
+const Vec3 = linalg.Vec3;
