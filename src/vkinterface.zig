@@ -15,7 +15,7 @@ pub fn init() !void {
     try createRenderPass();
     try createGraphicsPipeline();
     try createFramebuffers();
-    try createCommandPool();
+    try createCommandPools();
     try createVertexBuffer();
     try createCommandBuffers();
     try createSyncObjects();
@@ -33,7 +33,10 @@ pub fn cleanup() void {
         vk.vkDestroySemaphore(vk_logical, sem_render_finished[i], null);
         vk.vkDestroyFence(vk_logical, in_flight_fences[i], null);
     }
-    vk.vkDestroyCommandPool(vk_logical, vk_command_pool, null);
+    vk.vkDestroyCommandPool(vk_logical, present_command_pool, null);
+    vk.vkDestroyCommandPool(vk_logical, graphics_command_pool, null);
+    vk.vkDestroyCommandPool(vk_logical, compute_command_pool, null);
+    vk.vkDestroyCommandPool(vk_logical, transfer_command_pool, null);
     vk.vkDestroyPipelineLayout(vk_logical, vk_pipeline_layout, null);
     vk.vkDestroyRenderPass(vk_logical, vk_render_pass, null);
     vk.vkDestroyPipeline(vk_logical, vk_pipeline, null);
@@ -66,8 +69,8 @@ pub fn drawFrame() !void {
     }
     _ = vk.vkResetFences(vk_logical, 1, &in_flight_fences[current_frame]);
 
-    _ = vk.vkResetCommandBuffer(vk_command_buffers[current_frame], 0);
-    try recordCommandBuffer(vk_command_buffers[current_frame], image_idx);
+    _ = vk.vkResetCommandBuffer(graphics_command_buffers[current_frame], 0);
+    try recordCommandBuffer(graphics_command_buffers[current_frame], image_idx);
 
     const wait_stage: vk.VkPipelineStageFlags = vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 
@@ -78,7 +81,7 @@ pub fn drawFrame() !void {
         .pWaitSemaphores = &sem_image_available[current_frame],
         .pWaitDstStageMask = &wait_stage,
         .commandBufferCount = 1,
-        .pCommandBuffers = &vk_command_buffers[current_frame],
+        .pCommandBuffers = &graphics_command_buffers[current_frame],
         .signalSemaphoreCount = 1,
         .pSignalSemaphores = &sem_render_finished[current_frame],
     };
@@ -367,14 +370,13 @@ fn getPhysicalDevice() !void {
 }
 
 fn createLogicalDevice() !void {
-    var unique_qfam_indices = LocalArray(u32, 4).new();
-    const unique_qfam_ct: usize = physical.getUniqueQueueFamilyIndices(&unique_qfam_indices);
+    var unique_qfam_indices: *LocalArray(u32, 4) = physical.getUniqueQueueFamilyIndices();
 
     var queue_infos = LocalArray(vk.VkDeviceQueueCreateInfo, 4).new();
-    queue_infos.setCount(unique_qfam_ct);
+    queue_infos.setCount(unique_qfam_indices.count());
 
     const queue_priority: f32 = 1.0;
-    for (0..unique_qfam_ct) |i| {
+    for (0..unique_qfam_indices.count()) |i| {
         queue_infos.items[i] = vk.VkDeviceQueueCreateInfo {
             .sType = vk.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
             .queueFamilyIndex = unique_qfam_indices.items[i],
@@ -391,7 +393,7 @@ fn createLogicalDevice() !void {
         .sType = vk.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .pNext = null,
         .flags = 0,
-        .queueCreateInfoCount = @intCast(u32, unique_qfam_ct),
+        .queueCreateInfoCount = @intCast(u32, unique_qfam_indices.count()),
         .pQueueCreateInfos = queue_infos.cptr(),
         .enabledLayerCount = 0,
         .ppEnabledLayerNames = null,
@@ -411,7 +413,7 @@ fn createLogicalDevice() !void {
         vk.vkGetDeviceQueue(vk_logical, compute_idx, 0, &compute_queue);
     }
     if (physical.transfer_idx) |transfer_idx| {
-        vk.vkGetDeviceQueue(vk_logical, transfer_idx, 0, &compute_queue);
+        vk.vkGetDeviceQueue(vk_logical, transfer_idx, 0, &transfer_queue);
     }
 }
 
@@ -425,8 +427,8 @@ fn createSwapchain() !void {
         return VkError.CreateSwapchain;
     }
 
-    var qfam_indices_array = LocalArray(u32, 4).new();
-    const unique_qfam_idx_ct = @intCast(u32, physical.getUniqueQueueFamilyIndices(&qfam_indices_array));
+    var qfam_indices_array: *LocalArray(u32, 4) = physical.getUniqueQueueFamilyIndices();
+    const unique_qfam_idx_ct = @intCast(u32, qfam_indices_array.count());
 
     var image_share_mode: vk.VkSharingMode = undefined;
     var qfam_index_ct: u32 = undefined;
@@ -782,30 +784,72 @@ fn createFramebuffers() !void {
     }
 }
 
-fn createCommandPool() !void {
-    const command_pool_info = vk.VkCommandPoolCreateInfo{
+fn createCommandPools() !void {
+    var command_pool_info = vk.VkCommandPoolCreateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .pNext = null,
+        .flags = vk.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = physical.present_idx.?,
+    };
+
+    var result = vk.vkCreateCommandPool(vk_logical, &command_pool_info, null, &present_command_pool);
+    if (result != VK_SUCCESS) {
+        return VkError.CreateCommandPool;
+    }
+
+    command_pool_info = vk.VkCommandPoolCreateInfo{
         .sType = vk.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .pNext = null,
         .flags = vk.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
         .queueFamilyIndex = physical.graphics_idx.?,
     };
 
-    const result = vk.vkCreateCommandPool(vk_logical, &command_pool_info, null, &vk_command_pool);
+    result = vk.vkCreateCommandPool(vk_logical, &command_pool_info, null, &graphics_command_pool);
     if (result != VK_SUCCESS) {
         return VkError.CreateCommandPool;
+    }
+
+    if (physical.compute_idx != null) {
+        command_pool_info = vk.VkCommandPoolCreateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .pNext = null,
+            .flags = vk.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+            .queueFamilyIndex = physical.compute_idx.?,
+        };
+
+        result = vk.vkCreateCommandPool(vk_logical, &command_pool_info, null, &compute_command_pool);
+        if (result != VK_SUCCESS) {
+            return VkError.CreateCommandPool;
+        }
+    }
+
+    if (physical.transfer_idx != null) {
+        command_pool_info = vk.VkCommandPoolCreateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .pNext = null,
+            .flags = vk.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+            .queueFamilyIndex = physical.transfer_idx.?,
+        };
+
+        result = vk.vkCreateCommandPool(vk_logical, &command_pool_info, null, &transfer_command_pool);
+        if (result != VK_SUCCESS) {
+            return VkError.CreateCommandPool;
+        }
     }
 }
 
 fn createVertexBuffer() !void {
+    const qfam_indices: *LocalArray(u32, 4) = physical.getUniqueQueueFamilyIndices();
+
     const buffer_info = vk.VkBufferCreateInfo{
         .sType = vk.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .pNext = null,
         .flags = 0,
         .size = @sizeOf(@TypeOf(vertices[0])) * vertices.len,
         .usage = vk.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        .sharingMode = vk.VK_SHARING_MODE_EXCLUSIVE,
-        .queueFamilyIndexCount = 0,
-        .pQueueFamilyIndices = null,
+        .sharingMode = vk.VK_SHARING_MODE_CONCURRENT,
+        .queueFamilyIndexCount = @intCast(u32, qfam_indices.count()),
+        .pQueueFamilyIndices = qfam_indices.cptr(),
     };
 
     var result = vk.vkCreateBuffer(vk_logical, &buffer_info, null, &vertex_buffer);
@@ -839,18 +883,62 @@ fn createVertexBuffer() !void {
 }
 
 fn createCommandBuffers() !void {
-    const buffer_allocate_info = vk.VkCommandBufferAllocateInfo{
+    var buffer_allocate_info = vk.VkCommandBufferAllocateInfo{
         .sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .pNext = null,
-        .commandPool = vk_command_pool,
+        .commandPool = present_command_pool,
         .level = vk.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
         .commandBufferCount = MAX_FRAMES_IN_FLIGHT,
     };
 
-    const result = vk.vkAllocateCommandBuffers(vk_logical, &buffer_allocate_info, &vk_command_buffers[0]);
+    var result = vk.vkAllocateCommandBuffers(vk_logical, &buffer_allocate_info, &present_command_buffers[0]);
     if (result != VK_SUCCESS) {
         return VkError.CreateCommandBuffer;
     }
+
+    buffer_allocate_info = vk.VkCommandBufferAllocateInfo{
+        .sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .pNext = null,
+        .commandPool = graphics_command_pool,
+        .level = vk.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = MAX_FRAMES_IN_FLIGHT,
+    };
+
+    result = vk.vkAllocateCommandBuffers(vk_logical, &buffer_allocate_info, &graphics_command_buffers[0]);
+    if (result != VK_SUCCESS) {
+        return VkError.CreateCommandBuffer;
+    }
+
+    if (physical.compute_idx != null) {
+        buffer_allocate_info = vk.VkCommandBufferAllocateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .pNext = null,
+            .commandPool = compute_command_pool,
+            .level = vk.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = MAX_FRAMES_IN_FLIGHT,
+        };
+
+        result = vk.vkAllocateCommandBuffers(vk_logical, &buffer_allocate_info, &compute_command_buffers[0]);
+        if (result != VK_SUCCESS) {
+            return VkError.CreateCommandBuffer;
+        }
+    }
+
+    if (physical.transfer_idx != null) {
+        buffer_allocate_info = vk.VkCommandBufferAllocateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .pNext = null,
+            .commandPool = transfer_command_pool,
+            .level = vk.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = MAX_FRAMES_IN_FLIGHT,
+        };
+
+        result = vk.vkAllocateCommandBuffers(vk_logical, &buffer_allocate_info, &transfer_command_buffers[0]);
+        if (result != VK_SUCCESS) {
+            return VkError.CreateCommandBuffer;
+        }
+    }
+
 }
 
 fn createSyncObjects() !void {
@@ -1017,6 +1105,10 @@ fn getPhysicalDeviceQueueFamilyCapabilities(device: VkPhysicalDevice, device_int
         device, &queue_family_ct, @ptrCast([*c]vk.VkQueueFamilyProperties, queue_family_props.items)
     );
 
+    var p_high_score: i32 = -100;
+    var g_high_score: i32 = -100;
+    var c_high_score: i32 = -100;
+    var t_high_score: i32 = -100;
     for (0..queue_family_ct) |i| {
         const idx32: u32 = @intCast(u32, i);
         var vk_family_supports_present: vk.VkBool32 = undefined;
@@ -1031,32 +1123,55 @@ fn getPhysicalDeviceQueueFamilyCapabilities(device: VkPhysicalDevice, device_int
         const family_supports_graphics = (family_props.queueFlags & vk.VK_QUEUE_GRAPHICS_BIT) > 0;
         const family_supports_compute = (family_props.queueFlags & vk.VK_QUEUE_COMPUTE_BIT) > 0;
         const family_supports_transfer = (family_props.queueFlags & vk.VK_QUEUE_TRANSFER_BIT) > 0;
-        const family_supports_all = 
-            family_supports_present 
-            and family_supports_graphics 
-            and family_supports_compute
-            and family_supports_transfer;
 
-        if (family_supports_all) {
+        // preferences for queue family separation per operation: p & g together, c alone, t alone
+        const p_base: i32 = @boolToInt(family_supports_present);
+        const g_base: i32 = @boolToInt(family_supports_graphics);
+        const pg_base: i32 = p_base + g_base;
+        const c_base: i32 = @boolToInt(family_supports_compute);
+        const t_base: i32 = @boolToInt(family_supports_transfer);
+
+        const pg_score = pg_base - c_base - t_base;
+        const c_score = c_base - pg_base - t_base;
+        var t_score = t_base - pg_base - c_base;
+
+        // if graphics won't be reassigned to this index and graphics idx == transfer idx, try to create separation
+        // between the two by biasing transfer to reassign to this idx. this is done to attempt to account for situations
+        // where two queue families score equally for graphics and transfer, which wouldn't get transfer to reassign.
+        if (pg_score <= g_high_score 
+            and t_score <= t_high_score
+            and device_interface.graphics_idx != null
+            and device_interface.transfer_idx != null
+            and device_interface.graphics_idx.? == device_interface.transfer_idx.?
+        ) {
+            t_score += pg_base;
+        }
+
+        if (family_supports_present and pg_score > p_high_score) {
             device_interface.present_idx = idx32;
+            p_high_score = pg_score;
+        }
+        if (family_supports_graphics and pg_score > g_high_score) {
             device_interface.graphics_idx = idx32;
+            g_high_score = pg_score;
+        }
+        if (family_supports_compute and c_score > c_high_score) {
             device_interface.compute_idx = idx32;
+            c_high_score = c_score;
+        }
+        if (family_supports_transfer and t_score > t_high_score) {
             device_interface.transfer_idx = idx32;
-            break;
-        }
-        if (family_supports_present) {
-            device_interface.present_idx = idx32;
-        }
-        if (family_supports_graphics) {
-            device_interface.graphics_idx = idx32;
-        }
-        if (family_supports_compute) {
-            device_interface.compute_idx = idx32;
-        }
-        if (family_supports_transfer) {
-            device_interface.transfer_idx = idx32;
+            t_high_score = t_score;
         }
     }
+    // print("p: {}, g: {}, c: {}, t: {}\n", 
+    //     .{
+    //         device_interface.present_idx.?, 
+    //         device_interface.graphics_idx.?, 
+    //         device_interface.compute_idx.?, 
+    //         device_interface.transfer_idx.?
+    //     }
+    // );
 
     if (device_interface.present_idx == null or device_interface.graphics_idx == null) {
         return false;
@@ -1190,26 +1305,28 @@ const PhysicalDevice = struct {
     compute_idx: ?u32 = null,
     transfer_idx: ?u32 = null,
     qfam_capabilities: QFamCapabilities = QFamCapabilities.None,
+    qfam_unique_indices: LocalArray(u32, 4) = LocalArray(u32, 4).new(),
 
     pub fn reset(self: *PhysicalDevice) void {
         self.* = PhysicalDevice{};
     }
 
-    pub fn getUniqueQueueFamilyIndices(self: *PhysicalDevice, indices: *LocalArray(u32, 4)) usize {
-        indices.resetCount();
-        if (self.present_idx != null) {
-            indices.push(self.present_idx.?);
+    pub fn getUniqueQueueFamilyIndices(self: *PhysicalDevice) *LocalArray(u32, 4) {
+        if (self.qfam_unique_indices.count() == 0) {
+            if (self.present_idx != null) {
+                self.qfam_unique_indices.push(self.present_idx.?);
+            }
+            if (self.graphics_idx != null and self.qfam_unique_indices.find(self.graphics_idx.?) == null) {
+                self.qfam_unique_indices.push(self.graphics_idx.?);
+            }
+            if (self.compute_idx != null and self.qfam_unique_indices.find(self.compute_idx.?) == null) {
+                self.qfam_unique_indices.push(self.compute_idx.?);
+            }
+            if (self.transfer_idx != null and self.qfam_unique_indices.find(self.transfer_idx.?) == null) {
+                self.qfam_unique_indices.push(self.transfer_idx.?);
+            }
         }
-        if (self.graphics_idx != null and indices.find(self.graphics_idx.?) == null) {
-            indices.push(self.graphics_idx.?);
-        }
-        if (self.compute_idx != null and indices.find(self.compute_idx.?) == null) {
-            indices.push(self.compute_idx.?);
-        }
-        if (self.transfer_idx != null and indices.find(self.transfer_idx.?) == null) {
-            indices.push(self.transfer_idx.?);
-        }
-        return indices.count();
+        return &self.qfam_unique_indices;
     } 
 };
 
@@ -1283,8 +1400,6 @@ var vk_logical: VkDevice = null;
 var vk_render_pass: VkRenderPass = null;
 var vk_pipeline_layout: VkPipelineLayout = null;
 var vk_pipeline: VkPipeline = null;
-var vk_command_pool: VkCommandPool = null;
-var vk_command_buffers: [MAX_FRAMES_IN_FLIGHT]VkCommandBuffer = .{null, null};
 var sem_image_available: [MAX_FRAMES_IN_FLIGHT]VkSemaphore = .{null, null};
 var sem_render_finished: [MAX_FRAMES_IN_FLIGHT]VkSemaphore = .{null, null};
 var in_flight_fences: [MAX_FRAMES_IN_FLIGHT]VkFence = .{null, null};
@@ -1292,10 +1407,20 @@ var in_flight_fences: [MAX_FRAMES_IN_FLIGHT]VkFence = .{null, null};
 var vertex_buffer: VkBuffer = null;
 var vertex_buffer_memory: VkDeviceMemory = null;
 
+var present_command_pool: VkCommandPool = null;
+var graphics_command_pool: VkCommandPool = null;
+var compute_command_pool: VkCommandPool = null;
+var transfer_command_pool: VkCommandPool = null;
+
 var present_queue: VkQueue = null;
 var graphics_queue: VkQueue = null;
 var compute_queue: VkQueue = null;
 var transfer_queue: VkQueue = null;
+
+var present_command_buffers: [MAX_FRAMES_IN_FLIGHT]VkCommandBuffer = .{null, null};
+var graphics_command_buffers: [MAX_FRAMES_IN_FLIGHT]VkCommandBuffer = .{null, null};
+var compute_command_buffers: [MAX_FRAMES_IN_FLIGHT]VkCommandBuffer = .{null, null};
+var transfer_command_buffers: [MAX_FRAMES_IN_FLIGHT]VkCommandBuffer = .{null, null};
 
 var swapchain : Swapchain = Swapchain{};
 var physical: PhysicalDevice = PhysicalDevice{};
@@ -1317,6 +1442,8 @@ var vertices: [3]Vertex = .{
 
 const ONE_SECOND_IN_NANOSECONDS: u32 = 1_000_000_000;
 const MAX_FRAMES_IN_FLIGHT: u32 = 2;
+
+const OP_TYPE = enum {Present, Graphics, Compute, Transfer};
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- errors
