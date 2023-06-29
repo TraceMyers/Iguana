@@ -32,5 +32,6 @@ A custom vector math library, because I enjoy writing vector math.
   <li>Entity Component System</li>
   <li>Benchmarking suite</li>
   <li>Convenient stack and heap array implementations</li>
+  <li>Graphical debug utilities</li>
   <li>...</li>
 </ul>
