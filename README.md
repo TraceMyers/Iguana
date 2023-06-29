@@ -8,11 +8,11 @@ TBD
 A graphical interface for making levels. At this point, the details are uncertain, but it will be much lighter than mainstream editors.
 
 ## Renderer
-A highly parameterizable Vulkan-based renderer with systems for handling static meshes, skeletal meshes, instancing, particle systems, and many other common features.
+A highly parameterizable Vulkan-based renderer with systems for handling static meshes, skeletal meshes, instancing, particles, and many other common features.
 
 There are currently no plans to use any APIs other than Vulkan.
 
-## Entity Component System
+## Physics
 ...
 
 ## Allocator
@@ -27,5 +27,10 @@ This is where ZigVGCore might shine compared to some mainstream engines. The nav
 ## Math
 A custom vector math library, because I enjoy writing vector math.
 
-## Other
-...
+## Misc
+<ul>
+  <li>Entity Component System</li>
+  <li>Benchmarking suite</li>
+  <li>Convenient stack and heap array implementations</li>
+  <li>...</li>
+</ul>
