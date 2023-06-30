@@ -4,26 +4,26 @@ pub const Vertex = struct {
     color: Vec3 = undefined
 };
 
-pub inline fn getVertexInputBindingDescription() vk.VkVertexInputBindingDescription {
-    return vk.VkVertexInputBindingDescription{
+pub inline fn getVertexInputBindingDescription() c.VkVertexInputBindingDescription {
+    return c.VkVertexInputBindingDescription{
         .binding = 0,
         .stride = @sizeOf(Vertex),
-        .inputRate = vk.VK_VERTEX_INPUT_RATE_VERTEX,
+        .inputRate = c.VK_VERTEX_INPUT_RATE_VERTEX,
     };
 }
 
-pub inline fn getAttributeDescriptions(descriptions: *LocalArray(vk.VkVertexInputAttributeDescription, 2)) void {
+pub inline fn getAttributeDescriptions(descriptions: *LocalArray(c.VkVertexInputAttributeDescription, 2)) void {
     descriptions.resetCount();
-    descriptions.push(vk.VkVertexInputAttributeDescription{
+    descriptions.push(c.VkVertexInputAttributeDescription{
         .binding = 0,
         .location = 0,
-        .format = vk.VK_FORMAT_R32G32_SFLOAT,
+        .format = c.VK_FORMAT_R32G32_SFLOAT,
         .offset = @offsetOf(Vertex, "position"),
     });
-    descriptions.push(vk.VkVertexInputAttributeDescription{
+    descriptions.push(c.VkVertexInputAttributeDescription{
         .binding = 0,
         .location = 1,
-        .format = vk.VK_FORMAT_R32G32B32_SFLOAT,
+        .format = c.VK_FORMAT_R32G32B32_SFLOAT,
         .offset = @offsetOf(Vertex, "color"),
     });
 }
@@ -31,6 +31,6 @@ pub inline fn getAttributeDescriptions(descriptions: *LocalArray(vk.VkVertexInpu
 const linalg = @import("linalg.zig");
 const Vec2 = linalg.Vec2;
 const Vec3 = linalg.Vec3;
-const vk = @import("vkdecl.zig");
+const c = @import("vulkan.zig").c;
 const array = @import("array.zig");
 const LocalArray = array.LocalArray;

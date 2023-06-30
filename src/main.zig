@@ -33,4 +33,4 @@ const Vec2 = linalg.Vec2;
 const Vec3 = linalg.Vec3;
 const Plane = linalg.Plane;
 const window = @import("window.zig");
-const vk = @import("vkinterface.zig");
+const vk = @import("vulkan.zig");

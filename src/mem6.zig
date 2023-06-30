@@ -312,9 +312,10 @@ const Mem6Error = error {
 
 pub const MAX_ENCLAVE_CT: usize = 32;
 
-// address space sizes per pool
 const SMALL_PAGE_SZ: usize  = 16    * 1024; // 16KB
 const LARGE_PAGE_SZ: usize  = 64    * 1024; // 64KB
+
+// address space sizes per pool
 const SMALL_POOL_SZ: usize  = 512   * 1024 * 1024; // 512 MB
 const MEDIUM_POOL_SZ: usize = 8     * 1024 * 1024 * 1024; // 8 GB
 const LARGE_POOL_SZ: usize  = 160   * 1024 * 1024 * 1024; // 160 GB

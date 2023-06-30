@@ -4,37 +4,37 @@
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub fn init(width: i32, height: i32, name_opt: ?[*c]const u8) !void {
-    const init_state: c_int = vk.glfwInit();
-    if (init_state == vk.GLFW_FALSE) {
+    const init_state: c_int = c.glfwInit();
+    if (init_state == c.GLFW_FALSE) {
         return GLFWError.InitFail;
     }
 
-    vk.glfwWindowHint(vk.GLFW_CLIENT_API, vk.GLFW_NO_API);
-    vk.glfwWindowHint(vk.GLFW_RESIZABLE, vk.GLFW_TRUE);
+    c.glfwWindowHint(c.GLFW_CLIENT_API, c.GLFW_NO_API);
+    c.glfwWindowHint(c.GLFW_RESIZABLE, c.GLFW_TRUE);
 
     if (name_opt) |name| {
-        window = vk.glfwCreateWindow(width, height, name, null, null);
+        window = c.glfwCreateWindow(width, height, name, null, null);
     }
     else {
-        window = vk.glfwCreateWindow(width, height, "It's a window!", null, null);
+        window = c.glfwCreateWindow(width, height, "It's a window!", null, null);
     }
-    _ = vk.glfwSetFramebufferSizeCallback(window, resizeCallback);
+    _ = c.glfwSetFramebufferSizeCallback(window, resizeCallback);
 
     if (window == null) {
         return GLFWError.WindowCreateFail;
     }
 }
 
-pub inline fn get() *GLFWwindow {
+pub inline fn get() *c.GLFWwindow {
     return window.?;
 }
 
 pub inline fn pollEvents() void {
-    vk.glfwPollEvents();
+    c.glfwPollEvents();
 }
 
 pub inline fn shouldClose() bool {
-    if (vk.glfwWindowShouldClose(window.?) > 0) {
+    if (c.glfwWindowShouldClose(window.?) > 0) {
         return true;
     }
     return false;
@@ -42,27 +42,27 @@ pub inline fn shouldClose() bool {
 
 pub inline fn cleanup() void {
     if (window) |win| {
-        vk.glfwDestroyWindow(win);
+        c.glfwDestroyWindow(win);
     }
-    vk.glfwTerminate();
+    c.glfwTerminate();
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // --------------------------------------------------------------------------------------------------------- interaction
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-fn resizeCallback(win: ?*GLFWwindow, width: c_int, height: c_int) callconv(.C) void {
+fn resizeCallback(win: ?*c.GLFWwindow, width: c_int, height: c_int) callconv(.C) void {
     _ = win;
     _ = width;
     _ = height;
-    vkinterface.setFramebufferResized();
+    vk.setFramebufferResized();
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- data
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-var window: ?*GLFWwindow = null;
+var window: ?*c.GLFWwindow = null;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- errors
@@ -77,7 +77,6 @@ const GLFWError = error {
 // -------------------------------------------------------------------------------------------------------------- import
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const vk = @import("vkdecl.zig");
-const GLFWwindow = vk.GLFWwindow;
+const vk = @import("vulkan.zig");
+const c = vk.c;
 const print = @import("std").debug.print;
-const vkinterface = @import("vkinterface.zig");

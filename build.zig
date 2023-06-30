@@ -13,6 +13,10 @@ pub fn build(b: *std.Build) void {
     });
 
     exe.addIncludePath("D:/programs/zig-windows-x86_64-0.11.0-dev.3105+e46d7a369.lib/libc/include/any-windows-any");
+    exe.addIncludePath("D:/libs/VulkanMemoryAllocator-3.0.1/include");
+    exe.addIncludePath("D:/libs/VulkanSDK/1.3.243.0/Include");
+    exe.addIncludePath("D:/libs/glfw-3.3.8.bin.WIN64/include");
+    exe.addIncludePath("include");
 
     exe.linkLibC();
 
