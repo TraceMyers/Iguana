@@ -1,5 +1,5 @@
-// TODO: just cImport vulkincl.h
 // TODO: better error handling
+// TODO: implement vulkan memory allocator so this isn't both very slow and limited in usage
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- public
@@ -17,6 +17,7 @@ pub fn init() !void {
     try createFramebuffers();
     try createCommandPools();
     try createVertexBuffer();
+    try createIndexBuffer();
     try createCommandBuffers();
     try createSyncObjects();
 }
@@ -28,12 +29,14 @@ pub fn cleanup() void {
     cleanupSwapchain();
     c.vkDestroyBuffer(vk_logical, vertex_buffer, null);
     c.vkFreeMemory(vk_logical, vertex_buffer_memory, null);
+    c.vkDestroyBuffer(vk_logical, index_buffer, null);
+    c.vkFreeMemory(vk_logical, index_buffer_memory, null);
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
         c.vkDestroySemaphore(vk_logical, sem_image_available[i], null);
         c.vkDestroySemaphore(vk_logical, sem_render_finished[i], null);
         c.vkDestroyFence(vk_logical, in_flight_fences[i], null);
     }
-    c.vkDestroyCommandPool(vk_logical, present_command_pool, null);
+    c.vkDestroyCommandPool(vk_logical, transient_command_pool, null);
     c.vkDestroyCommandPool(vk_logical, graphics_command_pool, null);
     c.vkDestroyCommandPool(vk_logical, compute_command_pool, null);
     c.vkDestroyCommandPool(vk_logical, transfer_command_pool, null);
@@ -48,14 +51,14 @@ pub fn cleanup() void {
 }
 
 pub fn drawFrame() !void {
-    // var t1 = ScopeTimer.start("vkinterface.drawFrame", getScopeTimerID());
-    // defer t1.stop();
+    var t1 = ScopeTimer.start("vkinterface.drawFrame", getScopeTimerID());
+    defer t1.stop();
 
     _ = c.vkWaitForFences(vk_logical, 1, &in_flight_fences[current_frame], c.VK_TRUE, std.math.maxInt(u64));
     var image_idx: u32 = undefined;
 
-    // var t2 = ScopeTimer.start("vkinterface.drawFrame(after fence)", getScopeTimerID());
-    // defer t2.stop();
+    var t2 = ScopeTimer.start("vkinterface.drawFrame(after fence)", getScopeTimerID());
+    defer t2.stop();
 
     var result: c.VkResult = c.vkAcquireNextImageKHR(
         vk_logical, swapchain.vk_swapchain, std.math.maxInt(u64), sem_image_available[current_frame], null, &image_idx
@@ -159,6 +162,7 @@ fn recordCommandBuffer(command_buffer: VkCommandBuffer, image_idx: u32) !void {
 
     const offset: c.VkDeviceSize = 0;
     c.vkCmdBindVertexBuffers(command_buffer, 0, 1, &vertex_buffer, &offset);
+    c.vkCmdBindIndexBuffer(command_buffer, index_buffer, 0, c.VK_INDEX_TYPE_UINT16);
 
     const viewport = c.VkViewport{
         .x = 0.0,
@@ -177,7 +181,8 @@ fn recordCommandBuffer(command_buffer: VkCommandBuffer, image_idx: u32) !void {
     };
 
     c.vkCmdSetScissor(command_buffer, 0, 1, &scissor);
-    c.vkCmdDraw(command_buffer, @intCast(u32, vertices.len), 1, 0, 0);
+    // c.vkCmdDraw(command_buffer, @intCast(u32, vertices.len), 1, 0, 0);
+    c.vkCmdDrawIndexed(command_buffer, @intCast(u32, indices.len), 1, 0, 0, 0); // instancing optional here
     c.vkCmdEndRenderPass(command_buffer);
 
     {
@@ -272,6 +277,52 @@ fn createBuffer(
     _ = c.vkBindBufferMemory(vk_logical, buffer.*, buffer_memory.*, 0);
 }
 
+fn copyBuffer(src_buffer: c.VkBuffer, dst_buffer: c.VkBuffer, size: c.VkDeviceSize) !void {
+    const command_buffer_info = c.VkCommandBufferAllocateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .pNext = null,
+        .commandPool = transient_command_pool,
+        .level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1,
+    };
+
+    var copy_command_buffer: c.VkCommandBuffer = undefined;
+    _ = c.vkAllocateCommandBuffers(vk_logical, &command_buffer_info, &copy_command_buffer);
+
+    const begin_info = c.VkCommandBufferBeginInfo{
+        .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .pNext = null,
+        .flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        .pInheritanceInfo = null,
+    };
+    _ = c.vkBeginCommandBuffer(copy_command_buffer, &begin_info);
+
+    const copy_region = c.VkBufferCopy{
+        .srcOffset = 0,
+        .dstOffset = 0,
+        .size = size,
+    };
+
+    c.vkCmdCopyBuffer(copy_command_buffer, src_buffer, dst_buffer, 1, &copy_region);
+    _ = c.vkEndCommandBuffer(copy_command_buffer);
+
+    const submit_info = c.VkSubmitInfo{
+        .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .pNext = null,
+        .waitSemaphoreCount = 0,
+        .pWaitSemaphores = null,
+        .pWaitDstStageMask = 0,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &copy_command_buffer,
+        .signalSemaphoreCount = 0,
+        .pSignalSemaphores = null,
+    };
+
+    _ = c.vkQueueSubmit(graphics_queue, 1, &submit_info, null);
+    // using a fence instead would allow scheduling multiple transfers at once
+    _ = c.vkQueueWaitIdle(graphics_queue);
+}
+
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // --------------------------------------------------------------------------------------------------- creation sequence
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -310,7 +361,7 @@ fn createInstance() !void {
         .pApplicationInfo = &app_info,
         .enabledExtensionCount = glfw_extension_ct,
         .ppEnabledExtensionNames = glfw_required_extensions,
-        .enabledLayerCount = 1,
+        .enabledLayerCount = LAYER_CT,
         .ppEnabledLayerNames = &validation_layer,
     };
 
@@ -616,8 +667,10 @@ fn createRenderPass() !void {
 }
 
 fn createGraphicsPipeline() !void {
+    // var vert_module: c.VkShaderModule = try createShaderModule("../../test/shaders/trivert.spv");
     var vert_module: c.VkShaderModule = try createShaderModule("test/shaders/trivert.spv");
     defer c.vkDestroyShaderModule(vk_logical, vert_module, null);
+    // var frag_module: c.VkShaderModule = try createShaderModule("../../test/shaders/trifrag.spv");
     var frag_module: c.VkShaderModule = try createShaderModule("test/shaders/trifrag.spv");
     defer c.vkDestroyShaderModule(vk_logical, frag_module, null);
 
@@ -830,11 +883,11 @@ fn createCommandPools() !void {
     var command_pool_info = c.VkCommandPoolCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .pNext = null,
-        .flags = c.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .flags = c.VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
         .queueFamilyIndex = physical.present_idx.?,
     };
 
-    var result = c.vkCreateCommandPool(vk_logical, &command_pool_info, null, &present_command_pool);
+    var result = c.vkCreateCommandPool(vk_logical, &command_pool_info, null, &transient_command_pool);
     if (result != VK_SUCCESS) {
         return VkError.CreateCommandPool;
     }
@@ -882,31 +935,77 @@ fn createCommandPools() !void {
 
 fn createVertexBuffer() !void {
     const buffer_size = @sizeOf(@TypeOf(vertices[0])) * vertices.len;
-    const memory_property_flags: c.VkMemoryPropertyFlags = 
+    const staging_buffer_property_flags: c.VkMemoryPropertyFlags = 
         c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    try createBuffer(buffer_size, c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, memory_property_flags, &vertex_buffer, &vertex_buffer_memory);
+    var staging_buffer: c.VkBuffer = undefined;
+    var staging_buffer_memory: c.VkDeviceMemory = undefined;
+
+    try createBuffer(
+        buffer_size, 
+        c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+        staging_buffer_property_flags, 
+        &staging_buffer, 
+        &staging_buffer_memory
+    );
 
     var vertex_data : ?[*]Vertex = null;
-    _ = c.vkMapMemory(vk_logical, vertex_buffer_memory, 0, buffer_size, 0, @ptrCast([*c]?*anyopaque, &vertex_data));
+    _ = c.vkMapMemory(vk_logical, staging_buffer_memory, 0, buffer_size, 0, @ptrCast([*c]?*anyopaque, &vertex_data));
     @memcpy(vertex_data.?[0..vertices.len], &vertices);
-    c.vkUnmapMemory(vk_logical, vertex_buffer_memory);
+    c.vkUnmapMemory(vk_logical, staging_buffer_memory);
+
+    const vertex_buffer_property_flags: c.VkMemoryPropertyFlags = c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+
+    try createBuffer(
+        buffer_size,
+        c.VK_BUFFER_USAGE_TRANSFER_DST_BIT | c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        vertex_buffer_property_flags,
+        &vertex_buffer,
+        &vertex_buffer_memory
+    );
+
+    try copyBuffer(staging_buffer, vertex_buffer, buffer_size);
+    c.vkDestroyBuffer(vk_logical, staging_buffer, null);
+    c.vkFreeMemory(vk_logical, staging_buffer_memory, null);
+}
+
+fn createIndexBuffer() !void {
+    const buffer_size = @sizeOf(@TypeOf(indices[0])) * indices.len;
+    const staging_buffer_property_flags: c.VkMemoryPropertyFlags = 
+        c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    var staging_buffer: c.VkBuffer = undefined;
+    var staging_buffer_memory: c.VkDeviceMemory = undefined;
+
+    try createBuffer(
+        buffer_size, 
+        c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        staging_buffer_property_flags,
+        &staging_buffer,
+        &staging_buffer_memory
+    );
+
+    var index_data : ?[*]u16 = null;
+    _ = c.vkMapMemory(vk_logical, staging_buffer_memory, 0, buffer_size, 0, @ptrCast([*c]?*anyopaque, &index_data));
+    @memcpy(index_data.?[0..indices.len], &indices);
+    c.vkUnmapMemory(vk_logical, staging_buffer_memory);
+
+    const index_buffer_property_flags: c.VkMemoryPropertyFlags = c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+
+    try createBuffer(
+        buffer_size,
+        c.VK_BUFFER_USAGE_TRANSFER_DST_BIT | c.VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+        index_buffer_property_flags,
+        &index_buffer,
+        &index_buffer_memory
+    );
+
+    try copyBuffer(staging_buffer, index_buffer, buffer_size);
+    c.vkDestroyBuffer(vk_logical, staging_buffer, null);
+    c.vkFreeMemory(vk_logical, staging_buffer_memory, null);
 }
 
 fn createCommandBuffers() !void {
+
     var buffer_allocate_info = c.VkCommandBufferAllocateInfo{
-        .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .pNext = null,
-        .commandPool = present_command_pool,
-        .level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = MAX_FRAMES_IN_FLIGHT,
-    };
-
-    var result = c.vkAllocateCommandBuffers(vk_logical, &buffer_allocate_info, &present_command_buffers[0]);
-    if (result != VK_SUCCESS) {
-        return VkError.CreateCommandBuffer;
-    }
-
-    buffer_allocate_info = c.VkCommandBufferAllocateInfo{
         .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .pNext = null,
         .commandPool = graphics_command_pool,
@@ -914,7 +1013,7 @@ fn createCommandBuffers() !void {
         .commandBufferCount = MAX_FRAMES_IN_FLIGHT,
     };
 
-    result = c.vkAllocateCommandBuffers(vk_logical, &buffer_allocate_info, &graphics_command_buffers[0]);
+    var result = c.vkAllocateCommandBuffers(vk_logical, &buffer_allocate_info, &graphics_command_buffers[0]);
     if (result != VK_SUCCESS) {
         return VkError.CreateCommandBuffer;
     }
@@ -1258,6 +1357,9 @@ fn chooseSwapchainExtent(swapc: *Swapchain) c.VkExtent2D {
 }
 
 fn createShaderModule(file_name: []const u8) !c.VkShaderModule {
+    // var dirbuf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    // const cwd = try std.os.getcwd(&dirbuf);
+    // print("cwd: {s}\n", .{cwd});
     var file = std.fs.cwd().openFile(file_name, .{}) catch return VkError.BadShaderModuleName;
     defer file.close();
 
@@ -1491,8 +1593,10 @@ var vma_allocator: c.VmaAllocator = null;
 
 var vertex_buffer: VkBuffer = null;
 var vertex_buffer_memory: VkDeviceMemory = null;
+var index_buffer: VkBuffer = null;
+var index_buffer_memory: VkDeviceMemory = null;
 
-var present_command_pool: VkCommandPool = null;
+var transient_command_pool: VkCommandPool = null;
 var graphics_command_pool: VkCommandPool = null;
 var compute_command_pool: VkCommandPool = null;
 var transfer_command_pool: VkCommandPool = null;
@@ -1502,7 +1606,6 @@ var graphics_queue: VkQueue = null;
 var compute_queue: VkQueue = null;
 var transfer_queue: VkQueue = null;
 
-var present_command_buffers: [MAX_FRAMES_IN_FLIGHT]VkCommandBuffer = .{null, null};
 var graphics_command_buffers: [MAX_FRAMES_IN_FLIGHT]VkCommandBuffer = .{null, null};
 var compute_command_buffers: [MAX_FRAMES_IN_FLIGHT]VkCommandBuffer = .{null, null};
 var transfer_command_buffers: [MAX_FRAMES_IN_FLIGHT]VkCommandBuffer = .{null, null};
@@ -1515,11 +1618,14 @@ var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 var current_frame: u32 = 0;
 var framebuffer_resized: bool = false;
 
-var vertices: [3]Vertex = .{
-    Vertex{.position = Vec2.init(0.0, -0.5), .color = Vec3.init(1.0, 1.0, 0.8)},
-    Vertex{.position = Vec2.init(0.5, 0.5),  .color = Vec3.init(0.0, 1.0, 0.0)},
-    Vertex{.position = Vec2.init(-0.5, 0.5),  .color = Vec3.init(0.0, 0.0, 1.0)},
+const vertices: [4]Vertex = .{
+    Vertex{.position = Vec2.init(-0.5, -0.5), .color = Vec3.init(1.0, 1.0, 0.8)},
+    Vertex{.position = Vec2.init(0.5, -0.5),  .color = Vec3.init(0.0, 1.0, 0.0)},
+    Vertex{.position = Vec2.init(0.5, 0.5),  .color = Vec3.init(0.0, 0.0, 1.0)},
+    Vertex{.position = Vec2.init(-0.5, 0.5),  .color = Vec3.init(1.0, 0.0, 1.0)}
 };
+
+const indices: [6]u16 = .{0, 1, 2, 2, 3, 0};
 
 var vk_allocation_callbacks = c.VkAllocationCallbacks{
     .pUserData = null,
@@ -1538,6 +1644,8 @@ const ONE_SECOND_IN_NANOSECONDS: u32 = 1_000_000_000;
 const MAX_FRAMES_IN_FLIGHT: u32 = 2;
 
 const OP_TYPE = enum {Present, Graphics, Compute, Transfer};
+
+const LAYER_CT: u32 = 0;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- errors
