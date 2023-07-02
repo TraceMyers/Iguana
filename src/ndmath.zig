@@ -28,6 +28,11 @@ pub const Vec2 = struct {
         self.y = y;
     }
 
+    pub inline fn len(self: *const Vec2) usize {
+        _ = self;
+        return 2;
+    }
+
     // ------------------------------------------------------------------------------------------------------ arithmetic
 
     pub inline fn fAdd(self: Vec2, val: f32) Vec2 {
@@ -402,6 +407,11 @@ pub const Vec3 = struct {
         self.z = z;
     }
 
+    pub inline fn len(self: *const Vec3) usize {
+        _ = self;
+        return 3;
+    }
+
     // ------------------------------------------------------------------------------------------------------ arithmetic
 
     pub inline fn fAdd(self: Vec3, val: f32) Vec3 {
@@ -756,6 +766,596 @@ pub const Vec3 = struct {
     }
 
 };
+
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ---------------------------------------------------------------------------------------------------------------- Vec4
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub const Vec4 = struct {
+
+    values: [4]f32 = .{ 0.0, 0.0, 0.0, 0.0 },
+
+    pub inline fn new() Vec4 {
+        return Vec4 {};
+    }
+
+    pub inline fn fill(val: f32) Vec4 {
+        return Vec4 {.values = .{ val, val, val, val }};
+    }
+
+    pub inline fn fromVec2(vec: Vec2) Vec4 {
+        return Vec4 {.values = .{ vec.x, vec.y, 0.0, 0.0 }};
+    }
+
+    pub inline fn fromVec3(vec: Vec3) Vec4 {
+        return Vec4 {.values = .{ vec.x, vec.y, vec.z, 0.0 }};
+    }
+
+    pub inline fn init(in_x: f32, in_y: f32, in_z: f32, in_w: f32) Vec4 {
+        return Vec4 {.values = .{ in_x, in_y, in_z, in_w }};
+    }
+
+    pub inline fn set(self: *Vec4, in_x: f32, in_y: f32, in_z: f32, in_w: f32) void {
+        self.values[0] = in_x;
+        self.values[1] = in_y;
+        self.values[2] = in_z;
+        self.values[3] = in_w;
+    }
+
+    pub inline fn len(self: *const Vec4) usize {
+        _ = self;
+        return 4;
+    }
+
+    // --------------------------------------------------------------------------------------------------------- getters
+
+    pub inline fn x(self: *Vec4) f32 {
+        return self.values[0];
+    }
+
+    pub inline fn y(self: *Vec4) f32 {
+        return self.values[1];
+    }
+
+    pub inline fn z(self: *Vec4) f32 {
+        return self.values[2];
+    }
+
+    pub inline fn w(self: *Vec4) f32 {
+        return self.values[3];
+    }
+
+    // ------------------------------------------------------------------------------------------------------ arithmetic
+
+    pub inline fn fAdd(self: Vec4, val: f32) Vec4 {
+        const vself : @Vector(4, f32) = self.values;
+        const vvals : @Vector(4, f32) = @splat(4, val);
+        return Vec4{ .values = vself + vvals };
+    }
+
+    pub inline fn fSub(self: Vec4, val: f32) Vec4 {
+        const vself : @Vector(4, f32) = self.values;
+        const vvals : @Vector(4, f32) = @splat(4, val);
+        return Vec4{ .values = vself - vvals };
+    }
+
+    pub inline fn fMul(self: Vec4, val: f32) Vec4 {
+        const vself : @Vector(4, f32) = self.values;
+        const vvals : @Vector(4, f32) = @splat(4, val);
+        return Vec4{ .values = vself * vvals };
+    }
+
+    pub inline fn fDiv(self: Vec4, val: f32) Vec4 {
+        const inv_val = 1.0 / val; 
+        const vself : @Vector(4, f32) = self.values;
+        const vvals : @Vector(4, f32) = @splat(4, inv_val);
+        return Vec4{ .values = vself * vvals };
+    }
+
+    pub inline fn add(self: Vec4, other: Vec4) Vec4 {
+        const vself : @Vector(4, f32) = self.values;
+        const vother : @Vector(4, f32) = other.values;
+        return Vec4{ .values = vself + vother };
+    }
+
+    pub inline fn sub(self: Vec4, other: Vec4) Vec4 {
+        const vself : @Vector(4, f32) = self.values;
+        const vother : @Vector(4, f32) = other.values;
+        return Vec4{ .values = vself - vother };
+    }
+
+    pub inline fn mul(self: Vec4, other: Vec4) Vec4 {
+        const vself : @Vector(4, f32) = self.values;
+        const vother : @Vector(4, f32) = other.values;
+        return Vec4{ .values = vself * vother };
+    }
+
+    pub inline fn div(self: Vec4, other: Vec4) Vec4 {
+        const vself : @Vector(4, f32) = self.values;
+        const vother : @Vector(4, f32) = other.values;
+        return Vec4{ .values = vself / vother };
+    }
+
+    // pub inline fn add2d(self: Vec4, other: anytype) Vec4 {
+    //     return Vec4 { .x = self.x + other.x, .y = self.y + other.y, .z = self.z, .w = self.w };
+    // }
+
+    // pub inline fn sub2d(self: Vec4, other: anytype) Vec4 {
+    //     return Vec4 { .x = self.x - other.x, .y = self.y - other.y, .z = self.z, .w = self.w };
+    // }
+
+    // pub inline fn mul2d(self: Vec4, other: anytype) Vec4 {
+    //     return Vec4 { .x = self.x * other.x, .y = self.y * other.y, .z = self.z, .w = self.w };
+    // }
+
+    // pub inline fn div2d(self: Vec4, other: anytype) Vec4 {
+    //     return Vec4 { .x = self.x / other.x, .y = self.y / other.y, .z = self.z, .w = self.w };
+    // }
+
+    // pub inline fn add3d(self: Vec4, other: anytype) Vec4 {
+    //     return Vec4 { .x = self.x + other.x, .y = self.y + other.y, .z = self.z + other.z, .w = self.w };
+    // }
+
+    // pub inline fn sub3d(self: Vec4, other: anytype) Vec4 {
+    //     return Vec4 { .x = self.x - other.x, .y = self.y - other.y, .z = self.z - other.z, .w = self.w };
+    // }
+
+    // pub inline fn mul3d(self: Vec4, other: anytype) Vec4 {
+    //     return Vec4 { .x = self.x * other.x, .y = self.y * other.y, .z = self.z * other.z, .w = self.w };
+    // }
+
+    // pub inline fn div3d(self: Vec4, other: anytype) Vec4 {
+    //     return Vec4 { .x = self.x / other.x, .y = self.y / other.y, .z = self.z / other.z, .w = self.w };
+    // }
+
+    // pub inline fn fAddx(self: *Vec4, val: f32) void {
+    //     const 
+    //     self.x += val;
+    //     self.y += val;
+    //     self.z += val;
+    //     self.w += val;
+    // }
+
+    // pub inline fn fSubx(self: *Vec4, val: f32) void {
+    //     self.x -= val;
+    //     self.y -= val;
+    //     self.z -= val;
+    //     self.w -= val;
+    // }
+
+    // pub inline fn fMulx(self: *Vec4, val: f32) void {
+    //     self.x *= val;
+    //     self.y *= val;
+    //     self.z *= val;
+    //     self.w *= val;
+    // }
+
+    // pub inline fn fDivx(self: *Vec4, val: f32) void {
+    //     const inv_val = 1.0 / val; 
+    //     self.x *= inv_val;
+    //     self.y *= inv_val;
+    //     self.z *= inv_val;
+    //     self.w *= inv_val;
+    // }
+
+    // pub inline fn addx(self: *Vec4, other: Vec4) void {
+    //     self.x += other.x;
+    //     self.y += other.y;
+    //     self.z += other.z;
+    //     self.w += other.w;
+    // }
+
+    // pub inline fn subx(self: *Vec4, other: Vec4) void {
+    //     self.x -= other.x;
+    //     self.y -= other.y;
+    //     self.z -= other.z;
+    //     self.w -= other.w;
+    // }
+
+    // pub inline fn mulx(self: *Vec4, other: Vec4) void {
+    //     self.x *= other.x;
+    //     self.y *= other.y;
+    //     self.z *= other.z;
+    //     self.w *= other.w;
+    // }
+
+    // pub inline fn divx(self: *Vec4, other: Vec4) void {
+    //     self.x /= other.x;
+    //     self.y /= other.y;
+    //     self.z /= other.z;
+    //     self.w /= other.w;
+    // }
+
+    // pub inline fn addx2d(self: *Vec4, other: anytype) void {
+    //     self.x += other.x;
+    //     self.y += other.y;
+    // }
+
+    // pub inline fn subx2d(self: *Vec4, other: anytype) void {
+    //     self.x -= other.x;
+    //     self.y -= other.y;
+    // }
+
+    // pub inline fn mulx2d(self: *Vec4, other: anytype) void {
+    //     self.x *= other.x;
+    //     self.y *= other.y;
+    // }
+
+    // pub inline fn divx2d(self: *Vec4, other: anytype) void {
+    //     self.x /= other.x;
+    //     self.y /= other.y;
+    // }
+
+    // pub inline fn addx3d(self: *Vec4, other: anytype) void {
+    //     self.x += other.x;
+    //     self.y += other.y;
+    //     self.z += other.z;
+    // }
+
+    // pub inline fn subx3d(self: *Vec4, other: anytype) void {
+    //     self.x -= other.x;
+    //     self.y -= other.y;
+    //     self.z -= other.z;
+    // }
+
+    // pub inline fn mulx3d(self: *Vec4, other: anytype) void {
+    //     self.x *= other.x;
+    //     self.y *= other.y;
+    //     self.z *= other.z;
+    // }
+
+    // pub inline fn divx3d(self: *Vec4, other: anytype) void {
+    //     self.x /= other.x;
+    //     self.y /= other.y;
+    //     self.z *= other.z;
+    // }
+
+    // // ---------------------------------------------------------------------------------------------------------- linalg
+
+    // pub inline fn dot(self: Vec4, other: Vec4) f32 {
+    //     return self.x * other.x + self.y * other.y + self.z * other.z;
+    // }
+
+    // pub inline fn dot2d(self: Vec4, other: anytype) f32 {
+    //     return self.x * other.x + self.y * other.y;
+    // }
+
+    // pub inline fn cross(self: Vec4, other: Vec4) Vec4 {
+    //     return Vec4{ 
+    //         .x = self.y * other.z - self.z * other.y,
+    //         .y = self.z * other.x - self.x * other.z,
+    //         .z = self.x * other.y - self.y * other.x
+    //     };
+    // }
+
+    // // ------------------------------------------------------------------------------------------------------------ size
+
+    // pub inline fn size(self: Vec4) f32 {
+    //     return @sqrt(self.x * self.x + self.y * self.y + self.z * self.z);
+    // }
+
+    // pub inline fn sizeSq(self: Vec4) f32 {
+    //     return self.x * self.x + self.y * self.y + self.z * self.z;
+    // }
+
+    // pub inline fn size2d(self: Vec4) f32 {
+    //     return @sqrt(self.x * self.x + self.y * self.y);
+    // }
+
+    // pub inline fn sizeSq2d(self: Vec4) f32 {
+    //     return self.x * self.x + self.y * self.y;
+    // }
+
+
+    // // -------------------------------------------------------------------------------------------------------- distance
+
+    // pub inline fn dist(self: Vec4, other: Vec4) f32 {
+    //     const diff = Vec4 {.x = self.x - other.x, .y = self.y - other.y, .z = self.z - other.z };
+    //     return @sqrt(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z );
+    // }
+
+    // pub inline fn distSq(self: Vec4, other: Vec4) f32 {
+    //     const diff = Vec4 {.x = self.x - other.x, .y = self.y - other.y, .z = self.z - other.z };
+    //     return diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
+    // }
+
+    // pub inline fn dist2d(self: Vec4, other: anytype) f32 {
+    //     const diff = Vec2 {.x = self.x - other.x, .y = self.y - other.y };
+    //     return @sqrt(diff.x * diff.x + diff.y * diff.y);
+    // }
+
+    // pub inline fn distSq2d(self: Vec4, other: anytype) f32 {
+    //     const diff = Vec2 {.x = self.x - other.x, .y = self.y - other.y };
+    //     return diff.x * diff.x + diff.y * diff.y;
+    // }
+
+    // // --------------------------------------------------------------------------------------------------------- max/min
+
+    // pub fn maxComponent(self: Vec4) f32 {
+    //     if (self.x > self.y) {
+    //         if (self.x > self.z) {
+    //             return self.x;
+    //         }
+    //         return self.z;
+    //     }
+    //     else if (self.y > self.z) {
+    //         return self.y;
+    //     }
+    //     return self.z;
+    // }
+
+    // pub fn minComponent(self: Vec4) f32 {
+    //     if (self.x < self.y) {
+    //         if (self.x < self.z) {
+    //             return self.x;
+    //         }
+    //         return self.z;
+    //     }
+    //     else if (self.y < self.z) {
+    //         return self.y;
+    //     }
+    //     return self.z;
+    // }
+
+    // // -------------------------------------------------------------------------------------------------------- equality
+
+    // pub inline fn exactlyEqual(self: Vec4, other: Vec4) bool {
+    //     return self.x == other.x and self.y == other.y and self.z == other.z;
+    // }
+
+    // pub inline fn nearlyEqual(self: Vec4, other: Vec4) bool {
+    //     return self.distSq(other) < F32_EPSILON;
+    // }
+
+    // // ------------------------------------------------------------------------------------------------------------ sign
+
+    // pub inline fn abs(self: Vec4) Vec4 {
+    //     return Vec4 { .x = @fabs(self.x), .y = @fabs(self.y), .z = @fabs(self.z) };
+    // }
+
+    // pub inline fn flip(self: Vec4) Vec4 {
+    //     return Vec4 {.x = -self.x, .y = -self.y, .z = -self.z };
+    // }
+
+    // pub inline fn absx(self: *Vec4) void {
+    //     self.x = @fabs(self.x);
+    //     self.y = @fabs(self.y);
+    //     self.z = @fabs(self.z);
+    // }
+
+    // pub inline fn flipx(self: *Vec4) void {
+    //     self.x = -self.x;
+    //     self.y = -self.y;
+    //     self.z = -self.z;
+    // }
+
+    // // ---------------------------------------------------------------------------------------------------------- normal
+
+    // pub inline fn normSafe(self: Vec4) Vec4 {
+    //     const sq_sz = self.sizeSq();
+    //     if (sq_sz < F32_EPSILON) {
+    //         return Vec4{};
+    //     }
+    //     return self.fDiv(@sqrt(sq_sz));
+    // }
+
+    // pub inline fn normUnsafe(self: Vec4) Vec4 {
+    //     return self.fDiv(self.size());
+    // }
+
+    // pub inline fn isNorm(self: Vec4) bool {
+    //     return @fabs(1.0 - self.sizeSq()) < F32_EPSILON;
+    // }
+
+    // // ----------------------------------------------------------------------------------------------------------- clamp
+
+    // pub inline fn clamp(self: Vec4, min: f32, max: f32) Vec4 {
+    //     return Vec4 {
+    //         .x = math.clamp(self.x, min, max),
+    //         .y = math.clamp(self.y, min, max),
+    //         .z = math.clamp(self.z, min, max)
+    //     };
+    // }
+
+    // pub fn clampSize(self: Vec4, max_size: f32) Vec4 {
+    //     const max_size_sq = max_size * max_size;
+    //     const cur_size_sq = self.sizeSq();
+    //     if (cur_size_sq > max_size_sq) {
+    //         const cur_size = @sqrt(cur_size_sq);
+    //         return self.fMul(max_size / cur_size);
+    //     }
+    //     return self;
+    // }
+
+    // pub inline fn clampx(self: *Vec2, min: f32, max: f32) void {
+    //     self.x = math.clamp(self.x, min, max);
+    //     self.y = math.clamp(self.y, min, max);
+    //     self.z = math.clamp(self.z, min, max);
+    // }
+
+    // pub fn clampSizex(self: *Vec2, max_size: f32) void {
+    //     const max_size_sq = max_size * max_size;
+    //     const cur_size_sq = self.sizeSq();
+    //     if (cur_size_sq > max_size_sq + F32_EPSILON) {
+    //         const cur_size = @sqrt(cur_size_sq);
+    //         self.fMulx(max_size / cur_size);
+    //     }
+    // }
+
+    // // ---------------------------------------------------------------------------------------------------- trigonometry
+
+    // pub inline fn cosAngle(self: Vec4, other: Vec4) f32 {
+    //     const size_product = self.size() * other.size();
+    //     return self.dot(other) / size_product;
+    // }
+
+    // pub inline fn angle(self: Vec4, other: Vec4) f32 {
+    //     const size_product = self.size() * other.size();
+    //     return math.acos(self.dot(other) / size_product);
+    // }
+
+    // // ------------------------------------------------------------------------------------------------------ projection
+
+    // pub inline fn projectOnto(self: Vec4, onto_vec: Vec4) Vec4 {
+    //     const inner_product = self.dot(onto_vec);
+    //     const other_size_sq = onto_vec.sizeSq();
+    //     return onto_vec.fMul(inner_product / other_size_sq);
+    // }
+
+    // pub inline fn projectOntoNorm(self: Vec4, onto_normalized_vec: Vec4) Vec4 {
+    //     const inner_product = self.dot(onto_normalized_vec);
+    //     return onto_normalized_vec.fMul(inner_product);
+    // }
+
+    // // ------------------------------------------------------------------------------------------------------- direction
+
+    // pub inline fn nearlyParallelNorm(self: Vec4, other: Vec4) bool {
+    //     return self.dot(other) > (1.0 - F32_EPSILON);
+    // }
+
+    // pub inline fn nearlyParallel(self: Vec4, other: Vec4) bool {
+    //     const self_norm = self.normSafe();
+    //     const other_norm = other.normSafe();
+    //     return self_norm.dot(other_norm) > (1.0 - F32_EPSILON);
+    // }
+
+    // pub inline fn similarDir(self: Vec4, other: Vec4) bool {
+    //     return self.dot(other) > F32_EPSILON;
+    // }
+
+    // pub inline fn similarDirByTolerance(self: Vec4, other: Vec4, tolerance: f32) bool {
+    //     return self.dot(other) > (1.0 - tolerance);
+    // }
+
+    // pub inline fn nearlyOrthogonal(self: Vec4, other: Vec4) bool {
+    //     const self_norm = self.normSafe();
+    //     const other_norm = other.normSafe();
+    //     return @fabs(self_norm.dot(other_norm)) < F32_EPSILON;
+    // }
+
+    // pub inline fn nearlyOrthogonalNorm(self: Vec4, other: Vec4) bool {
+    //     return @fabs(self.dot(other)) < F32_EPSILON;
+    // }
+
+    // // ----------------------------------------------------------------------------------------- array.zig functionality
+
+    // pub inline fn matches(self: Vec4, other: Vec4) bool {
+    //     return self.exactlyEqual(other);
+    // }
+
+};
+
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ---------------------------------------------------------------------------------------------------------- Quaternion
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ------------------------------------------------------------------------------------------------------- Square Matrix
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+const Identity2x2: [2][2]f32 = .{
+    .{1.0, 0.0},
+    .{0.0, 1.0},
+};
+
+const Identity3x3: [3][3]f32 = .{
+    .{1.0, 0.0, 0.0},
+    .{0.0, 1.0, 0.0},
+    .{0.0, 0.0, 1.0}
+};
+
+const Identity4x4: [3][3]f32 = .{
+    .{1.0, 0.0, 0.0, 0.0},
+    .{0.0, 1.0, 0.0, 0.0},
+    .{0.0, 0.0, 1.0, 0.0},
+    .{0.0, 0.0, 0.0, 1.0}
+};
+
+const Identity5x5: [5][5]f32 = .{
+    .{1.0, 0.0, 0.0, 0.0, 0.0},
+    .{0.0, 1.0, 0.0, 0.0, 0.0},
+    .{0.0, 0.0, 1.0, 0.0, 0.0},
+    .{0.0, 0.0, 0.0, 1.0, 0.0},
+    .{0.0, 0.0, 0.0, 0.0, 1.0}
+};
+
+pub fn SquareMatrix(comptime size: u32) type {
+
+    std.debug.assert(size >= 2);
+
+    return struct {
+        const Self = @This();
+
+        values : [size][size]f32 = undefined,
+
+        pub fn new() Self {
+            return Self{.values = std.mem.zeroes(Self)};
+        }
+
+        pub fn identity() Self {
+            if (size <= 5) {
+                return Self{ .values = 
+                    switch(size) {
+                        2 => Identity2x2,
+                        3 => Identity3x3,
+                        4 => Identity4x4,
+                        5 => Identity5x5,
+                        else => unreachable
+                    }
+                };
+            }
+            else {
+                var self: Self = std.mem.zeroes(Self);
+                for (0..size) |i| {
+                    self.values[i][i] = 1.0;
+                }
+                return self;
+            }
+        }
+
+        pub fn fromScaleVec(vec: anytype) Self {
+            std.debug.assert(size >= vec.len());
+            var self: Self = std.mem.zeroes(Self);
+            switch(@TypeOf(vec)) {
+                Vec2 => {
+                    self.values[0][0] = vec.x;
+                    self.values[1][1] = vec.y;
+                    inline for (2..size) |i| {
+                        self.values[i][i] = 1.0;
+                    }
+                },
+                Vec3 => {
+                    self.values[0][0] = vec.x;
+                    self.values[1][1] = vec.y;
+                    self.values[2][2] = vec.z;
+                    inline for (3..size) |i| {
+                        self.values[i][i] = 1.0;
+                    }
+                },
+                Vec4 => {
+                    self.values[0][0] = vec.values[0];
+                    self.values[1][1] = vec.values[1];
+                    self.values[2][2] = vec.values[2];
+                    self.values[3][3] = vec.values[3];
+                    inline for (4..size) |i| {
+                        self.values[i][i] = 1.0;
+                    }
+                },
+                else => unreachable
+            }
+            return self;
+        }
+
+        pub fn fromScalar(scalar: f32) Self {
+            var self: Self = std.mem.zeroes(Self);
+            inline for (0..size) |i| {
+                self.values[i][i] = scalar;
+            }
+            return self;
+        }
+
+    };
+}
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // --------------------------------------------------------------------------------------------------------------- Plane
@@ -1146,6 +1746,21 @@ test "Vec3" {
 
     v4.x = -2.0001;
     try expect (!v4.similarDir(v1));
+}
+
+test "Vec4" {
+    var v1 = Vec4.new();
+    _ = v1;
+    var v2 = Vec4.init(0.0, 1.0, 2.0, 3.0);
+    var v3 = v2.fAdd(4);
+    print("\n{},{},{},{}\n", .{v3.x(), v3.y(), v3.z(), v3.w()});
+}
+
+test "SquareMatrix" {
+    var m1 = SquareMatrix(3).identity();
+    _ = m1;
+    var m2 = SquareMatrix(4).fromScaleVec(Vec3.fill(2.0));
+    print("\nmatrix 4x4: {any}\n", .{m2});
 }
 
 test "Plane" {

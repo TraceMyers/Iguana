@@ -28,9 +28,9 @@ pub inline fn getAttributeDescriptions(descriptions: *LocalArray(c.VkVertexInput
     });
 }
 
-const linalg = @import("linalg.zig");
-const Vec2 = linalg.Vec2;
-const Vec3 = linalg.Vec3;
+const nd = @import("ndmath.zig");
+const Vec2 = nd.Vec2;
+const Vec3 = nd.Vec3;
 const c = @import("vulkan.zig").c;
 const array = @import("array.zig");
 const LocalArray = array.LocalArray;
