@@ -1,3 +1,469 @@
+
+pub const fVec2 = Vec(2, f32);
+pub const fVec3 = Vec(3, f32);
+pub const fVec4 = Vec(4, f32);
+pub const fPlane = Vec(4, f32);
+
+pub const dVec2 = Vec(2, f64);
+pub const dVec3 = Vec(3, f64);
+pub const dVec4 = Vec(4, f64);
+pub const dPlane = Vec(4, f64);
+
+pub const iVec2 = Vec(2, i32);
+pub const iVec3 = Vec(3, i32);
+pub const iVec4 = Vec(4, i32);
+
+pub const ilVec2 = Vec(2, i64);
+pub const ilVec3 = Vec(3, i64);
+pub const ilVec4 = Vec(4, i64);
+
+pub const uVec2 = Vec(2, u32);
+pub const uVec3 = Vec(3, u32);
+pub const uVec4 = Vec(4, u32);
+
+pub const ulVec2 = Vec(2, u64);
+pub const ulVec3 = Vec(3, u64);
+pub const ulVec4 = Vec(4, u64);
+
+// TODO: comptime-optimized div possible?
+// TODO: is there a way to cast scalar types such that same-bitwidth vector types could do arithmetic with each other?
+// TODO: ... or just make it easy to convert between them.
+
+pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
+    return struct {
+        const Self = @This();
+
+        val: @Vector(length, ScalarType) = undefined,
+
+    // -------------------------------------------------------------------------------------------------------- new init
+
+        pub inline fn new() Self {
+            return Self{ .val = std.mem.zeroes([length]ScalarType) };
+        }
+
+        pub inline fn init(scalars: [length]ScalarType) Self {
+            var self = Self{};
+            @memcpy(@ptrCast([*]ScalarType, &self.val[0])[0..length], &scalars);
+            return self;
+        }
+
+        pub inline fn initScalar(scalar: ScalarType) Self {
+            var self = Self{};
+            self.val = @splat(length, scalar);
+            return self;
+        }
+
+        pub inline fn initVec(vec: anytype) Self {
+            const copy_len = std.math.min(vec.len(), length);
+            var self = Self{};
+            @memcpy(self.val[0..copy_len], vec.val[0..copy_len]);
+            return self;
+        }
+
+    // --------------------------------------------------------------------------------------------------------- re-init
+
+        pub inline fn fill(self: *Self, scalar: ScalarType) Self {
+            @memset(&self.val, scalar);
+        }
+
+    // ------------------------------------------------------------------------------------------------------- component
+
+        pub inline fn x(self: *const Self) ScalarType {
+            return self.val[0];
+        }
+
+        pub inline fn y(self: *const Self) ScalarType {
+            return self.val[1];
+        }
+
+        pub inline fn z(self: *const Self) ScalarType {
+            return self.val[2];
+        }
+
+        pub inline fn w(self: *const Self) ScalarType {
+            return self.val[3];
+        }
+
+    // ---------------------------------------------------------------------------------------------------------- length
+
+        pub inline fn len(self: *const Self) usize {
+            _ = self;
+            return length;
+        }
+
+        // get the compoment length of this vector. important for use anytime a function can have its branches removed
+        // with comptime information.
+        pub inline fn lenStatic() comptime_int {
+            return length;
+        }
+
+    // ----------------------------------------------------------------------------------------------- vector arithmetic
+    // compile time information throughout these function allows for them to be reduced to branchless execution
+    // according to compiler explorer. for example, vAddc() with two vectors of the same length will simply be
+    // return Self{ .val = self.val + other.val };
+
+        // add two vectors of same or differing lengths with copy for assignment
+        pub inline fn vAddc(self: Self, other: anytype) Self {
+            return switch(length) {
+                0, 1 => unreachable,
+                2, 3 => vAddcLoop(self, other),
+                else => blk: {
+                    if (@TypeOf(other).lenStatic() != length) {
+                        break :blk vAddcLoop(self, other);
+                    }
+                    else {
+                        return Self{ .val = self.val + other.val };
+                    }
+                },
+            };
+        }
+
+        // add two vectors of same or differing lengths inline
+        pub inline fn vAdd(self: *Self, other: anytype) void {
+            switch(length) {
+                0, 1 => unreachable,
+                2, 3 => vAddcLoop(self, other),
+                else => blk: {
+                    if (@TypeOf(other).lenStatic() != length) {
+                        break :blk vAddLoop(self, other);
+                    }
+                    else {
+                        self.val += other.val;
+                    }
+                },
+            }
+        }
+
+        // subtract two vectors of same or differing lengths with copy for assignment
+        pub inline fn vSubc(self: Self, other: anytype) Self {
+            return switch(length) {
+                0, 1 => unreachable,
+                2, 3 => vSubcLoop(self, other),
+                else => blk: {
+                    if (@TypeOf(other).lenStatic() != length) {
+                        break :blk vSubcLoop(self, other);
+                    }
+                    else {
+                        return Self{ .val = self.val - other.val };
+                    }
+                },
+            };
+        }
+
+        // add two vectors of same or differing lengths inline
+        pub inline fn vSub(self: *Self, other: anytype) void {
+            switch(length) {
+                0, 1 => unreachable,
+                2, 3 => vSubLoop(self, other),
+                else => blk: {
+                    if (@TypeOf(other).lenStatic() != length) {
+                        break :blk vSubLoop(self, other);
+                    }
+                    else {
+                        self.val += other.val;
+                    }
+                },
+            }
+        }
+
+        // add two vectors of same or differing lengths with copy for assignment
+        pub inline fn vMulc(self: Self, other: anytype) Self {
+            // compile time information throughout this function allows for it to be reduced to branchless execution
+            // according to compiler explorer. for example, adding two vec4's will have a function that looks like
+            // return Self{ .val = self.val + other.val };
+            return switch(length) {
+                0, 1 => unreachable,
+                2, 3 => vMulcLoop(self, other),
+                else => blk: {
+                    if (@TypeOf(other).lenStatic() != length) {
+                        break :blk vMulcLoop(self, other);
+                    }
+                    else {
+                        return Self{ .val = self.val + other.val };
+                    }
+                },
+            };
+        }
+
+        // add two vectors of same or differing lengths inline
+        pub inline fn vMul(self: *Self, other: anytype) void {
+            switch(length) {
+                0, 1 => unreachable,
+                2, 3 => vMulLoop(self, other),
+                else => blk: {
+                    if (@TypeOf(other).lenStatic() != length) {
+                        break :blk vMulLoop(self, other);
+                    }
+                    else {
+                        self.val += other.val;
+                    }
+                },
+            }
+        }
+
+        // add two vectors of same or differing lengths with copy for assignment
+        pub inline fn vDivc(self: Self, other: anytype) Self {
+            // compile time information throughout this function allows for it to be reduced to branchless execution
+            // according to compiler explorer. for example, adding two vec4's will have a function that looks like
+            // return Self{ .val = self.val + other.val };
+            return switch(length) {
+                0, 1 => unreachable,
+                2, 3 => vDivcLoop(self, other),
+                else => blk: {
+                    if (@TypeOf(other).lenStatic() != length) {
+                        break :blk vDivcLoop(self, other);
+                    }
+                    else {
+                        return Self{ .val = self.val + other.val };
+                    }
+                },
+            };
+        }
+
+        // add two vectors of same or differing lengths inline
+        pub inline fn vDiv(self: *Self, other: anytype) void {
+            switch(length) {
+                0, 1 => unreachable,
+                2, 3 => vDivLoop(self, other),
+                else => blk: {
+                    if (@TypeOf(other).lenStatic() != length) {
+                        break :blk vDivLoop(self, other);
+                    }
+                    else {
+                        self.val += other.val;
+                    }
+                },
+            }
+        }
+
+    // ------------------------------------------------------------------------------- explicit length vector arithmetic
+
+        pub inline fn vAdd2c(self: Self, other: anytype) Self {
+            var add_vec: Self = undefined;
+            add_vec.val[0] = self.val[0] + other.val[0];
+            add_vec.val[1] = self.val[1] + other.val[1];
+            if (length > 2) {
+                @memcpy(@ptrCast([*]ScalarType, &add_vec.val[2])[0..length - 2], @ptrCast([*]ScalarType, &self.val[2])[0..length - 2]);
+            }
+            return add_vec;
+        }
+
+        pub inline fn vAdd2(self: *Self, other: anytype) void {
+            self.val[0] += other.val[0];
+            self.val[1] += other.val[1];
+        }
+
+        pub inline fn vSub2c(self: Self, other: anytype) Self {
+            var sub_vec: Self = undefined;
+            sub_vec.val[0] = self.val[0] - other.val[0];
+            sub_vec.val[1] = self.val[1] - other.val[1];
+            if (length > 2) {
+                @memcpy(@ptrCast([*]ScalarType, &sub_vec.val[2])[0..length - 2], @ptrCast([*]ScalarType, &self.val[2])[0..length - 2]);
+            }
+            return sub_vec;
+        }
+
+        pub inline fn vSub2(self: *Self, other: anytype) void {
+            self.val[0] -= other.val[0];
+            self.val[1] -= other.val[1];
+        }
+
+        pub inline fn vMul2c(self: Self, other: anytype) Self {
+            var mul_vec: Self = undefined;
+            mul_vec.val[0] = self.val[0] * other.val[0];
+            mul_vec.val[1] = self.val[1] * other.val[1];
+            if (length > 2) {
+                @memcpy(@ptrCast([*]ScalarType, &mul_vec.val[2])[0..length - 2], @ptrCast([*]ScalarType, &self.val[2])[0..length - 2]);
+            }
+            return mul_vec;
+        }
+
+        pub inline fn vMul2(self: *Self, other: anytype) void {
+            self.val[0] *= other.val[0];
+            self.val[1] *= other.val[1];
+        }
+
+        pub inline fn vDiv2c(self: Self, other: anytype) Self {
+            var div_vec: Self = undefined;
+            div_vec.val[0] = self.val[0] / other.val[0];
+            div_vec.val[1] = self.val[1] / other.val[1];
+            if (length > 2) {
+                @memcpy(@ptrCast([*]ScalarType, &div_vec.val[2])[0..length - 2], @ptrCast([*]ScalarType, &self.val[2])[0..length - 2]);
+            }
+            return div_vec;
+        }
+
+        pub inline fn vDiv2(self: *Self, other: anytype) void {
+            self.val[0] /= other.val[0];
+            self.val[1] /= other.val[1];
+        }
+
+        pub inline fn vAdd3c(self: Self, other: anytype) Self {
+            var add_vec: Self = undefined;
+            add_vec.val[0] = self.val[0] + other.val[0];
+            add_vec.val[1] = self.val[1] + other.val[1];
+            add_vec.val[2] = self.val[2] + other.val[2];
+            if (length > 3) {
+                @memcpy(@ptrCast([*]ScalarType, &add_vec.val[3])[0..length - 3], @ptrCast([*]ScalarType, &self.val[3])[0..length - 3]);
+            }
+            return add_vec;
+        }
+
+        pub inline fn vAdd3(self: *Self, other: anytype) void {
+            self.val[0] += other.val[0];
+            self.val[1] += other.val[1];
+            self.val[2] += other.val[2];
+        }
+
+        pub inline fn vSub3c(self: Self, other: anytype) Self {
+            var sub_vec: Self = undefined;
+            sub_vec.val[0] = self.val[0] - other.val[0];
+            sub_vec.val[1] = self.val[1] - other.val[1];
+            sub_vec.val[2] = self.val[2] - other.val[2];
+            if (length > 3) {
+                @memcpy(@ptrCast([*]ScalarType, &sub_vec.val[3])[0..length - 3], @ptrCast([*]ScalarType, &self.val[3])[0..length - 3]);
+            }
+            return sub_vec;
+        }
+
+        pub inline fn vSub3(self: *Self, other: anytype) void {
+            self.val[0] -= other.val[0];
+            self.val[1] -= other.val[1];
+            self.val[2] -= other.val[2];
+        }
+
+        pub inline fn vMul3c(self: Self, other: anytype) Self {
+            var mul_vec: Self = undefined;
+            mul_vec.val[0] = self.val[0] * other.val[0];
+            mul_vec.val[1] = self.val[1] * other.val[1];
+            mul_vec.val[2] = self.val[2] * other.val[2];
+            if (length > 3) {
+                @memcpy(@ptrCast([*]ScalarType, &mul_vec.val[3])[0..length - 3], @ptrCast([*]ScalarType, &self.val[3])[0..length - 3]);
+            }
+            return mul_vec;
+        }
+
+        pub inline fn vMul3(self: *Self, other: anytype) void {
+            self.val[0] *= other.val[0];
+            self.val[1] *= other.val[1];
+            self.val[2] *= other.val[2];
+        }
+
+        pub inline fn vDiv3c(self: Self, other: anytype) Self {
+            var div_vec: Self = undefined;
+            div_vec.val[0] = self.val[0] / other.val[0];
+            div_vec.val[1] = self.val[1] / other.val[1];
+            div_vec.val[2] = self.val[2] / other.val[2];
+            if (length > 3) {
+                @memcpy(@ptrCast([*]ScalarType, &div_vec.val[3])[0..length - 3], @ptrCast([*]ScalarType, &self.val[3])[0..length - 3]);
+            }
+            return div_vec;
+        }
+
+        pub inline fn vDiv3(self: *Self, other: anytype) void {
+            self.val[0] /= other.val[0];
+            self.val[1] /= other.val[1];
+            self.val[2] /= other.val[2];
+        }
+
+    // ----------------------------------------------------------------------------------------------- scalar arithmetic
+
+        pub inline fn sAddc(self: Self, other: ScalarType) Self {
+            const add_vec = @splat(length, other);
+            return self + add_vec;
+        }
+
+        pub inline fn sAdd(self: *Self, other: ScalarType) void {
+            const add_vec = @splat(length, other);
+            self.val += add_vec;
+        }
+
+        pub inline fn sSubc(self: Self, other: ScalarType) Self {
+            const add_vec = @splat(length, other);
+            return self - add_vec;
+        }
+
+        pub inline fn sSub(self: *Self, other: ScalarType) void {
+            const add_vec = @splat(length, other);
+            self.val -= add_vec;
+        }
+
+        pub inline fn sMulc(self: Self, other: ScalarType) Self {
+            const add_vec = @splat(length, other);
+            return self * add_vec;
+        }
+
+        pub inline fn sMul(self: *Self, other: ScalarType) void {
+            const add_vec = @splat(length, other);
+            self.val *= add_vec;
+        }
+
+    // -------------------------------------------------------------------------------------------------- linear algebra
+
+    // -------------------------------------------------------------------------------------------------------- internal
+
+        inline fn vAddcLoop(vec_a: Self, vec_b: anytype) Self {
+            var add_vec = vec_a;
+            inline for(0..@min(@TypeOf(vec_b).lenStatic(), length)) |i| {
+                add_vec.val[i] = vec_a.val[i] + vec_b.val[i];
+            }
+            return add_vec;
+        }
+
+
+        inline fn vAddLoop(vec_a: *Self, vec_b: anytype) void {
+            inline for(0..@min(@TypeOf(vec_b).lenStatic(), length)) |i| {
+                vec_a.val[i] += vec_b.val[i];
+            }
+        }
+
+        inline fn vSubcLoop(vec_a: Self, vec_b: anytype) Self {
+            var add_vec = vec_a;
+            inline for(0..@min(@TypeOf(vec_b).lenStatic(), length)) |i| {
+                add_vec.val[i] = vec_a.val[i] - vec_b.val[i];
+            }
+            return add_vec;
+        }
+
+        inline fn vSubLoop(vec_a: *Self, vec_b: anytype) void {
+            inline for(0..@min(@TypeOf(vec_b).lenStatic(), length)) |i| {
+                vec_a.val[i] -= vec_b.val[i];
+            }
+        }
+
+        inline fn vMulcLoop(vec_a: Self, vec_b: anytype) Self {
+            var add_vec = vec_a;
+            inline for(0..@min(@TypeOf(vec_b).lenStatic(), length)) |i| {
+                add_vec.val[i] = vec_a.val[i] * vec_b.val[i];
+            }
+            return add_vec;
+        }
+
+
+        inline fn vMulLoop(vec_a: *Self, vec_b: anytype) void {
+            inline for(0..@min(@TypeOf(vec_b).lenStatic(), length)) |i| {
+                vec_a.val[i] *= vec_b.val[i];
+            }
+        }
+
+
+        inline fn vDivcLoop(vec_a: Self, vec_b: anytype) Self {
+            var add_vec = vec_a;
+            inline for(0..@min(@TypeOf(vec_b).lenStatic(), length)) |i| {
+                add_vec.val[i] = vec_a.val[i] / vec_b.val[i];
+            }
+            return add_vec;
+        }
+
+
+        inline fn vDivLoop(vec_a: *Self, vec_b: anytype) void {
+            inline for(0..@min(@TypeOf(vec_b).lenStatic(), length)) |i| {
+                vec_a.val[i] /= vec_b.val[i];
+            }
+        }
+
+    };
+}
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- Vec2
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1249,6 +1715,21 @@ pub const Vec4 = struct {
 // ---------------------------------------------------------------------------------------------------------- Quaternion
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+const Quaternion = struct {
+
+    x: f32 = 0.0,
+    y: f32 = 0.0,
+    z: f32 = 0.0,
+    w: f32 = 1.0,
+
+    pub fn new() Quaternion {
+        return Quaternion{};
+    }
+
+    
+
+};
+
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ------------------------------------------------------------------------------------------------------- Square Matrix
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1674,6 +2155,8 @@ pub const vec2_zero = Vec2 {};
 pub const vec3_zero = Vec3 {};
 pub const plane_zero = Plane {};
 pub const ray_zero = Ray {};
+pub const quaternion_zero = Quaternion{.w = 0.0};
+pub const quaternion_identity = Quaternion{};
 
 const F32_EPSILON: f32 = 1e-5;
 
@@ -1763,6 +2246,15 @@ test "SquareMatrix" {
     print("\nmatrix 4x4: {any}\n", .{m2});
 }
 
+test "fVec" {
+    var j = fVec(3).init(.{0.0, 1.0, 2.0});
+    var k = fVec(3).initScalar(3.0);
+    print("\nVec(3): {any}\n", .{j});
+    print("x: {}, y: {}\n", .{j.x(), j.y()});
+    var i = j.vAddc(k);
+    print("{any}\n", .{i});
+}
+
 test "Plane" {
     var p1dir = Vec3.init(20.0, 31.0, -5.0);
     var p1pos = Vec3.new();
@@ -1827,4 +2319,5 @@ test "Plane" {
     var v9angle = p2.vNormalAngle(v9);
     var v11angle = p2.vNormalAngle(v11);
     try expect(@fabs(v9angle + v11angle - math.pi) <= F32_EPSILON);
+
 }
