@@ -2,12 +2,10 @@
 pub const fVec2 = Vec(2, f32);
 pub const fVec3 = Vec(3, f32);
 pub const fVec4 = Vec(4, f32);
-pub const fPlane = Vec(4, f32);
 
 pub const dVec2 = Vec(2, f64);
 pub const dVec3 = Vec(3, f64);
 pub const dVec4 = Vec(4, f64);
-pub const dPlane = Vec(4, f64);
 
 pub const iVec2 = Vec(2, i32);
 pub const iVec3 = Vec(3, i32);
@@ -25,9 +23,10 @@ pub const ulVec2 = Vec(2, u64);
 pub const ulVec3 = Vec(3, u64);
 pub const ulVec4 = Vec(4, u64);
 
-// TODO: comptime-optimized div possible?
+// TODO: comptime-optimized scalar div possible?
 // TODO: is there a way to cast scalar types such that same-bitwidth vector types could do arithmetic with each other?
 // TODO: ... or just make it easy to convert between them.
+// TODO: test @setFloatMode() (a per-scope thing that allows ffast-math optimizations)
 
 pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
     return struct {
@@ -60,6 +59,24 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             return self;
         }
 
+    // ------------------------------------------------------------------------------------------------------ conversion
+
+        pub inline fn toIntVec(self: *const Self, comptime IntType: type) Vec(length, IntType) {
+            var int_vec: Vec(length, IntType) = undefined;
+            inline for(0..length) |i| {
+                int_vec.val[i] = @floatToInt(IntType, self.val[i]);
+            }
+            return int_vec;
+        }
+
+        pub inline fn toFloatVec(self: *const Self, comptime FloatType: type) Vec(length, FloatType) {
+            var float_vec: Vec(length, FloatType) = undefined;
+            inline for(0..length) |i| {
+                float_vec.val[i] = @intToFloat(FloatType, self.val[i]);
+            }
+            return float_vec;
+        }
+
     // --------------------------------------------------------------------------------------------------------- re-init
 
         pub inline fn fill(self: *Self, scalar: ScalarType) Self {
@@ -84,16 +101,41 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             return self.val[3];
         }
 
-    // ---------------------------------------------------------------------------------------------------------- length
-
-        pub inline fn len(self: *const Self) usize {
-            _ = self;
-            return length;
+        pub inline fn setX(self: *Self, in_x: f32) void {
+            self.val[0] = in_x;
         }
+
+        pub inline fn setY(self: *Self, in_y: f32) void {
+            self.val[1] = in_y;
+        }
+
+        pub inline fn setZ(self: *Self, in_z: f32) void {
+            self.val[2] = in_z;
+        }
+
+        pub inline fn setW(self: *Self, in_w: f32) void {
+            self.val[3] = in_w;
+        }
+
+    // --------------------------------------------------------------------------------------------------------- statics
 
         // get the compoment length of this vector. important for use anytime a function can have its branches removed
         // with comptime information.
-        pub inline fn lenStatic() comptime_int {
+        pub inline fn componentLenStatic() comptime_int {
+            return length;
+        }
+
+        pub inline fn epsilonStatic() comptime_float {
+            switch(ScalarType) {
+                f32 => return 1e-5,
+                f64 => return 1e-15,         
+                else => unreachable
+            }
+        }
+    // ---------------------------------------------------------------------------------------------------------- length
+
+        pub inline fn componentLen(self: *const Self) usize {
+            _ = self;
             return length;
         }
 
@@ -108,7 +150,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
                 0, 1 => unreachable,
                 2, 3 => vAddcLoop(self, other),
                 else => blk: {
-                    if (@TypeOf(other).lenStatic() != length) {
+                    if (@TypeOf(other).componentLenStatic() != length) {
                         break :blk vAddcLoop(self, other);
                     }
                     else {
@@ -124,7 +166,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
                 0, 1 => unreachable,
                 2, 3 => vAddcLoop(self, other),
                 else => blk: {
-                    if (@TypeOf(other).lenStatic() != length) {
+                    if (@TypeOf(other).componentLenStatic() != length) {
                         break :blk vAddLoop(self, other);
                     }
                     else {
@@ -140,7 +182,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
                 0, 1 => unreachable,
                 2, 3 => vSubcLoop(self, other),
                 else => blk: {
-                    if (@TypeOf(other).lenStatic() != length) {
+                    if (@TypeOf(other).componentLenStatic() != length) {
                         break :blk vSubcLoop(self, other);
                     }
                     else {
@@ -156,7 +198,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
                 0, 1 => unreachable,
                 2, 3 => vSubLoop(self, other),
                 else => blk: {
-                    if (@TypeOf(other).lenStatic() != length) {
+                    if (@TypeOf(other).componentLenStatic() != length) {
                         break :blk vSubLoop(self, other);
                     }
                     else {
@@ -168,14 +210,11 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
         // add two vectors of same or differing lengths with copy for assignment
         pub inline fn vMulc(self: Self, other: anytype) Self {
-            // compile time information throughout this function allows for it to be reduced to branchless execution
-            // according to compiler explorer. for example, adding two vec4's will have a function that looks like
-            // return Self{ .val = self.val + other.val };
             return switch(length) {
                 0, 1 => unreachable,
                 2, 3 => vMulcLoop(self, other),
                 else => blk: {
-                    if (@TypeOf(other).lenStatic() != length) {
+                    if (@TypeOf(other).componentLenStatic() != length) {
                         break :blk vMulcLoop(self, other);
                     }
                     else {
@@ -191,7 +230,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
                 0, 1 => unreachable,
                 2, 3 => vMulLoop(self, other),
                 else => blk: {
-                    if (@TypeOf(other).lenStatic() != length) {
+                    if (@TypeOf(other).componentLenStatic() != length) {
                         break :blk vMulLoop(self, other);
                     }
                     else {
@@ -203,14 +242,11 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
         // add two vectors of same or differing lengths with copy for assignment
         pub inline fn vDivc(self: Self, other: anytype) Self {
-            // compile time information throughout this function allows for it to be reduced to branchless execution
-            // according to compiler explorer. for example, adding two vec4's will have a function that looks like
-            // return Self{ .val = self.val + other.val };
             return switch(length) {
                 0, 1 => unreachable,
                 2, 3 => vDivcLoop(self, other),
                 else => blk: {
-                    if (@TypeOf(other).lenStatic() != length) {
+                    if (@TypeOf(other).componentLenStatic() != length) {
                         break :blk vDivcLoop(self, other);
                     }
                     else {
@@ -226,7 +262,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
                 0, 1 => unreachable,
                 2, 3 => vDivLoop(self, other),
                 else => blk: {
-                    if (@TypeOf(other).lenStatic() != length) {
+                    if (@TypeOf(other).componentLenStatic() != length) {
                         break :blk vDivLoop(self, other);
                     }
                     else {
@@ -238,7 +274,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
     // ------------------------------------------------------------------------------- explicit length vector arithmetic
 
-        pub inline fn vAdd2c(self: Self, other: anytype) Self {
+        pub inline fn vAdd2dc(self: Self, other: anytype) Self {
             var add_vec: Self = undefined;
             add_vec.val[0] = self.val[0] + other.val[0];
             add_vec.val[1] = self.val[1] + other.val[1];
@@ -248,12 +284,12 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             return add_vec;
         }
 
-        pub inline fn vAdd2(self: *Self, other: anytype) void {
+        pub inline fn vAdd2d(self: *Self, other: anytype) void {
             self.val[0] += other.val[0];
             self.val[1] += other.val[1];
         }
 
-        pub inline fn vSub2c(self: Self, other: anytype) Self {
+        pub inline fn vSub2dc(self: Self, other: anytype) Self {
             var sub_vec: Self = undefined;
             sub_vec.val[0] = self.val[0] - other.val[0];
             sub_vec.val[1] = self.val[1] - other.val[1];
@@ -263,12 +299,12 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             return sub_vec;
         }
 
-        pub inline fn vSub2(self: *Self, other: anytype) void {
+        pub inline fn vSub2d(self: *Self, other: anytype) void {
             self.val[0] -= other.val[0];
             self.val[1] -= other.val[1];
         }
 
-        pub inline fn vMul2c(self: Self, other: anytype) Self {
+        pub inline fn vMul2dc(self: Self, other: anytype) Self {
             var mul_vec: Self = undefined;
             mul_vec.val[0] = self.val[0] * other.val[0];
             mul_vec.val[1] = self.val[1] * other.val[1];
@@ -278,12 +314,12 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             return mul_vec;
         }
 
-        pub inline fn vMul2(self: *Self, other: anytype) void {
+        pub inline fn vMul2d(self: *Self, other: anytype) void {
             self.val[0] *= other.val[0];
             self.val[1] *= other.val[1];
         }
 
-        pub inline fn vDiv2c(self: Self, other: anytype) Self {
+        pub inline fn vDiv2dc(self: Self, other: anytype) Self {
             var div_vec: Self = undefined;
             div_vec.val[0] = self.val[0] / other.val[0];
             div_vec.val[1] = self.val[1] / other.val[1];
@@ -293,12 +329,12 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             return div_vec;
         }
 
-        pub inline fn vDiv2(self: *Self, other: anytype) void {
+        pub inline fn vDiv2d(self: *Self, other: anytype) void {
             self.val[0] /= other.val[0];
             self.val[1] /= other.val[1];
         }
 
-        pub inline fn vAdd3c(self: Self, other: anytype) Self {
+        pub inline fn vAdd3dc(self: Self, other: anytype) Self {
             var add_vec: Self = undefined;
             add_vec.val[0] = self.val[0] + other.val[0];
             add_vec.val[1] = self.val[1] + other.val[1];
@@ -309,13 +345,13 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             return add_vec;
         }
 
-        pub inline fn vAdd3(self: *Self, other: anytype) void {
+        pub inline fn vAdd3d(self: *Self, other: anytype) void {
             self.val[0] += other.val[0];
             self.val[1] += other.val[1];
             self.val[2] += other.val[2];
         }
 
-        pub inline fn vSub3c(self: Self, other: anytype) Self {
+        pub inline fn vSub3dc(self: Self, other: anytype) Self {
             var sub_vec: Self = undefined;
             sub_vec.val[0] = self.val[0] - other.val[0];
             sub_vec.val[1] = self.val[1] - other.val[1];
@@ -326,13 +362,13 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             return sub_vec;
         }
 
-        pub inline fn vSub3(self: *Self, other: anytype) void {
+        pub inline fn vSub3d(self: *Self, other: anytype) void {
             self.val[0] -= other.val[0];
             self.val[1] -= other.val[1];
             self.val[2] -= other.val[2];
         }
 
-        pub inline fn vMul3c(self: Self, other: anytype) Self {
+        pub inline fn vMul3dc(self: Self, other: anytype) Self {
             var mul_vec: Self = undefined;
             mul_vec.val[0] = self.val[0] * other.val[0];
             mul_vec.val[1] = self.val[1] * other.val[1];
@@ -343,13 +379,13 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             return mul_vec;
         }
 
-        pub inline fn vMul3(self: *Self, other: anytype) void {
+        pub inline fn vMul3d(self: *Self, other: anytype) void {
             self.val[0] *= other.val[0];
             self.val[1] *= other.val[1];
             self.val[2] *= other.val[2];
         }
 
-        pub inline fn vDiv3c(self: Self, other: anytype) Self {
+        pub inline fn vDiv3dc(self: Self, other: anytype) Self {
             var div_vec: Self = undefined;
             div_vec.val[0] = self.val[0] / other.val[0];
             div_vec.val[1] = self.val[1] / other.val[1];
@@ -360,7 +396,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             return div_vec;
         }
 
-        pub inline fn vDiv3(self: *Self, other: anytype) void {
+        pub inline fn vDiv3d(self: *Self, other: anytype) void {
             self.val[0] /= other.val[0];
             self.val[1] /= other.val[1];
             self.val[2] /= other.val[2];
@@ -398,13 +434,123 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             self.val *= add_vec;
         }
 
+        pub inline fn sDivc(self: Self, other: ScalarType) Self {
+            const mul_scalar = 1.0 / other;
+            return self.sMulc(mul_scalar);
+        }
+
+        pub inline fn sDiv(self: Self, other: ScalarType) void {
+            const mul_scalar = 1.0 / other;
+            self.sMul(mul_scalar);
+        }
+
     // -------------------------------------------------------------------------------------------------- linear algebra
+
+        pub inline fn dot(self: Self, other: Self) ScalarType {
+            return @reduce(.Add, self.val * other.val);
+        }
+
+        pub inline fn dot2d(self: Self, other: anytype) ScalarType {
+            return self.val[0] * other.val[0] + self.val[1] * other.val[1];
+        }
+
+        pub inline fn dot3d(self: Self, other: anytype) ScalarType {
+            return self.val[0] * other.val[0] + self.val[1] * other.val[1] + self.val[2] * other.val[2];
+        }
+
+        pub inline fn determinant2d(self: Self, other: Self) ScalarType {
+            return self.val[0] * other.val[1] - other.val[0] * self.val[1];
+        }
+
+        pub inline fn cross(self: Self, other: Self) Self {
+            return Self { .val = @Vector(length, ScalarType){
+                self.val[1] * other.val[2] - self.val[2] * other.val[1],
+                self.val[2] * other.val[0] - self.val[0] * other.val[2],
+                self.val[0] * other.val[1] - self.val[1] * other.val[0]
+            }};
+        }
+
+    // ------------------------------------------------------------------------------------------------------------ size
+
+        pub inline fn size(self: Self) ScalarType {
+            return @sqrt(@reduce(.Add, self.val * self.val));
+        }
+
+        pub inline fn sizeSq(self: Self) ScalarType {
+            return @reduce(.Add, self.val * self.val);
+        }
+
+        pub inline fn size2d(self: Self) ScalarType {
+            return @sqrt(self.val[0] * self.val[0] + self.val[1] * self.val[1]);
+        }
+
+        pub inline fn sizeSq2d(self: Self) ScalarType {
+            return self.val[0] * self.val[0] + self.val[1] * self.val[1];
+        }
+
+        pub inline fn size3d(self: Self) ScalarType {
+            return @sqrt(self.val[0] * self.val[0] + self.val[1] * self.val[1] + self.val[2] * self.val[2]);
+        }
+
+        pub inline fn sizeSq3d(self: Self) ScalarType {
+            return self.val[0] * self.val[0] + self.val[1] * self.val[1] + self.val[2] * self.val[2];
+        }
+
+    // -------------------------------------------------------------------------------------------------------- distance
+
+        pub inline fn dist(self: Self, other: Self) ScalarType {
+            const diff = self.val - other.val;
+            return @sqrt(@reduce(.Add, diff * diff));
+        }
+
+        pub inline fn distSq(self: Self, other: Self) ScalarType {
+            const diff = self.val - other.val;
+            return @reduce(.Add, diff * diff);
+        }
+
+        pub inline fn dist2d(self: Self, other: anytype) ScalarType {
+            const diff = @Vector(2, ScalarType){self.val[0] - other.val[0], self.val[1] - other.val[1]};
+            return @sqrt(@reduce(.Add, diff * diff));
+        }
+
+        pub inline fn distSq2d(self: Self, other: anytype) ScalarType {
+            const diff = @Vector(2, ScalarType){self.val[0] - other.val[0], self.val[1] - other.val[1]};
+            return @reduce(.Add, diff * diff);
+        }
+
+        pub inline fn dist3d(self: Self, other: anytype) ScalarType {
+            const diff = @Vector(3, ScalarType){self.val[0] - other.val[0], self.val[1] - other.val[1], self.val[2] - other.val[2]};
+            return @sqrt(@reduce(.Add, diff * diff));
+        }
+
+        pub inline fn distSq3d(self: Self, other: anytype) ScalarType {
+            const diff = @Vector(3, ScalarType){self.val[0] - other.val[0], self.val[1] - other.val[1], self.val[2] - other.val[2]};
+            return @reduce(.Add, diff * diff);
+        }
+
+    // ---------------------------------------------------------------------------------------------------------- normal
+
+        pub inline fn normSafe(self: Self) Self {
+            const size_sq = self.sizeSq();
+            if (size_sq < @TypeOf(self).epsilonStatic()) {
+                return Self.new();
+            }
+            return self.sMulc(1.0 / @sqrt(size_sq));
+        }
+
+        pub inline fn normUnsafe(self: Self) Self {
+            return self.sMulc(1.0 / self.size());
+        }
+
+        pub inline fn isNorm(self: Self) bool {
+            return @fabs(1.0 - self.sizeSq()) < @TypeOf(self).epsilonStatic();
+        }
 
     // -------------------------------------------------------------------------------------------------------- internal
 
         inline fn vAddcLoop(vec_a: Self, vec_b: anytype) Self {
             var add_vec = vec_a;
-            inline for(0..@min(@TypeOf(vec_b).lenStatic(), length)) |i| {
+            inline for(0..@min(@TypeOf(vec_b).componentLenStatic(), length)) |i| {
                 add_vec.val[i] = vec_a.val[i] + vec_b.val[i];
             }
             return add_vec;
@@ -412,28 +558,28 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
 
         inline fn vAddLoop(vec_a: *Self, vec_b: anytype) void {
-            inline for(0..@min(@TypeOf(vec_b).lenStatic(), length)) |i| {
+            inline for(0..@min(@TypeOf(vec_b).componentLenStatic(), length)) |i| {
                 vec_a.val[i] += vec_b.val[i];
             }
         }
 
         inline fn vSubcLoop(vec_a: Self, vec_b: anytype) Self {
             var add_vec = vec_a;
-            inline for(0..@min(@TypeOf(vec_b).lenStatic(), length)) |i| {
+            inline for(0..@min(@TypeOf(vec_b).componentLenStatic(), length)) |i| {
                 add_vec.val[i] = vec_a.val[i] - vec_b.val[i];
             }
             return add_vec;
         }
 
         inline fn vSubLoop(vec_a: *Self, vec_b: anytype) void {
-            inline for(0..@min(@TypeOf(vec_b).lenStatic(), length)) |i| {
+            inline for(0..@min(@TypeOf(vec_b).componentLenStatic(), length)) |i| {
                 vec_a.val[i] -= vec_b.val[i];
             }
         }
 
         inline fn vMulcLoop(vec_a: Self, vec_b: anytype) Self {
             var add_vec = vec_a;
-            inline for(0..@min(@TypeOf(vec_b).lenStatic(), length)) |i| {
+            inline for(0..@min(@TypeOf(vec_b).componentLenStatic(), length)) |i| {
                 add_vec.val[i] = vec_a.val[i] * vec_b.val[i];
             }
             return add_vec;
@@ -441,7 +587,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
 
         inline fn vMulLoop(vec_a: *Self, vec_b: anytype) void {
-            inline for(0..@min(@TypeOf(vec_b).lenStatic(), length)) |i| {
+            inline for(0..@min(@TypeOf(vec_b).componentLenStatic(), length)) |i| {
                 vec_a.val[i] *= vec_b.val[i];
             }
         }
@@ -449,7 +595,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
         inline fn vDivcLoop(vec_a: Self, vec_b: anytype) Self {
             var add_vec = vec_a;
-            inline for(0..@min(@TypeOf(vec_b).lenStatic(), length)) |i| {
+            inline for(0..@min(@TypeOf(vec_b).componentLenStatic(), length)) |i| {
                 add_vec.val[i] = vec_a.val[i] / vec_b.val[i];
             }
             return add_vec;
@@ -457,13 +603,195 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
 
         inline fn vDivLoop(vec_a: *Self, vec_b: anytype) void {
-            inline for(0..@min(@TypeOf(vec_b).lenStatic(), length)) |i| {
+            inline for(0..@min(@TypeOf(vec_b).componentLenStatic(), length)) |i| {
                 vec_a.val[i] /= vec_b.val[i];
             }
         }
 
     };
 }
+
+pub const fRay = struct {
+    origin: fVec3 = undefined,
+    normal: fVec3 = undefined,
+
+    pub inline fn new() fRay {
+        return fRay{
+            .origin = fVec3.new(),
+            .normal = fVec3.init(.{1.0, 0.0, 0.0})
+        };
+    }
+
+    pub inline fn fromNorm(in_normal: fVec3) !fRay {
+        if (!in_normal.isNorm()) {
+            return NDMathError.RayNormalNotNormalized;
+        }
+        return fRay {
+            .origin = fVec3.new(),
+            .normal = in_normal
+        };
+    }
+
+    pub inline fn fromComponents(in_origin: fVec3, in_normal: fVec3) !fRay {
+        if (!in_normal.isNorm()) {
+            return NDMathError.RayNormalNotNormalized;
+        }
+        return fRay {
+            .origin = in_origin,
+            .normal = in_normal
+        };
+    }
+};
+
+pub const fPlane = struct {
+
+    normal: fVec3 = undefined,
+    w: f32 = undefined,
+
+    pub inline fn new() fPlane {
+        return fPlane{
+            .normal = fVec3.init(.{1.0, 0.0, 0.0}),
+            .w = 0.0
+        };
+    }
+
+    pub inline fn fromNorm(norm: fVec3) !fPlane {
+        if (!norm.isNorm()) {
+            return NDMathError.PlaneNormalNotNormalized;
+        }
+        return fPlane {
+            .normal = norm,
+            .w = 0.0
+        };
+    }
+
+    pub inline fn fromComponents(norm: fVec3, origin_distance: f32) !fPlane {
+        if (!norm.isNorm()) {
+            return NDMathError.PlaneNormalNotNormalized;
+        }
+        return fPlane {
+            .normal = norm,
+            .w = origin_distance
+        };
+    }
+
+    pub inline fn setNormFromVec(self: *fPlane, vec: fVec3) !void {
+        const norm_vec = vec.normSafe();
+        // vec could have components that are too small to normalize
+        if (!norm_vec.isNorm()) {
+            return NDMathError.PlaneNormalNotNormalized;
+        }
+        self.normal = norm_vec;
+    }
+
+    pub inline fn setOriginDistance(self: *fPlane, origin_distance: f32) void {
+        self.w = origin_distance;
+    }
+
+    pub inline fn setComponents(self: *fPlane, norm: fVec3, origin_distance: f32) !void {
+        if (!norm.isNorm()) {
+            return NDMathError.PlaneNormalNotNormalized;
+        }
+        self.normal = norm;
+        self.w = origin_distance;
+    }
+
+    pub inline fn normX(self: *const fPlane) f32 {
+        return self.normal.val[0];
+    }
+
+    pub inline fn normY(self: *const fPlane) f32 {
+        return self.normal.val[1];
+    }
+
+    pub inline fn normZ(self: *const fPlane) f32 {
+        return self.normal.val[2];
+    }
+
+    pub inline fn originDistance(self: *const fPlane) f32 {
+        return self.w;
+    }
+
+    // -------------------------------------------------------------------------------------------------- linear algebra
+
+    pub inline fn pNormalDot(self: fPlane, other: fPlane) f32 {
+        return self.normal.dot(other.normal);
+    }
+
+    pub inline fn vNormalDot(self: fPlane, other: fVec3) f32 {
+        return self.normal.dot(other);
+    }
+
+    // ---------------------------------------------------------------------------------------------- vector interaction
+
+    pub inline fn pointDistSigned(self: fPlane, point: fVec3) f32 {
+        return -(self.normal.dot(point) - self.w);
+    }
+
+    pub inline fn pointDist(self: fPlane, point: fVec3) f32 {
+        return @fabs(self.pointDistSigned(point));
+    }
+
+    pub inline fn pointDiff(self: fPlane, point: fVec3) f32 {
+        const dist = self.pointDistSigned(point);
+        return fVec3.init(.{
+            self.normal.val[0] * dist,
+            self.normal.val[1] * dist,
+            self.normal.val[2] * dist,
+        });
+    }
+
+    pub inline fn pointProject(self: fPlane, point: fVec3) f32 {
+        const dist = self.pointDistSigned(point);
+        return fVec3.init(.{
+            point.val[0] + self.normal.val[0] * dist,
+            point.val[1] + self.normal.val[1] * dist,
+            point.val[2] + self.normal.val[2] * dist,
+        });
+    }
+
+    pub inline fn pointMirror(self: fPlane, point: fVec3) f32 {
+        const double_diff = self.pointDiff(point).sMulc(2.0);
+        return point.vAddc(double_diff);
+    }
+
+    pub inline fn reflect(self: fPlane, vec: fVec3) f32 {
+        const reflect_dist = self.vNormalDot(vec) * -2.0;
+        const reflect_diff = self.normal.sMulc(reflect_dist);
+        return vec.vAddc(reflect_diff);
+    }
+
+    pub fn rayIntersect(self: fPlane, ray: fRay, distance: *f32) ?fVec3 {
+        const normal_direction_product = self.vNormalDot(ray.normal);
+        if (normal_direction_product >= -F32_EPSILON) {
+            return null;
+        }
+
+        const normal_origin_product = self.vNormalDot(ray.origin);
+        distance.* = normal_origin_product - self.w;
+
+        if (distance.* < 0.0) {
+            return null;
+        }
+
+        distance.* = distance.* / -normal_direction_product;
+        const diff = ray.normal.sMulc(distance.*);
+        return ray.origin.vAddc(diff);
+    }
+
+    pub fn rayIntersectEitherFace(self: fPlane, ray: fRay, distance: *f32) ?fVec3 {
+        const normal_origin_product = self.vNormalDot(ray.origin);
+        const normal_direction_product = self.vNormalDot(ray.normal);
+        distance.* = (normal_origin_product - self.w) / -normal_direction_product;
+
+        if (distance.* < 0.0) {
+            return null;
+        }
+
+        const diff = ray.normal.sMulc(distance.*);
+        return ray.origin.vAddc(diff);
+    }
+};
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- Vec2
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2159,6 +2487,16 @@ pub const quaternion_zero = Quaternion{.w = 0.0};
 pub const quaternion_identity = Quaternion{};
 
 const F32_EPSILON: f32 = 1e-5;
+const F64_EPSILON: f64 = 1e-15;
+
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// -------------------------------------------------------------------------------------------------------------- errors
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+const NDMathError = error{
+    PlaneNormalNotNormalized,
+    RayNormalNotNormalized,
+};
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- import
@@ -2247,8 +2585,8 @@ test "SquareMatrix" {
 }
 
 test "fVec" {
-    var j = fVec(3).init(.{0.0, 1.0, 2.0});
-    var k = fVec(3).initScalar(3.0);
+    var j = fVec3.init(.{0.0, 1.0, 2.0});
+    var k = fVec3.initScalar(3.0);
     print("\nVec(3): {any}\n", .{j});
     print("x: {}, y: {}\n", .{j.x(), j.y()});
     var i = j.vAddc(k);
