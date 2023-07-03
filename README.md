@@ -19,7 +19,7 @@ There are currently no plans to use any APIs other than Vulkan.
 Every game engine needs a smart strategy for making allocation syscalls. Having a fast, low-fragmentation, debuggable allocator on your side can lighten the load.
 
 ## Navmesh
-This is where ZigVGCore might shine compared to some mainstream engines. The navmesh will optionally be generatable on walls and ceilings, and the built-in pathfinding system will have crowd management that handles thousands of pathfinders.
+This is where Iguana might shine compared to some mainstream engines. The navmesh will optionally be generatable on walls and ceilings, and the built-in pathfinding system will have crowd management that handles thousands of pathfinders very quickly.
 
 ## Sound
 ...
