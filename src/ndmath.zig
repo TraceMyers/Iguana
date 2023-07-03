@@ -37,7 +37,15 @@ pub const ulVec4 = Vec(4, u64);
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
+
+
     return struct {
+
+    // compile time information throughout these functions allows for them to be reduced to branchless execution
+    // according to compiler explorer. for example, vAddc() with two vectors of the same length will simply be
+    // return Self{ .val = self.val + other.val }. thanks compiler explorer and thanks to zsf for allowing more direct,
+    // explicit communication with the compiler :)
+
         const Self = @This();
 
         val: @Vector(length, ScalarType) = undefined,
@@ -152,9 +160,6 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
         }
 
     // ----------------------------------------------------------------------------------------------- vector arithmetic
-    // compile time information throughout these function allows for them to be reduced to branchless execution
-    // according to compiler explorer. for example, vAddc() with two vectors of the same length will simply be
-    // return Self{ .val = self.val + other.val };
 
         // add two vectors of same or differing lengths with copy for assignment
         pub inline fn vAddc(self: Self, other: anytype) Self {
@@ -286,14 +291,25 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
     // ------------------------------------------------------------------------------- explicit length vector arithmetic
 
-        pub inline fn vAdd2dc(self: Self, other: anytype) Self {
-            var add_vec: Self = undefined;
-            add_vec.val[0] = self.val[0] + other.val[0];
-            add_vec.val[1] = self.val[1] + other.val[1];
+        pub inline fn vAdd2dc(self: *Self, other: anytype) Self {
             if (length > 2) {
-                @memcpy(@ptrCast([*]ScalarType, &add_vec.val[2])[0..length - 2], @ptrCast([*]ScalarType, &self.val[2])[0..length - 2]);
+                var add_vec = self.*;
+                add_vec.val[0] += other.val[0];
+                add_vec.val[1] += other.val[1];
+                return add_vec;
             }
-            return add_vec;
+            else {
+                return Self{ .val = .{self.val[0] + other.val[0], self.val[1] + other.val[1] }};
+            }
+        }
+
+        pub inline fn testing(self: *Self, other: anytype) Self {
+            if (length > 2) {
+
+            }
+            else {
+                return Self{ .val = .{self.val[0] + other.val[0], self.val[1] + other.val[1] }};
+            }
         }
 
         pub inline fn vAdd2d(self: *Self, other: anytype) void {
@@ -301,14 +317,16 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             self.val[1] += other.val[1];
         }
 
-        pub inline fn vSub2dc(self: Self, other: anytype) Self {
-            var sub_vec: Self = undefined;
-            sub_vec.val[0] = self.val[0] - other.val[0];
-            sub_vec.val[1] = self.val[1] - other.val[1];
+        pub inline fn vSub2dc(self: *Self, other: anytype) Self {
             if (length > 2) {
-                @memcpy(@ptrCast([*]ScalarType, &sub_vec.val[2])[0..length - 2], @ptrCast([*]ScalarType, &self.val[2])[0..length - 2]);
+                var sub_vec = self.*;
+                sub_vec.val[0] -= other.val[0];
+                sub_vec.val[1] -= other.val[1];
+                return sub_vec;
             }
-            return sub_vec;
+            else {
+                return Self{ .val = .{self.val[0] - other.val[0], self.val[1] - other.val[1] }};
+            }
         }
 
         pub inline fn vSub2d(self: *Self, other: anytype) void {
@@ -316,14 +334,16 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             self.val[1] -= other.val[1];
         }
 
-        pub inline fn vMul2dc(self: Self, other: anytype) Self {
-            var mul_vec: Self = undefined;
-            mul_vec.val[0] = self.val[0] * other.val[0];
-            mul_vec.val[1] = self.val[1] * other.val[1];
+        pub inline fn vMul2dc(self: *Self, other: anytype) Self {
             if (length > 2) {
-                @memcpy(@ptrCast([*]ScalarType, &mul_vec.val[2])[0..length - 2], @ptrCast([*]ScalarType, &self.val[2])[0..length - 2]);
+                var mul_vec = self.*;
+                mul_vec.val[0] *= other.val[0];
+                mul_vec.val[1] *= other.val[1];
+                return mul_vec;
             }
-            return mul_vec;
+            else {
+                return Self{ .val = .{self.val[0] * other.val[0], self.val[1] * other.val[1] }};
+            }
         }
 
         pub inline fn vMul2d(self: *Self, other: anytype) void {
@@ -331,14 +351,16 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             self.val[1] *= other.val[1];
         }
 
-        pub inline fn vDiv2dc(self: Self, other: anytype) Self {
-            var div_vec: Self = undefined;
-            div_vec.val[0] = self.val[0] / other.val[0];
-            div_vec.val[1] = self.val[1] / other.val[1];
+        pub inline fn vDiv2dc(self: *Self, other: anytype) Self {
             if (length > 2) {
-                @memcpy(@ptrCast([*]ScalarType, &div_vec.val[2])[0..length - 2], @ptrCast([*]ScalarType, &self.val[2])[0..length - 2]);
+                var div_vec = self.*;
+                div_vec.val[0] /= other.val[0];
+                div_vec.val[1] /= other.val[1];
+                return div_vec;
             }
-            return div_vec;
+            else {
+                return Self{ .val = .{self.val[0] / other.val[0], self.val[1] / other.val[1] }};
+            }
         }
 
         pub inline fn vDiv2d(self: *Self, other: anytype) void {
@@ -346,15 +368,17 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             self.val[1] /= other.val[1];
         }
 
-        pub inline fn vAdd3dc(self: Self, other: anytype) Self {
-            var add_vec: Self = undefined;
-            add_vec.val[0] = self.val[0] + other.val[0];
-            add_vec.val[1] = self.val[1] + other.val[1];
-            add_vec.val[2] = self.val[2] + other.val[2];
+        pub inline fn vAdd3dc(self: *Self, other: anytype) Self {
             if (length > 3) {
-                @memcpy(@ptrCast([*]ScalarType, &add_vec.val[3])[0..length - 3], @ptrCast([*]ScalarType, &self.val[3])[0..length - 3]);
+                var add_vec = self.*;
+                add_vec.val[0] += other.val[0];
+                add_vec.val[1] += other.val[1];
+                add_vec.val[2] += other.val[2];
+                return add_vec;
             }
-            return add_vec;
+            else {
+                return Self{ .val = .{self.val[0] + other.val[0], self.val[1] + other.val[1], self.val[2] + other.val[2]} };
+            }
         }
 
         pub inline fn vAdd3d(self: *Self, other: anytype) void {
@@ -363,15 +387,17 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             self.val[2] += other.val[2];
         }
 
-        pub inline fn vSub3dc(self: Self, other: anytype) Self {
-            var sub_vec: Self = undefined;
-            sub_vec.val[0] = self.val[0] - other.val[0];
-            sub_vec.val[1] = self.val[1] - other.val[1];
-            sub_vec.val[2] = self.val[2] - other.val[2];
+        pub inline fn vSub3dc(self: *Self, other: anytype) Self {
             if (length > 3) {
-                @memcpy(@ptrCast([*]ScalarType, &sub_vec.val[3])[0..length - 3], @ptrCast([*]ScalarType, &self.val[3])[0..length - 3]);
+                var sub_vec = self.*;
+                sub_vec.val[0] -= other.val[0];
+                sub_vec.val[1] -= other.val[1];
+                sub_vec.val[2] -= other.val[2];
+                return sub_vec;
             }
-            return sub_vec;
+            else {
+                return Self{ .val = .{self.val[0] - other.val[0], self.val[1] - other.val[1], self.val[2] - other.val[2]} };
+            }
         }
 
         pub inline fn vSub3d(self: *Self, other: anytype) void {
@@ -380,15 +406,17 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             self.val[2] -= other.val[2];
         }
 
-        pub inline fn vMul3dc(self: Self, other: anytype) Self {
-            var mul_vec: Self = undefined;
-            mul_vec.val[0] = self.val[0] * other.val[0];
-            mul_vec.val[1] = self.val[1] * other.val[1];
-            mul_vec.val[2] = self.val[2] * other.val[2];
+        pub inline fn vMul3dc(self: *Self, other: anytype) Self {
             if (length > 3) {
-                @memcpy(@ptrCast([*]ScalarType, &mul_vec.val[3])[0..length - 3], @ptrCast([*]ScalarType, &self.val[3])[0..length - 3]);
+                var mul_vec = self.*;
+                mul_vec.val[0] *= other.val[0];
+                mul_vec.val[1] *= other.val[1];
+                mul_vec.val[2] *= other.val[2];
+                return mul_vec;
             }
-            return mul_vec;
+            else {
+                return Self{ .val = .{self.val[0] * other.val[0], self.val[1] * other.val[1], self.val[2] * other.val[2]} };
+            }
         }
 
         pub inline fn vMul3d(self: *Self, other: anytype) void {
@@ -397,15 +425,17 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             self.val[2] *= other.val[2];
         }
 
-        pub inline fn vDiv3dc(self: Self, other: anytype) Self {
-            var div_vec: Self = undefined;
-            div_vec.val[0] = self.val[0] / other.val[0];
-            div_vec.val[1] = self.val[1] / other.val[1];
-            div_vec.val[2] = self.val[2] / other.val[2];
+        pub inline fn vDiv3dc(self: *Self, other: anytype) Self {
             if (length > 3) {
-                @memcpy(@ptrCast([*]ScalarType, &div_vec.val[3])[0..length - 3], @ptrCast([*]ScalarType, &self.val[3])[0..length - 3]);
+                var div_vec = self.*;
+                div_vec.val[0] /= other.val[0];
+                div_vec.val[1] /= other.val[1];
+                div_vec.val[2] /= other.val[2];
+                return div_vec;
             }
-            return div_vec;
+            else {
+                return Self{ .val = .{self.val[0] / other.val[0], self.val[1] / other.val[1], self.val[2] / other.val[2]} };
+            }
         }
 
         pub inline fn vDiv3d(self: *Self, other: anytype) void {
@@ -1336,5 +1366,105 @@ test "fVec" {
     try expect(v11qot.dist3d(vf4_qot) < F32_EPSILON);
     try expect(v12qot.dist(vf4_qot) < F32_EPSILON);
 
-    
+    v10sum = vf2a;
+    v11sum = vf3a;
+    v12sum = vf4a;
+    v10sum.vAdd2d(vf2b);
+    v11sum.vAdd2d(vf2b);
+    v12sum.vAdd2d(vf2b);
+
+    v10dif = vf2a;
+    v11dif = vf3a;
+    v12dif = vf4a;
+    v10dif.vSub2d(vf2b);
+    v11dif.vSub2d(vf2b);
+    v12dif.vSub2d(vf2b);
+
+    v10prd = vf2a;
+    v11prd = vf3a;
+    v12prd = vf4a;
+    v10prd.vMul2d(vf2b);
+    v11prd.vMul2d(vf2b);
+    v12prd.vMul2d(vf2b);
+
+    v10qot = vf2a;
+    v11qot = vf3a;
+    v12qot = vf4a;
+    v10qot.vDiv2d(vf2b);
+    v11qot.vDiv2d(vf2b);
+    v12qot.vDiv2d(vf2b);
+
+    try expect(v10sum.dist2d(vf4_sum) < F32_EPSILON);
+    try expect(v11sum.dist2d(vf4_sum) < F32_EPSILON);
+    try expect(v12sum.dist2d(vf4_sum) < F32_EPSILON);
+
+    try expect(v10dif.dist2d(vf4_dif) < F32_EPSILON);
+    try expect(v11dif.dist2d(vf4_dif) < F32_EPSILON);
+    try expect(v12dif.dist2d(vf4_dif) < F32_EPSILON);
+
+    try expect(v10prd.dist2d(vf4_prd) < F32_EPSILON);
+    try expect(v11prd.dist2d(vf4_prd) < F32_EPSILON);
+    try expect(v12prd.dist2d(vf4_prd) < F32_EPSILON);
+
+    try expect(v10qot.dist2d(vf4_qot) < F32_EPSILON);
+    try expect(v11qot.dist2d(vf4_qot) < F32_EPSILON);
+    try expect(v12qot.dist2d(vf4_qot) < F32_EPSILON);
+
+    v11sum = vf3a;
+    v12sum = vf4a;
+    v11sum.vAdd3d(vf3b);
+    v12sum.vAdd3d(vf3b);
+
+    v11dif = vf3a;
+    v12dif = vf4a;
+    v11dif.vSub3d(vf3b);
+    v12dif.vSub3d(vf3b);
+
+    v11prd = vf3a;
+    v12prd = vf4a;
+    v11prd.vMul3d(vf3b);
+    v12prd.vMul3d(vf3b);
+
+    v11qot = vf3a;
+    v12qot = vf4a;
+    v11qot.vDiv3d(vf3b);
+    v12qot.vDiv3d(vf3b);
+
+    try expect(v11sum.dist3d(vf4_sum) < F32_EPSILON);
+    try expect(v12sum.dist3d(vf4_sum) < F32_EPSILON);
+
+    try expect(v11dif.dist3d(vf4_dif) < F32_EPSILON);
+    try expect(v12dif.dist3d(vf4_dif) < F32_EPSILON);
+
+    try expect(v11prd.dist3d(vf4_prd) < F32_EPSILON);
+    try expect(v12prd.dist3d(vf4_prd) < F32_EPSILON);
+
+    try expect(v11qot.dist3d(vf4_qot) < F32_EPSILON);
+    try expect(v12qot.dist3d(vf4_qot) < F32_EPSILON);
+
+    v11sum = vf3a.vAdd3dc(vf3b);
+    v12sum = vf4a.vAdd3dc(vf4b);
+
+    v11dif = vf3a.vSub3dc(vf3b);
+    v12dif = vf4a.vSub3dc(vf4b);
+
+    v11prd = vf3a.vMul3dc(vf3b);
+    v12prd = vf4a.vMul3dc(vf4b);
+
+    v11qot = vf3a.vDiv3dc(vf3b);
+    v12qot = vf4a.vDiv3dc(vf4b);
+
+    try expect(v11sum.dist3d(vf4_sum) < F32_EPSILON);
+    try expect(v12sum.dist3d(vf4_sum) < F32_EPSILON);
+
+    try expect(v11dif.dist3d(vf4_dif) < F32_EPSILON);
+    try expect(v12dif.dist3d(vf4_dif) < F32_EPSILON);
+
+    try expect(v11prd.dist3d(vf4_prd) < F32_EPSILON);
+    try expect(v12prd.dist3d(vf4_prd) < F32_EPSILON);
+
+    try expect(v11qot.dist3d(vf4_qot) < F32_EPSILON);
+    try expect(v12qot.dist3d(vf4_qot) < F32_EPSILON);
+
+
 }
