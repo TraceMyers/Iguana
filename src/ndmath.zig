@@ -98,7 +98,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
         pub inline fn toIntVecRounded(self: *const VecType, comptime IntType: type) Vec(length, IntType) {
             var int_vec: Vec(length, IntType) = undefined;
             inline for(0..length) |i| {
-                int_vec.val[i] = @floatToInt(IntType, @round(self.val[i]) + F32_EPSILON);
+                int_vec.val[i] = @floatToInt(IntType, @round(self.val[i]) + VecType.epsilonCpt());
             }
             return int_vec;
         }
