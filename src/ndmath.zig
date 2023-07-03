@@ -65,10 +65,20 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
         }
 
         pub inline fn fromVec(vec: anytype) Self {
-            const copy_len = @min(@TypeOf(vec).componentLenStatic(), length);
-            var self = Self{ .val = std.mem.zeroes([length]ScalarType) };
-            @memcpy(@ptrCast([*]ScalarType, &self.val[0])[0..copy_len], @ptrCast([*]const ScalarType, &vec.val[0])[0..copy_len]);
-            return self;
+            const copy_len = @min(@TypeOf(vec).componentLenCpt(), length);
+            if (length > @TypeOf(vec).componentLenCpt()) {
+                var self = Self{ .val = std.mem.zeroes([length]ScalarType) };
+                @memcpy(@ptrCast([*]ScalarType, &self.val[0])[0..copy_len], @ptrCast([*]const ScalarType, &vec.val[0])[0..copy_len]);
+                return self;
+            }
+            else if (length < @TypeOf(vec).componentLenCpt()) {
+                var self: Self = undefined;
+                @memcpy(@ptrCast([*]ScalarType, &self.val[0])[0..copy_len], @ptrCast([*]const ScalarType, &vec.val[0])[0..copy_len]);
+                return self;
+            }
+            else {
+                return vec;
+            }
         }
 
     // ------------------------------------------------------------------------------------------------------ conversion
@@ -100,7 +110,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
         }
 
         pub inline fn copyAssymetric(self: *Self, vec: anytype) void {
-            const copy_len = @min(@TypeOf(vec).componentLenStatic(), length);
+            const copy_len = @min(@TypeOf(vec).componentLenCpt(), length);
             @memcpy(@ptrCast([*]ScalarType, &self.val[0])[0..copy_len], @ptrCast([*]const ScalarType, &vec.val[0])[0..copy_len]);
         }
 
@@ -143,15 +153,15 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             return length;
         }
 
-    // --------------------------------------------------------------------------------------------------------- statics
+    // ---------------------------------------------------------------------------------------------------- compile time
 
         // get the compoment length of this vector. important for use anytime a function can have its branches removed
         // with comptime information.
-        pub inline fn componentLenStatic() comptime_int {
+        pub inline fn componentLenCpt() comptime_int {
             return length;
         }
 
-        pub inline fn epsilonStatic() comptime_float {
+        pub inline fn epsilonCpt() comptime_float {
             switch(ScalarType) {
                 f32 => return 1e-5,
                 f64 => return 1e-15,         
@@ -167,7 +177,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
                 0, 1 => unreachable,
                 2, 3 => vAddcLoop(self, other),
                 else => blk: {
-                    if (@TypeOf(other).componentLenStatic() != length) {
+                    if (@TypeOf(other).componentLenCpt() != length) {
                         break :blk vAddcLoop(self, other);
                     }
                     else {
@@ -183,7 +193,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
                 0, 1 => unreachable,
                 2, 3 => vAddLoop(self, other),
                 else => blk: {
-                    if (@TypeOf(other).componentLenStatic() != length) {
+                    if (@TypeOf(other).componentLenCpt() != length) {
                         break :blk vAddLoop(self, other);
                     }
                     else {
@@ -199,7 +209,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
                 0, 1 => unreachable,
                 2, 3 => vSubcLoop(self, other),
                 else => blk: {
-                    if (@TypeOf(other).componentLenStatic() != length) {
+                    if (@TypeOf(other).componentLenCpt() != length) {
                         break :blk vSubcLoop(self, other);
                     }
                     else {
@@ -215,7 +225,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
                 0, 1 => unreachable,
                 2, 3 => vSubLoop(self, other),
                 else => blk: {
-                    if (@TypeOf(other).componentLenStatic() != length) {
+                    if (@TypeOf(other).componentLenCpt() != length) {
                         break :blk vSubLoop(self, other);
                     }
                     else {
@@ -231,7 +241,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
                 0, 1 => unreachable,
                 2, 3 => vMulcLoop(self, other),
                 else => blk: {
-                    if (@TypeOf(other).componentLenStatic() != length) {
+                    if (@TypeOf(other).componentLenCpt() != length) {
                         break :blk vMulcLoop(self, other);
                     }
                     else {
@@ -247,7 +257,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
                 0, 1 => unreachable,
                 2, 3 => vMulLoop(self, other),
                 else => blk: {
-                    if (@TypeOf(other).componentLenStatic() != length) {
+                    if (@TypeOf(other).componentLenCpt() != length) {
                         break :blk vMulLoop(self, other);
                     }
                     else {
@@ -263,7 +273,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
                 0, 1 => unreachable,
                 2, 3 => vDivcLoop(self, other),
                 else => blk: {
-                    if (@TypeOf(other).componentLenStatic() != length) {
+                    if (@TypeOf(other).componentLenCpt() != length) {
                         break :blk vDivcLoop(self, other);
                     }
                     else {
@@ -279,7 +289,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
                 0, 1 => unreachable,
                 2, 3 => vDivLoop(self, other),
                 else => blk: {
-                    if (@TypeOf(other).componentLenStatic() != length) {
+                    if (@TypeOf(other).componentLenCpt() != length) {
                         break :blk vDivLoop(self, other);
                     }
                     else {
@@ -299,7 +309,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
                 return add_vec;
             }
             else {
-                return Self{ .val = .{self.val[0] + other.val[0], self.val[1] + other.val[1] }};
+                return Self{ .val = .{self.val[0] + other.val[0], self.val[1] + other.val[1]} };
             }
         }
 
@@ -308,7 +318,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
             }
             else {
-                return Self{ .val = .{self.val[0] + other.val[0], self.val[1] + other.val[1] }};
+                return Self{ .val = .{self.val[0] + other.val[0], self.val[1] + other.val[1]} };
             }
         }
 
@@ -325,7 +335,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
                 return sub_vec;
             }
             else {
-                return Self{ .val = .{self.val[0] - other.val[0], self.val[1] - other.val[1] }};
+                return Self{ .val = .{self.val[0] - other.val[0], self.val[1] - other.val[1]} };
             }
         }
 
@@ -342,7 +352,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
                 return mul_vec;
             }
             else {
-                return Self{ .val = .{self.val[0] * other.val[0], self.val[1] * other.val[1] }};
+                return Self{ .val = .{self.val[0] * other.val[0], self.val[1] * other.val[1]} };
             }
         }
 
@@ -359,7 +369,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
                 return div_vec;
             }
             else {
-                return Self{ .val = .{self.val[0] / other.val[0], self.val[1] / other.val[1] }};
+                return Self{ .val = .{self.val[0] / other.val[0], self.val[1] / other.val[1]} };
             }
         }
 
@@ -448,7 +458,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
         pub inline fn sAddc(self: Self, other: ScalarType) Self {
             const add_vec = @splat(length, other);
-            return self + add_vec;
+            return Self{ .val = self.val + add_vec };
         }
 
         pub inline fn sAdd(self: *Self, other: ScalarType) void {
@@ -458,7 +468,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
         pub inline fn sSubc(self: Self, other: ScalarType) Self {
             const add_vec = @splat(length, other);
-            return self - add_vec;
+            return Self{ .val = self.val - add_vec };
         }
 
         pub inline fn sSub(self: *Self, other: ScalarType) void {
@@ -468,7 +478,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
         pub inline fn sMulc(self: Self, other: ScalarType) Self {
             const add_vec = @splat(length, other);
-            return self * add_vec;
+            return Self{ .val = self.val * add_vec };
         }
 
         pub inline fn sMul(self: *Self, other: ScalarType) void {
@@ -574,7 +584,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
         pub inline fn normSafe(self: Self) Self {
             const size_sq = self.sizeSq();
-            if (size_sq < @TypeOf(self).epsilonStatic()) {
+            if (size_sq < @TypeOf(self).epsilonCpt()) {
                 return Self.new();
             }
             return self.sMulc(1.0 / @sqrt(size_sq));
@@ -585,7 +595,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
         }
 
         pub inline fn isNorm(self: Self) bool {
-            return @fabs(1.0 - self.sizeSq()) < @TypeOf(self).epsilonStatic();
+            return @fabs(1.0 - self.sizeSq()) < @TypeOf(self).epsilonCpt();
         }
 
     // --------------------------------------------------------------------------------------------------------- max/min
@@ -610,9 +620,24 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
         }
 
         pub inline fn nearlyEqual(self: Self, other: Self) bool {
-            return self.distSq(other) < Self.componentLenStatic();
+            const diff = self.val - other.val;
+            inline for(0..length) |i| {
+                if (@fabs(diff[i]) > F32_EPSILON) {
+                    return false;
+                }
+            }
+            return true;
         }
 
+        pub inline fn nearlyEqualByTolerance(self: Self, other: Self, tolerance: ScalarType) bool {
+            const diff = self.val - other.val;
+            inline for(0..length) |i| {
+                if (@fabs(diff[i]) > tolerance) {
+                    return false;
+                }
+            }
+            return true;
+        }
     // ------------------------------------------------------------------------------------------------------------ sign
 
         pub inline fn abs(self: Self) Self {
@@ -640,7 +665,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
         pub fn clampSize(self: Self, max: ScalarType) Self {
             const size_sq = self.sizeSq();
-            if (size > max * max) {
+            if (size_sq > max * max) {
                 return self.sMulc(max / @sqrt(size_sq));
             }
             return self;
@@ -669,11 +694,11 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
     // ------------------------------------------------------------------------------------------------------ projection
 
         pub fn projectOnto(self: Self, other: Self) Self {
-            return other.fMulc(self.dot(other) / other.sizeSq());
+            return other.sMulc(self.dot(other) / other.sizeSq());
         }
 
         pub fn projectOntoNorm(self: Self, other: Self) Self {
-            return other.fMulc(self.dot(other));
+            return other.sMulc(self.dot(other));
         }
 
     // ------------------------------------------------------------------------------------------------------- direction
@@ -681,69 +706,69 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
         pub fn nearlyParallel(self: Self, other: Self) bool {
             const self_norm = self.normSafe();
             const other_norm = other.normSafe();
-            return self_norm.dot(other_norm) > (1.0 - Self.epsilonStatic());
+            return self_norm.dot(other_norm) > (1.0 - Self.epsilonCpt());
         }
 
         pub inline fn nearlyParallelPrenorm(self_norm: Self, other_norm: Self) bool {
-            return self_norm.dot(other_norm) > (1.0 - Self.epsilonStatic());
+            return self_norm.dot(other_norm) > (1.0 - Self.epsilonCpt());
         }
 
         pub fn nearlyOrthogonal(self: Self, other: Self) bool {
             const self_norm = self.normSafe();
             const other_norm = other.normSafe();
-            return self_norm.dot(other_norm) < Self.epsilonStatic();
+            return self_norm.dot(other_norm) < Self.epsilonCpt();
         }
 
         pub inline fn nearlyOrthogonalPrenorm(self_norm: Self, other_norm: Self) bool {
-            return self_norm.dot(other_norm) < Self.epsilonStatic();
+            return self_norm.dot(other_norm) < Self.epsilonCpt();
         }
 
         pub inline fn similarDirection(self: Self, other: Self) bool {
-            return self.dot(other) > Self.epsilonStatic();
+            return self.dot(other) > Self.epsilonCpt();
         }
 
     // -------------------------------------------------------------------------------------------------------- internal
 
         inline fn vAddcLoop(vec_a: Self, vec_b: anytype) Self {
             var add_vec = vec_a;
-            inline for(0..@min(@TypeOf(vec_b).componentLenStatic(), length)) |i| {
-                add_vec.val[i] = vec_a.val[i] + vec_b.val[i];
+            inline for(0..@min(@TypeOf(vec_b).componentLenCpt(), length)) |i| {
+                add_vec.val[i] += vec_b.val[i];
             }
             return add_vec;
         }
 
 
         inline fn vAddLoop(vec_a: *Self, vec_b: anytype) void {
-            inline for(0..@min(@TypeOf(vec_b).componentLenStatic(), length)) |i| {
+            inline for(0..@min(@TypeOf(vec_b).componentLenCpt(), length)) |i| {
                 vec_a.val[i] += vec_b.val[i];
             }
         }
 
         inline fn vSubcLoop(vec_a: Self, vec_b: anytype) Self {
             var add_vec = vec_a;
-            inline for(0..@min(@TypeOf(vec_b).componentLenStatic(), length)) |i| {
-                add_vec.val[i] = vec_a.val[i] - vec_b.val[i];
+            inline for(0..@min(@TypeOf(vec_b).componentLenCpt(), length)) |i| {
+                add_vec.val[i] -= vec_b.val[i];
             }
             return add_vec;
         }
 
         inline fn vSubLoop(vec_a: *Self, vec_b: anytype) void {
-            inline for(0..@min(@TypeOf(vec_b).componentLenStatic(), length)) |i| {
+            inline for(0..@min(@TypeOf(vec_b).componentLenCpt(), length)) |i| {
                 vec_a.val[i] -= vec_b.val[i];
             }
         }
 
         inline fn vMulcLoop(vec_a: Self, vec_b: anytype) Self {
             var add_vec = vec_a;
-            inline for(0..@min(@TypeOf(vec_b).componentLenStatic(), length)) |i| {
-                add_vec.val[i] = vec_a.val[i] * vec_b.val[i];
+            inline for(0..@min(@TypeOf(vec_b).componentLenCpt(), length)) |i| {
+                add_vec.val[i] *= vec_b.val[i];
             }
             return add_vec;
         }
 
 
         inline fn vMulLoop(vec_a: *Self, vec_b: anytype) void {
-            inline for(0..@min(@TypeOf(vec_b).componentLenStatic(), length)) |i| {
+            inline for(0..@min(@TypeOf(vec_b).componentLenCpt(), length)) |i| {
                 vec_a.val[i] *= vec_b.val[i];
             }
         }
@@ -751,15 +776,15 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
         inline fn vDivcLoop(vec_a: Self, vec_b: anytype) Self {
             var add_vec = vec_a;
-            inline for(0..@min(@TypeOf(vec_b).componentLenStatic(), length)) |i| {
-                add_vec.val[i] = vec_a.val[i] / vec_b.val[i];
+            inline for(0..@min(@TypeOf(vec_b).componentLenCpt(), length)) |i| {
+                add_vec.val[i] /= vec_b.val[i];
             }
             return add_vec;
         }
 
 
         inline fn vDivLoop(vec_a: *Self, vec_b: anytype) void {
-            inline for(0..@min(@TypeOf(vec_b).componentLenStatic(), length)) |i| {
+            inline for(0..@min(@TypeOf(vec_b).componentLenCpt(), length)) |i| {
                 vec_a.val[i] /= vec_b.val[i];
             }
         }
@@ -1410,6 +1435,38 @@ test "fVec" {
     try expect(v11qot.dist2d(vf4_qot) < F32_EPSILON);
     try expect(v12qot.dist2d(vf4_qot) < F32_EPSILON);
 
+    v10sum = vf2a.vAdd2dc(vf2b);
+    v11sum = vf3a.vAdd2dc(vf2b);
+    v12sum = vf4a.vAdd2dc(vf2b);
+
+    v10dif = vf2a.vSub2dc(vf2b);
+    v11dif = vf3a.vSub2dc(vf2b);
+    v12dif = vf4a.vSub2dc(vf2b);
+
+    v10prd = vf2a.vMul2dc(vf2b);
+    v11prd = vf3a.vMul2dc(vf2b);
+    v12prd = vf4a.vMul2dc(vf2b);
+
+    v10qot = vf2a.vDiv2dc(vf2b);
+    v11qot = vf3a.vDiv2dc(vf2b);
+    v12qot = vf4a.vDiv2dc(vf2b);
+
+    try expect(v10sum.dist2d(vf4_sum) < F32_EPSILON);
+    try expect(v11sum.dist2d(vf4_sum) < F32_EPSILON);
+    try expect(v12sum.dist2d(vf4_sum) < F32_EPSILON);
+
+    try expect(v10dif.dist2d(vf4_dif) < F32_EPSILON);
+    try expect(v11dif.dist2d(vf4_dif) < F32_EPSILON);
+    try expect(v12dif.dist2d(vf4_dif) < F32_EPSILON);
+
+    try expect(v10prd.dist2d(vf4_prd) < F32_EPSILON);
+    try expect(v11prd.dist2d(vf4_prd) < F32_EPSILON);
+    try expect(v12prd.dist2d(vf4_prd) < F32_EPSILON);
+
+    try expect(v10qot.dist2d(vf4_qot) < F32_EPSILON);
+    try expect(v11qot.dist2d(vf4_qot) < F32_EPSILON);
+    try expect(v12qot.dist2d(vf4_qot) < F32_EPSILON);
+
     v11sum = vf3a;
     v12sum = vf4a;
     v11sum.vAdd3d(vf3b);
@@ -1466,5 +1523,40 @@ test "fVec" {
     try expect(v11qot.dist3d(vf4_qot) < F32_EPSILON);
     try expect(v12qot.dist3d(vf4_qot) < F32_EPSILON);
 
+    const v13x: f32 = 0.1;
+    const v13y: f32 = 0.2;
+    const v13z: f32 = 0.3;
+    const v13w: f32 = -14.9;
+    const add_val: f32 = 1.339;
+    const v13xsum = v13x + add_val;
+    const v13ysum = v13y + add_val;
+    const v13zsum = v13z + add_val;
+    const v13wsum = v13w + add_val;
+    var v13 = fVec4.init(.{v13x, v13y, v13z, v13w});
+    v13.sAdd(add_val);
+    var v13sumcheck = fVec4.init(.{v13xsum, v13ysum, v13zsum, v13wsum});
 
+    try expect(v13.dist(v13sumcheck) < F32_EPSILON);
+
+    var v14 = fVec3.init(.{-2201.3, 10083.2, 15.0});
+    var v15 = fVec3.init(.{3434.341, 9207.8888, -22.87});
+    var dot_product = v14.val[0] * v15.val[0] + v14.val[1] * v15.val[1] + v14.val[2] * v15.val[2];
+
+    try expect(@fabs(v14.dot(v15) - dot_product) < F32_EPSILON);
+
+    var v16 = v14.cross(v15).normSafe();
+
+    try expect(v14.nearlyOrthogonal(v16) and v15.nearlyOrthogonal(v16));
+    try expect(v16.isNorm() and @fabs(v16.sizeSq() - 1.0) < F32_EPSILON);
+
+    var v17 = v14.projectOnto(v15);
+
+    try expect(v17.nearlyParallel(v15));
+    try expect(!v16.nearlyParallel(v15));
+    try expect(!v16.similarDirection(v15));
+
+    var v18 = fVec2.init(.{1.001, 2.001});
+    var v19 = fVec2.init(.{1.002, 2.002});
+
+    try expect(!v18.nearlyEqual(v19));
 }
