@@ -173,10 +173,15 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             return length;
         }
 
+        // comptime function giving roughly these ranges of equality between float values:
+        // f16: -32 to 32
+        // f32: -8192 to 8192
+        // f64; -100,000 to 100,000 (or more, untested)
         pub inline fn epsilonCpt() comptime_float {
             switch(ScalarType) {
-                f32 => return 1e-5,
-                f64 => return 1e-15,         
+                f16 => return 1e-1,
+                f32 => return 1e-3,
+                f64 => return 1e-9,
                 else => unreachable
             }
         }
@@ -1644,4 +1649,45 @@ test "fVec" {
     var v19 = fVec2.init(.{1.002, 2.002});
 
     try expect(!v18.nearlyEqual(v19));
+}
+
+test "float precision" {
+    var f1: f16 = 0.0;
+    var f2: f16 = 0.0;
+
+    var i: usize = 0;
+    while(@fabs(f2 - f1) <= 0.1) : (i += 1) {
+        f1 = @intToFloat(f16, i) * 0.09;
+        f2 = @intToFloat(f16, i + 1) * 0.09;
+    }
+
+    print("\nfloat 16: {d}, {d}\n", .{f1, f2});
+
+    var f3: f32 = 0.0;
+    var f4: f32 = 0.0;
+
+    i = 0;
+    while(@fabs(f4 - f3) <= 1e-3) : (i += 1) {
+        f3 = @intToFloat(f32, i) * 9e-4;
+        f4 = @intToFloat(f32, i + 1) * 9e-4;
+    }
+
+    print("float 32: {d}, {d}\n", .{f3, f4});
+
+    var start: f64 = 100000.0;
+    var f5: f64 = 0.0;
+    var f6: f64 = 0.0;
+
+    i = 0;
+    var broke: bool = false;
+    while(@fabs(f6 - f5) <= 1e-9) : (i += 1) {
+        f5 = start + @intToFloat(f64, i) * 9e-10;
+        f6 = start + @intToFloat(f64, i + 1) * 9e-10;
+        if (i > 10000000) {
+            broke = true;
+            break;
+        }
+    }
+
+    print("float 64: {d}, {d}, break: {}\n", .{f5, f6, broke});
 }
