@@ -1,4 +1,4 @@
-# ZigVGCore
+# Iguana Game Engine
 A game engine written in zig that will be as portable as I can handle.
 
 ## Getting Started
