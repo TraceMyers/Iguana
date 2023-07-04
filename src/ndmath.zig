@@ -54,7 +54,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             return VecType{ .val = std.mem.zeroes([length]ScalarType) };
         }
 
-        pub inline fn init(scalars: [length]ScalarType) VecType {
+        pub inline fn init(scalars: anytype) VecType {
             return VecType{ .val = scalars };
         }
 
@@ -113,8 +113,8 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
     // --------------------------------------------------------------------------------------------------------- re-init
 
-        pub inline fn set(self: *VecType, scalars: [length]ScalarType) void {
-            @memcpy(@ptrCast([*]ScalarType, &self.val[0])[0..length], &scalars);
+        pub inline fn set(self: *VecType, scalars: anytype) void {
+            self.val = scalars;
         }
 
         pub inline fn scalarFill(self: *VecType, scalar: ScalarType) void {
