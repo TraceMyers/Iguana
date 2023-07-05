@@ -9,40 +9,47 @@
 
 // ------------------------------------------------------------------------------------------------- convenience aliases
 
+pub const hVec2 = Vec(2, f16);
+pub const hVec3 = Vec(3, f16);
+pub const hVec4 = Vec(4, f16);
+
 pub const fVec2 = Vec(2, f32);
 pub const fVec3 = Vec(3, f32);
 pub const fVec4 = Vec(4, f32);
 
-pub const dfVec2 = Vec(2, f64);
-pub const dVec3 = Vec(3, f64);
-pub const dfVec4 = Vec(4, f64);
+pub const FVec2 = Vec(2, f64);
+pub const FVec3 = Vec(3, f64);
+pub const FVec4 = Vec(4, f64);
 
-pub const iVec2 = Vec(2, i32);
-pub const iVec3 = Vec(3, i32);
-pub const iVec4 = Vec(4, i32);
+pub const hsVec2 = Vec(2, i16);
+pub const hsVec3 = Vec(3, i16);
+pub const hsVec4 = Vec(4, i16);
 
-pub const diVec2 = Vec(2, i64);
-pub const diVec3 = Vec(3, i64);
-pub const diVec4 = Vec(4, i64);
+pub const sVec2 = Vec(2, i32);
+pub const sVec3 = Vec(3, i32);
+pub const sVec4 = Vec(4, i32);
+
+pub const SVec2 = Vec(2, i64);
+pub const SVec3 = Vec(3, i64);
+pub const SVec4 = Vec(4, i64);
+
+pub const huVec2 = Vec(2, u16);
+pub const huVec3 = Vec(3, u16);
+pub const huVec4 = Vec(4, u16);
 
 pub const uVec2 = Vec(2, u32);
 pub const uVec3 = Vec(3, u32);
 pub const uVec4 = Vec(4, u32);
 
-pub const duVec2 = Vec(2, u64);
-pub const duVec3 = Vec(3, u64);
-pub const duVec4 = Vec(4, u64);
+pub const UVec2 = Vec(2, u64);
+pub const UVec3 = Vec(3, u64);
+pub const UVec4 = Vec(4, u64);
 
 // ------------------------------------------------------------------------------------------------------- type function
 
 pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
     return struct {
-
-    // compile time information throughout these functions allows for them to be reduced to branchless execution
-    // according to compiler explorer. for example, vAddc() with two vectors of the same length will simply be
-    // return VecType{ .val = self.val + other.val };. thanks compiler explorer and thanks to zsf for allowing more
-    // direct, explicit communication with the compiler :)
 
         const VecType = @This();
 
@@ -66,14 +73,14 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
         // does not need to equal Nb. If Ta != Tb, then bitwidth(Tb) must be >= bitwidth(Ta)
         // example: var new_vec3 = fVec3.fromVec(some_vec4);
         pub inline fn fromVec(vec: anytype) VecType {
-            if (length > @TypeOf(vec).componentLenCpt()) {
+            if (length > @TypeOf(vec).componentLen()) {
                 var self = VecType{ .val = std.mem.zeroes([length]ScalarType) };
-                inline for (0..@TypeOf(vec).componentLenCpt()) |i| {
+                inline for (0..@TypeOf(vec).componentLen()) |i| {
                     self.val[i] = vec.val[i];
                 }
                 return self;
             }
-            else if (length < @TypeOf(vec).componentLenCpt() or @TypeOf(vec) != VecType) {
+            else if (length < @TypeOf(vec).componentLen() or @TypeOf(vec) != VecType) {
                 var self: VecType = undefined;
                 inline for (0..length) |i| {
                     self.val[i] = vec.val[i];
@@ -98,7 +105,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
         pub inline fn toIntVecRounded(self: *const VecType, comptime IntType: type) Vec(length, IntType) {
             var int_vec: Vec(length, IntType) = undefined;
             inline for(0..length) |i| {
-                int_vec.val[i] = @floatToInt(IntType, @round(self.val[i]) + VecType.epsilonCpt());
+                int_vec.val[i] = @floatToInt(IntType, @round(self.val[i]) + epsilonLarge(ScalarType));
             }
             return int_vec;
         }
@@ -122,7 +129,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
         }
 
         pub inline fn copyAssymetric(self: *VecType, vec: anytype) void {
-            const copy_len = @min(@TypeOf(vec).componentLenCpt(), length);
+            const copy_len = @min(@TypeOf(vec).componentLen(), length);
             @memcpy(@ptrCast([*]ScalarType, &self.val[0])[0..copy_len], @ptrCast([*]const ScalarType, &vec.val[0])[0..copy_len]);
         }
 
@@ -160,45 +167,27 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             self.val[3] = in_w;
         }
 
-        pub inline fn componentLen(self: *const VecType) usize {
-            _ = self;
-            return length;
-        }
-
     // ---------------------------------------------------------------------------------------------------- compile time
 
         // get the compoment length of this vector. important for use anytime a function can have its branches removed
         // with comptime information.
-        pub inline fn componentLenCpt() comptime_int {
+        pub inline fn componentLen() comptime_int {
             return length;
-        }
-
-        // comptime function giving roughly these ranges of equality between float values:
-        // f16: -32 to 32
-        // f32: -65_535 to 65_535
-        // f64; -1_000_000 to 1_000_000 (or more, untested)
-        pub inline fn epsilonCpt() comptime_float {
-            switch(ScalarType) {
-                f16 => return 1e-1,
-                f32 => return 1e-2,
-                f64 => return 1e-9,
-                else => unreachable
-            }
         }
 
     // ----------------------------------------------------------------------------------------------- vector arithmetic
 
         // add two vectors of same or differing lengths with copy for assignment
         pub inline fn addc(self: VecType, other: anytype) VecType {
-            if (@TypeOf(other) == ScalarType) {
+            if (@TypeOf(other) == ScalarType or @TypeOf(other) == comptime_float) {
                 return sAddc(self, other);
             }
             else {
                 return switch(length) {
                     0, 1 => unreachable,
-                    2, 3 => vAddcLoop(self, other),
+                    2 => vAddcLoop(self, other),
                     else => blk: {
-                        if (@TypeOf(other).componentLenCpt() != length) {
+                        if (@TypeOf(other).componentLen() != length) {
                             break :blk vAddcLoop(self, other);
                         }
                         else {
@@ -211,15 +200,15 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
         // add two vectors of same or differing lengths inline
         pub inline fn add(self: *VecType, other: anytype) void {
-            if (@TypeOf(other) == ScalarType) {
+            if (@TypeOf(other) == ScalarType or @TypeOf(other) == comptime_float) {
                 sAdd(self, other);
             }
             else {
                 switch(length) {
                     0, 1 => unreachable,
-                    2, 3 => vAddLoop(self, other),
+                    2 => vAddLoop(self, other),
                     else => blk: {
-                        if (@TypeOf(other).componentLenCpt() != length) {
+                        if (@TypeOf(other).componentLen() != length) {
                             break :blk vAddLoop(self, other);
                         }
                         else {
@@ -232,15 +221,15 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
         // subtract two vectors of same or differing lengths with copy for assignment
         pub inline fn subc(self: VecType, other: anytype) VecType {
-            if (@TypeOf(other) == ScalarType) {
+            if (@TypeOf(other) == ScalarType or @TypeOf(other) == comptime_float) {
                 return sSubc(self, other);
             }
             else {
                 return switch(length) {
                     0, 1 => unreachable,
-                    2, 3 => vSubcLoop(self, other),
+                    2 => vSubcLoop(self, other),
                     else => blk: {
-                        if (@TypeOf(other).componentLenCpt() != length) {
+                        if (@TypeOf(other).componentLen() != length) {
                             break :blk vSubcLoop(self, other);
                         }
                         else {
@@ -253,15 +242,15 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
         // add two vectors of same or differing lengths inline
         pub inline fn sub(self: *VecType, other: anytype) void {
-            if (@TypeOf(other) == ScalarType) {
+            if (@TypeOf(other) == ScalarType or @TypeOf(other) == comptime_float) {
                 sSub(self, other);
             }
             else {
                 switch(length) {
                     0, 1 => unreachable,
-                    2, 3 => vSubLoop(self, other),
+                    2 => vSubLoop(self, other),
                     else => blk: {
-                        if (@TypeOf(other).componentLenCpt() != length) {
+                        if (@TypeOf(other).componentLen() != length) {
                             break :blk vSubLoop(self, other);
                         }
                         else {
@@ -274,15 +263,15 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
         // add two vectors of same or differing lengths with copy for assignment
         pub inline fn mulc(self: VecType, other: anytype) VecType {
-            if (@TypeOf(other) == ScalarType) {
+            if (@TypeOf(other) == ScalarType or @TypeOf(other) == comptime_float) {
                 return sMulc(self, other);
             }
             else {
                 return switch(length) {
                     0, 1 => unreachable,
-                    2, 3 => vMulcLoop(self, other),
+                    2 => vMulcLoop(self, other),
                     else => blk: {
-                        if (@TypeOf(other).componentLenCpt() != length) {
+                        if (@TypeOf(other).componentLen() != length) {
                             break :blk vMulcLoop(self, other);
                         }
                         else {
@@ -295,15 +284,15 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
         // add two vectors of same or differing lengths inline
         pub inline fn mul(self: *VecType, other: anytype) void {
-            if (@TypeOf(other) == ScalarType) {
+            if (@TypeOf(other) == ScalarType or @TypeOf(other) == comptime_float) {
                 sMul(self, other);
             }
             else {
                 switch(length) {
                     0, 1 => unreachable,
-                    2, 3 => vMulLoop(self, other),
+                    2 => vMulLoop(self, other),
                     else => blk: {
-                        if (@TypeOf(other).componentLenCpt() != length) {
+                        if (@TypeOf(other).componentLen() != length) {
                             break :blk vMulLoop(self, other);
                         }
                         else {
@@ -316,15 +305,15 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
         // add two vectors of same or differing lengths with copy for assignment
         pub inline fn divc(self: VecType, other: anytype) VecType {
-            if (@TypeOf(other) == ScalarType) {
+            if (@TypeOf(other) == ScalarType or @TypeOf(other) == comptime_float) {
                 return sDivc(self, other);
             }
             else {
                 return switch(length) {
                     0, 1 => unreachable,
-                    2, 3 => vDivcLoop(self, other),
+                    2 => vDivcLoop(self, other),
                     else => blk: {
-                        if (@TypeOf(other).componentLenCpt() != length) {
+                        if (@TypeOf(other).componentLen() != length) {
                             break :blk vDivcLoop(self, other);
                         }
                         else {
@@ -337,15 +326,15 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
         // add two vectors of same or differing lengths inline
         pub inline fn div(self: *VecType, other: anytype) void {
-            if (@TypeOf(other) == ScalarType) {
+            if (@TypeOf(other) == ScalarType or @TypeOf(other) == comptime_float) {
                 sDiv(self, other);
             }
             else {
                 switch(length) {
                     0, 1 => unreachable,
-                    2, 3 => vDivLoop(self, other),
+                    2 => vDivLoop(self, other),
                     else => blk: {
-                        if (@TypeOf(other).componentLenCpt() != length) {
+                        if (@TypeOf(other).componentLen() != length) {
                             break :blk vDivLoop(self, other);
                         }
                         else {
@@ -520,8 +509,8 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             return self.val[0] * other.val[1] - other.val[0] * self.val[1];
         }
 
-        pub inline fn cross(self: VecType, other: VecType) VecType {
-            return VecType { .val = @Vector(length, ScalarType){
+        pub inline fn cross(self: VecType, other: VecType) Vec(3, ScalarType) {
+            return  Vec(3, ScalarType){ .val = @Vector(3, ScalarType){
                 self.val[1] * other.val[2] - self.val[2] * other.val[1],
                 self.val[2] * other.val[0] - self.val[0] * other.val[2],
                 self.val[0] * other.val[1] - self.val[1] * other.val[0]
@@ -590,7 +579,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
         pub inline fn normSafe(self: VecType) VecType {
             const size_sq = self.sizeSq();
-            if (size_sq < @TypeOf(self).epsilonCpt()) {
+            if (size_sq <= epsilonSmall(ScalarType)) {
                 return VecType.new();
             }
             return self.sMulc(1.0 / @sqrt(size_sq));
@@ -601,7 +590,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
         }
 
         pub inline fn isNorm(self: VecType) bool {
-            return @fabs(1.0 - self.sizeSq()) < @TypeOf(self).epsilonCpt();
+            return @fabs(1.0 - self.sizeSq()) <= epsilonSmall(ScalarType);
         }
 
     // --------------------------------------------------------------------------------------------------------- max/min
@@ -628,7 +617,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
         pub inline fn nearlyEqual(self: VecType, other: VecType) bool {
             const diff = self.val - other.val;
             inline for(0..length) |i| {
-                if (@fabs(diff[i]) > F32_EPSILON) {
+                if (@fabs(diff[i]) > epsilonMedium(ScalarType)) {
                     return false;
                 }
             }
@@ -644,6 +633,27 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
             }
             return true;
         }
+
+        pub inline fn nearlyEqualAutoTolerance(self: VecType, other: VecType) bool {
+            const diff = self.val - other.val;
+            inline for(0..length) |i| {
+                const diff_val = diff[i];
+                if (@fabs(diff_val) > epsilonAuto(self.val[i], other.val[i])) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        pub inline fn nearlyZero(self: VecType) bool {
+            inline for(0..length) |i| {
+                if (@fabs(self.val[i]) > epsilonSmall(ScalarType)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
     // ------------------------------------------------------------------------------------------------------------ sign
 
         pub inline fn abs(self: VecType) VecType {
@@ -712,26 +722,153 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
         pub fn nearlyParallel(self: VecType, other: VecType) bool {
             const self_norm = self.normSafe();
             const other_norm = other.normSafe();
-            return self_norm.dot(other_norm) > (1.0 - VecType.epsilonCpt());
+            return self_norm.dot(other_norm) >= (1.0 - epsilonSmall(ScalarType));
         }
 
         pub inline fn nearlyParallelPrenorm(self_norm: VecType, other_norm: VecType) bool {
-            return self_norm.dot(other_norm) > (1.0 - VecType.epsilonCpt());
+            return self_norm.dot(other_norm) >= (1.0 - VecType.epsilonSmall(ScalarType));
         }
 
         pub fn nearlyOrthogonal(self: VecType, other: VecType) bool {
             const self_norm = self.normSafe();
             const other_norm = other.normSafe();
-            return self_norm.dot(other_norm) < VecType.epsilonCpt();
+            return self_norm.dot(other_norm) <= epsilonSmall(ScalarType);
         }
 
         pub inline fn nearlyOrthogonalPrenorm(self_norm: VecType, other_norm: VecType) bool {
-            return self_norm.dot(other_norm) < VecType.epsilonCpt();
+            return self_norm.dot(other_norm) <= epsilonSmall(ScalarType);
         }
 
         pub inline fn similarDirection(self: VecType, other: VecType) bool {
-            return self.dot(other) > VecType.epsilonCpt();
+            return self.dot(other) >= epsilonSmall(ScalarType);
         }
+
+    // ------------------------------------------------------------------------------------------------------- constants
+
+        pub const zero = VecType.new();
+        pub const posx = switch(length) {
+            2 => switch(ScalarType) {
+                f16, f32, f64 => VecType.init(.{1.0,  0.0}),
+                i16, i32, i64, u16, u32, u64 => VecType.init(.{1, 0}),
+                else => unreachable
+            },
+            3 => switch(ScalarType) {
+                f16, f32, f64 => VecType.init(.{1.0, 0.0, 0.0}),
+                i16, i32, i64, u16, u32, u64 => VecType.init(.{1, 0, 0}),
+                else => unreachable
+            },
+            4 => switch(ScalarType) {
+                f16, f32, f64 => VecType.init(.{1.0, 0.0, 0.0, 0.0}),
+                i16, i32, i64, u16, u32, u64 => VecType.init(.{1, 0, 0, 0}),
+                else => unreachable
+            },
+            else => undefined
+        };
+        pub const posy = switch(length) {
+            2 => switch(ScalarType) {
+                f16, f32, f64 => VecType.init(.{0.0,  1.0}),
+                i16, i32, i64, u16, u32, u64 => VecType.init(.{0, 1}),
+                else => unreachable
+            },
+            3 => switch(ScalarType) {
+                f16, f32, f64 => VecType.init(.{0.0, 1.0, 0.0}),
+                i16, i32, i64, u16, u32, u64 => VecType.init(.{0, 1, 0}),
+                else => unreachable
+            },
+            4 => switch(ScalarType) {
+                f16, f32, f64 => VecType.init(.{0.0, 1.0, 0.0, 0.0}),
+                i16, i32, i64, u16, u32, u64 => VecType.init(.{0, 1, 0, 0}),
+                else => unreachable
+            },
+            else => undefined
+        };
+        pub const posz = switch(length) {
+            3 => switch(ScalarType) {
+                f16, f32, f64 => VecType.init(.{0.0, 0.0, 1.0}),
+                i16, i32, i64, u16, u32, u64 => VecType.init(.{0, 0, 1}),
+                else => unreachable
+            },
+            4 => switch(ScalarType) {
+                f16, f32, f64 => VecType.init(.{0.0, 0.0, 1.0, 0.0}),
+                i16, i32, i64, u16, u32, u64 => VecType.init(.{0, 0, 1, 0}),
+                else => unreachable
+            },
+            else => undefined
+        };
+        pub const negx = switch(length) {
+            2 => switch(ScalarType) {
+                f16, f32, f64 => VecType.init(.{-1.0,  0.0}),
+                i16, i32, i64 => VecType.init(.{-1, 0}),
+                u16, u32, u64 => undefined,
+                else => unreachable
+            },
+            3 => switch(ScalarType) {
+                f16, f32, f64 => VecType.init(.{-1.0, 0.0, 0.0}),
+                i16, i32, i64 => VecType.init(.{-1, 0, 0}),
+                u16, u32, u64 => undefined,
+                else => unreachable
+            },
+            4 => switch(ScalarType) {
+                f16, f32, f64 => VecType.init(.{-1.0, 0.0, 0.0, 0.0}),
+                i16, i32, i64 => VecType.init(.{-1, 0, 0, 0}),
+                u16, u32, u64 => undefined,
+                else => unreachable
+            },
+            else => undefined
+        };
+        pub const negy = switch(length) {
+            2 => switch(ScalarType) {
+                f16, f32, f64 => VecType.init(.{0.0,  -1.0}),
+                i16, i32, i64 => VecType.init(.{0, -1}),
+                u16, u32, u64 => undefined,
+                else => unreachable
+            },
+            3 => switch(ScalarType) {
+                f16, f32, f64 => VecType.init(.{0.0, -1.0, 0.0}),
+                i16, i32, i64 => VecType.init(.{0, -1, 0}),
+                u16, u32, u64 => undefined,
+                else => unreachable
+            },
+            4 => switch(ScalarType) {
+                f16, f32, f64 => VecType.init(.{0.0, -1.0, 0.0, 0.0}),
+                i16, i32, i64 => VecType.init(.{0, -1, 0, 0}),
+                u16, u32, u64 => undefined,
+                else => unreachable
+            },
+            else => undefined
+        };
+        pub const negz = switch(length) {
+            3 => switch(ScalarType) {
+                f16, f32, f64 => VecType.init(.{0.0, 0.0, -1.0}),
+                i16, i32, i64 => VecType.init(.{0, 0, -1}),
+                u16, u32, u64 => undefined,
+                else => unreachable
+            },
+            4 => switch(ScalarType) {
+                f16, f32, f64 => VecType.init(.{0.0, 0.0, -1.0, 0.0}),
+                i16, i32, i64 => VecType.init(.{0, 0, -1, 0}),
+                u16, u32, u64 => undefined,
+                else => unreachable
+            },
+            else => undefined
+        };
+        pub const posw = switch(length) {
+            4 => switch(ScalarType) {
+                f16, f32, f64 => VecType.init(.{0.0, 0.0, 0.0, 1.0}),
+                i16, i32, i64, u16, u32, u64 => VecType.init(.{0, 0, 0, 1}),
+                else => unreachable,
+            },
+            else => undefined,
+        };
+        pub const negw = switch(length) {
+            4 => switch(ScalarType) {
+                f16, f32, f64 => VecType.init(.{0.0, 0.0, 0.0 , -1.0}),
+                i16, i32, i64 => VecType.init(.{0, 0, 0, -1}),
+                u16, u32, u64 => undefined,
+                else => unreachable,
+            },
+            else => undefined,
+        };
 
     // -------------------------------------------------------------------------------------------------------- internal
 
@@ -767,46 +904,47 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
         inline fn sDivc(self: VecType, other: ScalarType) VecType {
             const mul_scalar = 1.0 / other;
-            return self.sMulc(mul_scalar);
+            const mul_vec = @splat(length, mul_scalar);
+            return self.val * mul_vec;
         }
 
-        inline fn sDiv(self: VecType, other: ScalarType) void {
+        inline fn sDiv(self: *VecType, other: ScalarType) void {
             const mul_scalar = 1.0 / other;
-            self.sMul(mul_scalar);
+            const mul_vec = @splat(length, mul_scalar);
+            self.val *= mul_vec;
         }
 
         inline fn vAddcLoop(vec_a: VecType, vec_b: anytype) VecType {
             var add_vec = vec_a;
-            inline for(0..@min(@TypeOf(vec_b).componentLenCpt(), length)) |i| {
+            inline for(0..@min(@TypeOf(vec_b).componentLen(), length)) |i| {
                 add_vec.val[i] += vec_b.val[i];
             }
             return add_vec;
         }
 
-
         inline fn vAddLoop(vec_a: *VecType, vec_b: anytype) void {
-            inline for(0..@min(@TypeOf(vec_b).componentLenCpt(), length)) |i| {
+            inline for(0..@min(@TypeOf(vec_b).componentLen(), length)) |i| {
                 vec_a.val[i] += vec_b.val[i];
             }
         }
 
         inline fn vSubcLoop(vec_a: VecType, vec_b: anytype) VecType {
             var add_vec = vec_a;
-            inline for(0..@min(@TypeOf(vec_b).componentLenCpt(), length)) |i| {
+            inline for(0..@min(@TypeOf(vec_b).componentLen(), length)) |i| {
                 add_vec.val[i] -= vec_b.val[i];
             }
             return add_vec;
         }
 
         inline fn vSubLoop(vec_a: *VecType, vec_b: anytype) void {
-            inline for(0..@min(@TypeOf(vec_b).componentLenCpt(), length)) |i| {
+            inline for(0..@min(@TypeOf(vec_b).componentLen(), length)) |i| {
                 vec_a.val[i] -= vec_b.val[i];
             }
         }
 
         inline fn vMulcLoop(vec_a: VecType, vec_b: anytype) VecType {
             var add_vec = vec_a;
-            inline for(0..@min(@TypeOf(vec_b).componentLenCpt(), length)) |i| {
+            inline for(0..@min(@TypeOf(vec_b).componentLen(), length)) |i| {
                 add_vec.val[i] *= vec_b.val[i];
             }
             return add_vec;
@@ -814,7 +952,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
 
         inline fn vMulLoop(vec_a: *VecType, vec_b: anytype) void {
-            inline for(0..@min(@TypeOf(vec_b).componentLenCpt(), length)) |i| {
+            inline for(0..@min(@TypeOf(vec_b).componentLen(), length)) |i| {
                 vec_a.val[i] *= vec_b.val[i];
             }
         }
@@ -822,7 +960,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
         inline fn vDivcLoop(vec_a: VecType, vec_b: anytype) VecType {
             var add_vec = vec_a;
-            inline for(0..@min(@TypeOf(vec_b).componentLenCpt(), length)) |i| {
+            inline for(0..@min(@TypeOf(vec_b).componentLen(), length)) |i| {
                 add_vec.val[i] /= vec_b.val[i];
             }
             return add_vec;
@@ -830,7 +968,7 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 
 
         inline fn vDivLoop(vec_a: *VecType, vec_b: anytype) void {
-            inline for(0..@min(@TypeOf(vec_b).componentLenCpt(), length)) |i| {
+            inline for(0..@min(@TypeOf(vec_b).componentLen(), length)) |i| {
                 vec_a.val[i] /= vec_b.val[i];
             }
         }
@@ -839,297 +977,323 @@ pub fn Vec(comptime length: comptime_int, comptime ScalarType: type) type {
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ---------------------------------------------------------------------------------------------------------------- fRay
+// ----------------------------------------------------------------------------------------------------------------- Ray
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub const fRay = struct {
+// ------------------------------------------------------------------------------------------------- convenience aliases
 
-    origin: fVec3 = undefined,
-    normal: fVec3 = undefined,
+pub const hRay = Ray(f16);
+pub const fRay = Ray(f32);
+pub const FRay = Ray(f64);
 
-    pub inline fn new() fRay {
-        return fRay{
-            .origin = fVec3.new(),
-            .normal = fVec3.init(.{1.0, 0.0, 0.0})
-        };
-    }
+// ------------------------------------------------------------------------------------------------------- type function
 
-    pub inline fn fromNorm(in_normal: fVec3) !fRay {
-        if (!in_normal.isNorm()) {
-            return NDMathError.RayNormalNotNormalized;
+pub fn Ray(comptime ScalarType: type) type {
+
+    return struct {
+
+        const RayType = @This();
+
+        origin: Vec(3, ScalarType) = undefined,
+        normal: Vec(3, ScalarType) = undefined,
+
+        pub inline fn new() RayType {
+            return RayType{
+                .origin = Vec(3, ScalarType).new(),
+                .normal = Vec(3, ScalarType).init(.{1.0, 0.0, 0.0})
+            };
         }
-        return fRay {
-            .origin = fVec3.new(),
-            .normal = in_normal
-        };
-    }
 
-    pub inline fn fromComponents(in_origin: fVec3, in_normal: fVec3) !fRay {
-        if (!in_normal.isNorm()) {
-            return NDMathError.RayNormalNotNormalized;
+        pub inline fn fromNorm(in_normal: Vec(3, ScalarType)) !RayType {
+            if (!in_normal.isNorm()) {
+                return NDMathError.RayNormalNotNormalized;
+            }
+            return RayType {
+                .origin = Vec(3, ScalarType).new(),
+                .normal = in_normal
+            };
         }
-        return fRay {
-            .origin = in_origin,
-            .normal = in_normal
-        };
-    }
 
-    pub inline fn flip(self: *fRay) void {
-        self.normal = self.normal.flip();
-    }
-};
+        pub inline fn fromComponents(in_origin: Vec(3, ScalarType), in_normal: Vec(3, ScalarType)) !RayType {
+            if (!in_normal.isNorm()) {
+                return NDMathError.RayNormalNotNormalized;
+            }
+            return RayType {
+                .origin = in_origin,
+                .normal = in_normal
+            };
+        }
+
+        pub inline fn flip(self: *RayType) void {
+            self.normal = self.normal.flip();
+        }
+    };
+}
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// -------------------------------------------------------------------------------------------------------------- fPlane
+// --------------------------------------------------------------------------------------------------------------- Plane
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub const fPlane = struct {
+// ------------------------------------------------------------------------------------------------- convenience aliases
 
-    normal: fVec3 = undefined,
-    w: f32 = undefined,
+pub const hPlane = Plane(f16);
+pub const fPlane = Plane(f32);
+pub const FPlane = Plane(f64);
 
-    pub inline fn new() fPlane {
-        return fPlane{
-            .normal = fVec3.init(.{1.0, 0.0, 0.0}),
-            .w = 0.0
-        };
-    }
+// ------------------------------------------------------------------------------------------------------- type function
 
-    pub inline fn fromNorm(norm: fVec3) !fPlane {
-        if (!norm.isNorm()) {
-            return NDMathError.PlaneNormalNotNormalized;
+pub fn Plane(comptime ScalarType: type) type {
+
+    return struct {
+        
+        const PlaneType = @This();
+
+        normal: Vec(3, ScalarType) = undefined,
+        odist: ScalarType = undefined,
+
+        pub inline fn new() PlaneType {
+            return PlaneType{
+                .normal = Vec(3, ScalarType).init(.{1.0, 0.0, 0.0}),
+                .odist = 0.0
+            };
         }
-        return fPlane {
-            .normal = norm,
-            .w = 0.0
-        };
-    }
 
-    pub inline fn fromComponents(norm: fVec3, origin_distance: f32) !fPlane {
-        if (!norm.isNorm()) {
-            return NDMathError.PlaneNormalNotNormalized;
+        pub inline fn fromNorm(norm: Vec(3, ScalarType)) !PlaneType {
+            if (!norm.isNorm()) {
+                return NDMathError.PlaneNormalNotNormalized;
+            }
+            return PlaneType {
+                .normal = norm,
+                .odist = 0.0
+            };
         }
-        return fPlane {
-            .normal = norm,
-            .w = origin_distance
-        };
-    }
 
-    pub inline fn flipped(from_plane: fPlane) fPlane {
-        var plane = from_plane;
-        plane.flip();
-        return plane;
-    }
+        pub inline fn fromComponents(norm: Vec(3, ScalarType), origin_distance: ScalarType) !PlaneType {
+            if (!norm.isNorm()) {
+                return NDMathError.PlaneNormalNotNormalized;
+            }
+            return PlaneType {
+                .normal = norm,
+                .odist = origin_distance
+            };
+        }
+
+        pub inline fn flipped(from_plane: PlaneType) PlaneType {
+            var plane = from_plane;
+            plane.flip();
+            return plane;
+        }
 
     // ------------------------------------------------------------------------------------------------------ components
 
-    pub inline fn setNormFromVec(self: *fPlane, vec: fVec3) !void {
-        const norm_vec = vec.normSafe();
-        // vec could have components that are too small to normalize
-        if (!norm_vec.isNorm()) {
-            return NDMathError.PlaneNormalNotNormalized;
+        pub inline fn setNormFromVec(self: *PlaneType, vec: Vec(3, ScalarType)) !void {
+            const norm_vec = vec.normSafe();
+            // vec could have components that are too small to normalize
+            if (!norm_vec.isNorm()) {
+                return NDMathError.PlaneNormalNotNormalized;
+            }
+            self.normal = norm_vec;
         }
-        self.normal = norm_vec;
-    }
 
-    pub inline fn setOriginDistance(self: *fPlane, origin_distance: f32) void {
-        self.w = origin_distance;
-    }
-
-    pub inline fn setComponents(self: *fPlane, norm: fVec3, origin_distance: f32) !void {
-        if (!norm.isNorm()) {
-            return NDMathError.PlaneNormalNotNormalized;
+        pub inline fn setOriginDistance(self: *PlaneType, origin_distance: ScalarType) void {
+            self.odist = origin_distance;
         }
-        self.normal = norm;
-        self.w = origin_distance;
-    }
 
-    pub inline fn normX(self: *const fPlane) f32 {
-        return self.normal.val[0];
-    }
+        pub inline fn setComponents(self: *PlaneType, norm: Vec(3, ScalarType), origin_distance: ScalarType) !void {
+            if (!norm.isNorm()) {
+                return NDMathError.PlaneNormalNotNormalized;
+            }
+            self.normal = norm;
+            self.odist = origin_distance;
+        }
 
-    pub inline fn normY(self: *const fPlane) f32 {
-        return self.normal.val[1];
-    }
+        pub inline fn normX(self: *const PlaneType) f32 {
+            return self.normal.val[0];
+        }
 
-    pub inline fn normZ(self: *const fPlane) f32 {
-        return self.normal.val[2];
-    }
+        pub inline fn normY(self: *const PlaneType) ScalarType {
+            return self.normal.val[1];
+        }
 
-    pub inline fn originDistance(self: *const fPlane) f32 {
-        return self.w;
-    }
+        pub inline fn normZ(self: *const PlaneType) ScalarType {
+            return self.normal.val[2];
+        }
 
-    pub inline fn flip(self: *const fPlane) void {
-        self.normal = self.normal.flip();
-    }
+        pub inline fn originDistance(self: *const PlaneType) ScalarType {
+            return self.odist;
+        }
+
+        pub inline fn flip(self: *const PlaneType) void {
+            self.normal = self.normal.flip();
+        }
 
     // -------------------------------------------------------------------------------------------------- linear algebra
 
-    pub inline fn pNormalDot(self: fPlane, other: fPlane) f32 {
-        return self.normal.dot(other.normal);
-    }
+        pub inline fn pNormalDot(self: PlaneType, other: PlaneType) ScalarType {
+            return self.normal.dot(other.normal);
+        }
 
-    pub inline fn vNormalDot(self: fPlane, other: fVec3) f32 {
-        return self.normal.dot(other);
-    }
+        pub inline fn vNormalDot(self: PlaneType, other: Vec(3, ScalarType)) ScalarType {
+            return self.normal.dot(other);
+        }
 
-    pub inline fn pNormalCross(self: fPlane, other: fPlane) fVec3 {
-        return self.normal.cross(other.normal);
-    }
+        pub inline fn pNormalCross(self: PlaneType, other: PlaneType) Vec(3, ScalarType) {
+            return self.normal.cross(other.normal);
+        }
 
-    pub inline fn vNormalCross(self: fPlane, other: fVec3) fVec3 {
-        return self.normal.cross(other);
-    }
+        pub inline fn vNormalCross(self: PlaneType, other: Vec(3, ScalarType)) Vec(3, ScalarType) {
+            return self.normal.cross(other);
+        }
 
     // ---------------------------------------------------------------------------------------------------- trigonometry
 
-    pub inline fn pNormalAngle(self: fPlane, other: fPlane) f32 {
-        return self.normal.anglePrenorm(other.normal);
-    }
+        pub inline fn pNormalAngle(self: PlaneType, other: PlaneType) ScalarType {
+            return self.normal.anglePrenorm(other.normal);
+        }
 
-    pub inline fn pNormalCosAngle(self: fPlane, other: fPlane) f32 {
-        return self.normal.cosAnglePrenorm(other.normal);
-    }
+        pub inline fn pNormalCosAngle(self: PlaneType, other: PlaneType) ScalarType {
+            return self.normal.cosAnglePrenorm(other.normal);
+        }
 
-    pub inline fn vNormalAngle(self: fPlane, other: fVec3) f32 {
-        return self.normal.angle(other);
-    }
+        pub inline fn vNormalAngle(self: PlaneType, other: Vec(3, ScalarType)) ScalarType {
+            return self.normal.angle(other);
+        }
 
-    pub inline fn vNormalCosAngle(self: fPlane, other: fVec3) f32 {
-        return self.normal.cosAngle(other);
-    }
+        pub inline fn vNormalCosAngle(self: PlaneType, other: Vec(3, ScalarType)) ScalarType {
+            return self.normal.cosAngle(other);
+        }
 
-    pub inline fn vNormalAnglePrenorm(self: fPlane, norm: fVec3) f32 {
-        return self.normal.anglePrenorm(norm);
-    }
+        pub inline fn vNormalAnglePrenorm(self: PlaneType, norm: Vec(3, ScalarType)) ScalarType {
+            return self.normal.anglePrenorm(norm);
+        }
 
-    pub inline fn vNormalCosAnglePrenorm(self: fPlane, norm: fVec3) f32 {
-        return self.normal.cosAnglePrenorm(norm);
-    }
+        pub inline fn vNormalCosAnglePrenorm(self: PlaneType, norm: Vec(3, ScalarType)) ScalarType {
+            return self.normal.cosAnglePrenorm(norm);
+        }
 
-    // -------------------------------------------------------------------------------------------------------- equality
+        // -------------------------------------------------------------------------------------------------------- equality
 
-    pub inline fn exactlyEqual(self: fPlane, other: fPlane) bool {
-        return self.normal.exactlyEqual(other.normal) and self.w == other.w;
-    }
+        pub inline fn exactlyEqual(self: PlaneType, other: PlaneType) bool {
+            return self.normal.exactlyEqual(other.normal) and self.odist == other.odist;
+        }
 
-    pub inline fn nearlyEqual(self: fPlane, other: fPlane) bool {
-        return self.normal.nearlyEqual(other.normal) and @fabs(self.w - other.w) < F32_EPSILON;
-    }
+        pub inline fn nearlyEqual(self: PlaneType, other: PlaneType) bool {
+            return self.normal.nearlyEqual(other.normal) and @fabs(self.odist - other.odist) <= epsilonMedium(ScalarType);
+        }
 
-    pub inline fn exactlyEqualNorm(self: fPlane, other: fVec3) bool {
-        return self.normal.exactlyEqual(other);
-    }
+        pub inline fn exactlyEqualNorm(self: PlaneType, other: Vec(3, ScalarType)) bool {
+            return self.normal.exactlyEqual(other);
+        }
 
-    pub inline fn nearlyEqualNorm(self: fPlane, other: fVec3) bool {
-        return self.normal.nearlyEqual(other);
-    }
+        pub inline fn nearlyEqualNorm(self: PlaneType, other: Vec(3, ScalarType)) bool {
+            return self.normal.nearlyEqual(other);
+        }
 
     // ------------------------------------------------------------------------------------------------------- direction
 
-    pub inline fn pNearlyParallel(self: fPlane, other: fPlane) bool {
-        return self.normal.nearlyParallelPrenorm(other.normal);
-    }
+        pub inline fn pNearlyParallel(self: PlaneType, other: PlaneType) bool {
+            return self.normal.nearlyParallelPrenorm(other.normal);
+        }
 
-    pub inline fn pNearlyOrthogonal(self: fPlane, other: fPlane) bool {
-        return self.normal.nearlyOrthogonalPrenorm(other.normal);
-    }
+        pub inline fn pNearlyOrthogonal(self: PlaneType, other: PlaneType) bool {
+            return self.normal.nearlyOrthogonalPrenorm(other.normal);
+        }
 
-    pub inline fn pSimilarDirection(self: fPlane, other: fPlane) bool {
-        return self.normal.similarDirection(other.normal);
-    }
+        pub inline fn pSimilarDirection(self: PlaneType, other: PlaneType) bool {
+            return self.normal.similarDirection(other.normal);
+        }
 
-    pub inline fn vNearlyParallel(self: fPlane, other: fVec3) bool {
-        return self.normal.nearlyParallel(other);
-    }
+        pub inline fn vNearlyParallel(self: PlaneType, other: Vec(3, ScalarType)) bool {
+            return self.normal.nearlyParallel(other);
+        }
 
-    pub inline fn vNearlyOrthogonal(self: fPlane, other: fVec3) bool {
-        return self.normal.nearlyOrthogonal(other);
-    }
+        pub inline fn vNearlyOrthogonal(self: PlaneType, other: Vec(3, ScalarType)) bool {
+            return self.normal.nearlyOrthogonal(other);
+        }
 
-    pub inline fn vSimilarDirection(self: fPlane, other: fVec3) bool {
-        return self.normal.similarDirection(other);
-    }
+        pub inline fn vSimilarDirection(self: PlaneType, other: Vec(3, ScalarType)) bool {
+            return self.normal.similarDirection(other);
+        }
 
-    pub inline fn vNearlyParallelPrenorm(self: fPlane, other: fVec3) bool {
-        return self.normal.nearlyParallelPrenorm(other);
-    }
+        pub inline fn vNearlyParallelPrenorm(self: PlaneType, other: Vec(3, ScalarType)) bool {
+            return self.normal.nearlyParallelPrenorm(other);
+        }
 
-    pub inline fn vNearlyOrthogonalPrenorm(self: fPlane, other: fVec3) bool {
-        return self.normal.nearlyOrthogonalPrenorm(other);
-    }
+        pub inline fn vNearlyOrthogonalPrenorm(self: PlaneType, other: Vec(3, ScalarType)) bool {
+            return self.normal.nearlyOrthogonalPrenorm(other);
+        }
 
     // ---------------------------------------------------------------------------------------------- vector interaction
 
-    pub inline fn pointDistSigned(self: fPlane, point: fVec3) f32 {
-        return -(self.normal.dot(point) - self.w);
-    }
-
-    pub inline fn pointDist(self: fPlane, point: fVec3) f32 {
-        return @fabs(self.pointDistSigned(point));
-    }
-
-    pub inline fn pointDiff(self: fPlane, point: fVec3) f32 {
-        const dist = self.pointDistSigned(point);
-        return fVec3.init(.{
-            self.normal.val[0] * dist,
-            self.normal.val[1] * dist,
-            self.normal.val[2] * dist,
-        });
-    }
-
-    pub inline fn pointProject(self: fPlane, point: fVec3) f32 {
-        const dist = self.pointDistSigned(point);
-        return fVec3.init(.{
-            point.val[0] + self.normal.val[0] * dist,
-            point.val[1] + self.normal.val[1] * dist,
-            point.val[2] + self.normal.val[2] * dist,
-        });
-    }
-
-    pub inline fn pointMirror(self: fPlane, point: fVec3) f32 {
-        const double_diff = self.pointDiff(point).sMulc(2.0);
-        return point.vAddc(double_diff);
-    }
-
-    pub inline fn reflect(self: fPlane, vec: fVec3) f32 {
-        const reflect_dist = self.vNormalDot(vec) * -2.0;
-        const reflect_diff = self.normal.sMulc(reflect_dist);
-        return vec.vAddc(reflect_diff);
-    }
-
-    pub fn rayIntersect(self: fPlane, ray: fRay, distance: *f32) ?fVec3 {
-        const normal_direction_product = self.vNormalDot(ray.normal);
-        if (normal_direction_product >= -F32_EPSILON) {
-            return null;
+        pub inline fn pointDistSigned(self: PlaneType, point: Vec(3, ScalarType)) ScalarType {
+            return -(self.normal.dot(point) - self.odist);
         }
 
-        const normal_origin_product = self.vNormalDot(ray.origin);
-        distance.* = normal_origin_product - self.w;
-
-        if (distance.* < 0.0) {
-            return null;
+        pub inline fn pointDist(self: PlaneType, point: Vec(3, ScalarType)) ScalarType {
+            return @fabs(self.pointDistSigned(point));
         }
 
-        distance.* = distance.* / -normal_direction_product;
-        const diff = ray.normal.sMulc(distance.*);
-        return ray.origin.vAddc(diff);
-    }
-
-    pub fn rayIntersectEitherFace(self: fPlane, ray: fRay, distance: *f32) ?fVec3 {
-        const normal_origin_product = self.vNormalDot(ray.origin);
-        const normal_direction_product = self.vNormalDot(ray.normal);
-        distance.* = (normal_origin_product - self.w) / -normal_direction_product;
-
-        if (distance.* < 0.0) {
-            return null;
+        pub inline fn pointDiff(self: PlaneType, point: Vec(3, ScalarType)) ScalarType {
+            const dist = self.pointDistSigned(point);
+            return Vec(3, ScalarType).init(.{
+                self.normal.val[0] * dist,
+                self.normal.val[1] * dist,
+                self.normal.val[2] * dist,
+            });
         }
 
-        const diff = ray.normal.sMulc(distance.*);
-        return ray.origin.vAddc(diff);
-    }
-};
+        pub inline fn pointProject(self: PlaneType, point: Vec(3, ScalarType)) ScalarType {
+            const dist = self.pointDistSigned(point);
+            return Vec(3, ScalarType).init(.{
+                point.val[0] + self.normal.val[0] * dist,
+                point.val[1] + self.normal.val[1] * dist,
+                point.val[2] + self.normal.val[2] * dist,
+            });
+        }
+
+        pub inline fn pointMirror(self: PlaneType, point: Vec(3, ScalarType)) ScalarType {
+            const double_diff = self.pointDiff(point).sMulc(2.0);
+            return point.vAddc(double_diff);
+        }
+
+        pub inline fn reflect(self: PlaneType, vec: Vec(3, ScalarType)) ScalarType {
+            const reflect_dist = self.vNormalDot(vec) * -2.0;
+            const reflect_diff = self.normal.sMulc(reflect_dist);
+            return vec.vAddc(reflect_diff);
+        }
+
+        pub fn rayIntersect(self: PlaneType, ray: fRay, distance: *ScalarType) ?Vec(3, ScalarType) {
+            const normal_direction_product = self.vNormalDot(ray.normal);
+            if (normal_direction_product > -epsilonMedium(ScalarType)) {
+                return null;
+            }
+
+            const normal_origin_product = self.vNormalDot(ray.origin);
+            distance.* = normal_origin_product - self.odist;
+
+            if (distance.* < 0.0) {
+                return null;
+            }
+
+            distance.* = distance.* / -normal_direction_product;
+            const diff = ray.normal.sMulc(distance.*);
+            return ray.origin.vAddc(diff);
+        }
+
+        pub fn rayIntersectEitherFace(self: PlaneType, ray: fRay, distance: *ScalarType) ?Vec(3, ScalarType) {
+            const normal_origin_product = self.vNormalDot(ray.origin);
+            const normal_direction_product = self.vNormalDot(ray.normal);
+            distance.* = (normal_origin_product - self.odist) / -normal_direction_product;
+
+            if (distance.* < 0.0) {
+                return null;
+            }
+
+            const diff = ray.normal.sMulc(distance.*);
+            return ray.origin.vAddc(diff);
+        }
+    };
+}
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------- Quaternion
@@ -1137,20 +1301,16 @@ pub const fPlane = struct {
 
 // ------------------------------------------------------------------------------------------------- convenience aliases
 
+pub const hQuat = Quaternion(f16);
 pub const fQuat = Quaternion(f32);
-pub const dQuat = Quaternion(f64);
-
-pub const fquat_zero = Quaternion(f32){ .val = .{0.0, 0.0, 0.0, 0.0} };
-pub const fquat_identity = Quaternion(f32){ .val = .{0.0, 0.0, 0.0, 1.0} };
-
-pub const dquat_zero = Quaternion(f64){ .val = .{0.0, 0.0, 0.0, 0.0} };
-pub const dquat_identity = Quaternion(f64){ .val = .{0.0, 0.0, 0.0, 1.0} };
+pub const FQuat = Quaternion(f64);
 
 // ------------------------------------------------------------------------------------------------------- type function
 
 pub fn Quaternion(comptime ScalarType: type) type {
 
     return struct {
+
         const Self = @This();
         
         val: Vec(4, ScalarType) = undefined,
@@ -1179,17 +1339,16 @@ pub fn Quaternion(comptime ScalarType: type) type {
 
     // --------------------------------------------------------------------------------------------------------- re-init
 
-        pub inline fn set(self: *Self, scalars: [4]ScalarType) void {
-            @memcpy(@ptrCast([*]ScalarType, &self.val[0])[0..4], &scalars);
+        pub inline fn set(self: *Self, scalars: anytype) void {
+            self.val = scalars;
         }
 
         pub inline fn scalarFill(self: *Self, scalar: ScalarType) void {
             self.val = @splat(4, scalar);
         }
 
-        pub inline fn copyVecAssymetric(self: *Self, vec: anytype) void {
-            const copy_len = @min(@TypeOf(vec).componentLenCpt(), 4);
-            @memcpy(@ptrCast([*]ScalarType, &self.val[0])[0..copy_len], @ptrCast([*]const ScalarType, &vec.val[0])[0..copy_len]);
+        pub inline fn copyVec(self: *Self, vec: Vec(4, ScalarType)) void {
+            self.val = vec.val;
         }
 
     // ------------------------------------------------------------------------------------------------------ components
@@ -1225,8 +1384,6 @@ pub fn Quaternion(comptime ScalarType: type) type {
         pub inline fn setW(self: *Self, in_w: f32) void {
             self.val[3] = in_w;
         }
-
-
     };
 }
 
@@ -1234,68 +1391,43 @@ pub fn Quaternion(comptime ScalarType: type) type {
 // ------------------------------------------------------------------------------------------------------- Square Matrix
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub const Identity2x2: [2][2]f32 = .{
-    .{1.0, 0.0},
-    .{0.0, 1.0},
-};
+// ------------------------------------------------------------------------------------------------- convenience aliases
 
-pub const Identity3x3: [3][3]f32 = .{
-    .{1.0, 0.0, 0.0},
-    .{0.0, 1.0, 0.0},
-    .{0.0, 0.0, 1.0}
-};
+const hMat2x2 = SquareMatrix(2, f16);
+const hMat3x3 = SquareMatrix(3, f16);
+const hMat4x4 = SquareMatrix(4, f16);
+const hMat5x5 = SquareMatrix(5, f16);
 
-pub const Identity4x4: [3][3]f32 = .{
-    .{1.0, 0.0, 0.0, 0.0},
-    .{0.0, 1.0, 0.0, 0.0},
-    .{0.0, 0.0, 1.0, 0.0},
-    .{0.0, 0.0, 0.0, 1.0}
-};
+const fMat2x2 = SquareMatrix(2, f32);
+const fMat3x3 = SquareMatrix(3, f32);
+const fMat4x4 = SquareMatrix(4, f32);
+const fMat5x5 = SquareMatrix(5, f32);
 
-pub const Identity5x5: [5][5]f32 = .{
-    .{1.0, 0.0, 0.0, 0.0, 0.0},
-    .{0.0, 1.0, 0.0, 0.0, 0.0},
-    .{0.0, 0.0, 1.0, 0.0, 0.0},
-    .{0.0, 0.0, 0.0, 1.0, 0.0},
-    .{0.0, 0.0, 0.0, 0.0, 1.0}
-};
+const FMat2x2 = SquareMatrix(2, f64);
+const FMat3x3 = SquareMatrix(3, f64);
+const FMat4x4 = SquareMatrix(4, f64);
+const FMat5x5 = SquareMatrix(5, f64);
 
-pub fn SquareMatrix(comptime size: u32) type {
+// ------------------------------------------------------------------------------------------------------- type function
 
-    std.debug.assert(size >= 2);
+pub fn SquareMatrix(comptime size: u32, comptime ScalarType: type) type {
 
     return struct {
-        const Self = @This();
 
-        values : [size][size]f32 = undefined,
+        const MatrixType = @This();
 
-        pub fn new() Self {
-            return Self{.values = std.mem.zeroes(Self)};
+        values : [size][size]ScalarType = undefined,
+
+        pub fn new() MatrixType {
+            return MatrixType{.values = std.mem.zeroes(MatrixType)};
         }
 
-        pub fn identity() Self {
-            if (size <= 5) {
-                return Self{ .values = 
-                    switch(size) {
-                        2 => Identity2x2,
-                        3 => Identity3x3,
-                        4 => Identity4x4,
-                        5 => Identity5x5,
-                        else => unreachable
-                    }
-                };
-            }
-            else {
-                var self: Self = std.mem.zeroes(Self);
-                for (0..size) |i| {
-                    self.values[i][i] = 1.0;
-                }
-                return self;
-            }
-        }
+        // pub fn identity() MatrixType {
+            
+        // }
 
-        pub fn fromScalar(scalar: f32) Self {
-            var self: Self = std.mem.zeroes(Self);
+        pub fn fromScalar(scalar: ScalarType) MatrixType {
+            var self = std.mem.zeroes(MatrixType);
             inline for (0..size) |i| {
                 self.values[i][i] = scalar;
             }
@@ -1304,11 +1436,11 @@ pub fn SquareMatrix(comptime size: u32) type {
 
         // copy this vector into the diagonal of a new matrix. can be used to make a scaling matrix if 
         // size == vec.len + 1. remaining diagonal entries are identity.
-        pub fn fromVecOnDiag(vec: anytype) Self {
-            const vec_len = @TypeOf(vec).componentLenCpt();
+        pub fn fromVecOnDiag(vec: anytype) MatrixType {
+            const vec_len = @TypeOf(vec).componentLen();
             std.debug.assert(size >= vec_len);
 
-            var self = Self.new();
+            var self = MatrixType.new();
             inline for(0..vec_len) |i| {
                 self.values[i][i] = vec.val[i];
             }
@@ -1320,24 +1452,450 @@ pub fn SquareMatrix(comptime size: u32) type {
 
         // copy this vector into the right column of a new matrix. can be used to make a translation matrix if
         // size == vec.len + 1. diagonal entries (except potentially the bottom right if overwritten) are identity.
-        pub fn fromVecOnRightCol(vec: anytype) Self {
-            const vec_len = @TypeOf(vec).componentLenCpt();
+        pub fn fromVecOnRightCol(vec: anytype) MatrixType {
+            const vec_len = @TypeOf(vec).componentLen();
             std.debug.assert(size >= vec_len);
-            var self = Self.identity();
+            var self = MatrixType.identity();
             inline for(0..vec_len) |i| {
                 self.values[i][size-1] = vec.val[i];
             }
             return self;
         }
+
+    // ------------------------------------------------------------------------------------------------------- constants
+
+        pub const identity = blk: {
+            var mat = std.mem.zeroes(MatrixType);
+            for (0..size) |i| {
+                mat.values[i][i] = 1.0;
+            }
+            break :blk mat;
+        };
+
     };
+}
+
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ----------------------------------------------------------------------------------------------------- float precision
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// determine precision given the scalar type. for checking equality between floats when the floats involved
+// are very large numbers (for f32: -2^20 to 2^20 exclusive). not useful for differences between very small numbers.
+pub inline fn epsilonLarge(comptime ScalarType: anytype) comptime_float {
+    switch(ScalarType) {
+        f16 => return 0.25,
+        f32 => return 7e-2,
+        f64 => return 2e-5,
+        else => unreachable
+    }
+}
+
+// determine precision given the scalar type. for checking equality between floats when the floats involved
+// are mediumish numbers (for f32: -2^16 to 2^16 exclusive). not useful for differences between very small numbers.
+pub inline fn epsilonMedium(comptime ScalarType: anytype) comptime_float {
+    switch(ScalarType) {
+        f16 => return 2e-2,
+        f32 => return 4e-3,
+        f64 => return 5e-7,
+        else => unreachable
+    }
+}
+
+// determine precision given the scalar type. for checking equality between floats when the floats involved
+// are small numbers (-2 to 2 exclusive). not useful for differences between very small numbers.
+pub inline fn epsilonSmall(comptime ScalarType: anytype) comptime_float {
+    switch(ScalarType) {
+        f16 => return 1e-3,
+        f32 => return 2e-7,
+        f64 => return 3e-16,
+        else => unreachable
+    }
+}
+
+// determine precision for equality between two floats. works for positive and negative values 2^-32 to 2^32 if f32
+// or 2^-64 to 2^64 if f64. assumes the precision desired is the minimum precision of the two.
+pub fn epsilonAuto(scalar_a: anytype, scalar_b: anytype) @TypeOf(scalar_a, scalar_b) {
+    return switch(@TypeOf(scalar_a)) {
+        f32 => return @min(epsilonAuto32(scalar_a), epsilonAuto32(scalar_b)),
+        f64 => return @min(epsilonAuto64(scalar_a), epsilonAuto64(scalar_b)),
+        else => unreachable,
+    };
+}
+
+inline fn epsilonAuto32(scalar: f32) f32 {
+    const exponent = getExponent32(scalar);
+    if (exponent >= 0) {
+        if (exponent > 32) {
+            return std.math.f32_max;
+        }
+        else {
+            return f32_epsilons[@intCast(usize, exponent)];
+        }
+    }
+    else {
+        if (exponent < -32) {
+            return std.math.f32_min;
+        }
+        else {
+            return f32_epsilons[@intCast(usize, std.math.absCast(exponent) + 32)];
+        }
+    }
+}
+
+inline fn epsilonAuto64(scalar: f64) f64 {
+    const exponent = getExponent64(scalar);
+    if (exponent >= 0) {
+        if (exponent > 64) {
+            return std.math.f64_max;
+        }
+        else {
+            return f64_epsilons[@intCast(usize, exponent)];
+        }
+    }
+    else {
+        if (exponent < -64) {
+            return std.math.f64_min;
+        }
+        else {
+            return f64_epsilons[@intCast(usize, std.math.absCast(exponent) + 64)];
+        }
+    }
+}
+
+// copied from std.math.frexp(), because it runs faster when you only want the exponent. thank you zig devs!
+fn getExponent32(x: f32) i32 {
+    var exponent: i32 = undefined;
+    var y = @bitCast(u32, x);
+    const e = @intCast(i32, y >> 23) & 0xFF;
+
+    if (e == 0) {
+        if (x != 0) {
+            // subnormal
+            exponent = getExponent32(x * 0x1.0p64) - 64;
+        } else {
+            // frexp(+-0) = (+-0, 0)
+            exponent = 0;
+        }
+        return exponent;
+    }
+    else if (e == 0xFF) {
+        // frexp(nan) = (nan, undefined)
+        exponent = undefined;
+
+        // frexp(+-inf) = (+-inf, 0)
+        if (math.isInf(x)) {
+            exponent = 0;
+        }
+
+        return exponent;
+    }
+
+    return e - 0x7E;
+}
+
+// copied from std.math.frexp(), because it runs faster when you only want the exponent. thank you zig devs!
+fn getExponent64(x: f64) i32 {
+    var exponent: i32 = undefined;
+    var y = @bitCast(u64, x);
+    const e = @intCast(i32, y >> 52) & 0x7FF;
+
+    if (e == 0) {
+        if (x != 0) {
+            // subnormal
+            exponent = getExponent64(x * 0x1.0p64) - 64;
+        } else {
+            // frexp(+-0) = (+-0, 0)
+            exponent = 0;
+        }
+        return exponent;
+    } else if (e == 0x7FF) {
+        // frexp(nan) = (nan, undefined)
+        exponent = undefined;
+
+        // frexp(+-inf) = (+-inf, 0)
+        if (math.isInf(x)) {
+            exponent = 0;
+        }
+
+        return exponent;
+    }
+
+    return e - 0x3FE;
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------- constants
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const F32_EPSILON: f32 = 1e-5;
-const F64_EPSILON: f64 = 1e-15;
+pub const hQuat_zero = hQuat.zero();
+pub const hQuat_identity = hQuat.new();
+
+pub const fQuat_zero = fQuat.zero();
+pub const fQuat_identity = fQuat.new();
+
+pub const FQuat_zero = fQuat.zero();
+pub const FQuat_identity = fQuat.new();
+
+pub const hMat2x2_identity = hMat2x2.identity();
+pub const hMat3x3_identity = hMat3x3.identity();
+pub const hMat4x4_identity = hMat4x4.identity();
+pub const hMat5x5_identity = hMat5x5.identity();
+
+pub const hMat2x2_zero = hMat2x2.new();
+pub const hMat3x3_zero = hMat3x3.new();
+pub const hMat4x4_zero = hMat4x4.new();
+pub const hMat5x5_zero = hMat5x5.new();
+
+pub const fMat2x2_identity = fMat2x2.identity();
+pub const fMat3x3_identity = fMat3x3.identity();
+pub const fMat4x4_identity = fMat4x4.identity();
+pub const fMat5x5_identity = fMat5x5.identity();
+
+pub const fMat2x2_zero = fMat2x2.new();
+pub const fMat3x3_zero = fMat3x3.new();
+pub const fMat4x4_zero = fMat4x4.new();
+pub const fMat5x5_zero = fMat5x5.new();
+
+pub const FMat2x2_identity = FMat2x2.identity();
+pub const FMat3x3_identity = FMat3x3.identity();
+pub const FMat4x4_identity = FMat4x4.identity();
+pub const FMat5x5_identity = FMat5x5.identity();
+
+pub const FMat2x2_zero = FMat2x2.new();
+pub const FMat3x3_zero = FMat3x3.new();
+pub const FMat4x4_zero = FMat4x4.new();
+pub const FMat5x5_zero = FMat5x5.new();
+
+const f16_epsilon_divisor: comptime_float = 1024.0;
+const f32_epsilon_divisor: comptime_float = 8388608.0;
+const f64_epsilon_divisor: comptime_float = 4503599627370496.0;
+
+pub const f16_epsilons: [24]f16 = .{
+    @intToFloat(f16, 1      ) / f16_epsilon_divisor,
+    @intToFloat(f16, 1      ) / f16_epsilon_divisor,
+    @intToFloat(f16, 1 <<  1) / f16_epsilon_divisor,
+    @intToFloat(f16, 1 <<  2) / f16_epsilon_divisor,
+    @intToFloat(f16, 1 <<  3) / f16_epsilon_divisor,
+    @intToFloat(f16, 1 <<  4) / f16_epsilon_divisor,
+    @intToFloat(f16, 1 <<  5) / f16_epsilon_divisor,
+    @intToFloat(f16, 1 <<  6) / f16_epsilon_divisor,
+    @intToFloat(f16, 1 <<  7) / f16_epsilon_divisor,
+    @intToFloat(f16, 1 <<  8) / f16_epsilon_divisor,
+    @intToFloat(f16, 1 <<  9) / f16_epsilon_divisor,
+    @intToFloat(f16, 1 << 10) / f16_epsilon_divisor,
+    @intToFloat(f16, 1 << 11) / f16_epsilon_divisor,
+    @intToFloat(f16, 1 << 12) / f16_epsilon_divisor,
+    @intToFloat(f16, 1 << 13) / f16_epsilon_divisor,
+    @intToFloat(f16, 1 << 14) / f16_epsilon_divisor,
+    @intToFloat(f16, 1 << 15) / f16_epsilon_divisor,
+    @intToFloat(f16, 1      ) / (f16_epsilon_divisor),
+    @intToFloat(f16, 1      ) / (f16_epsilon_divisor * (1 << 1)),
+    @intToFloat(f16, 1      ) / (f16_epsilon_divisor * (1 << 2)),
+    @intToFloat(f16, 1      ) / (f16_epsilon_divisor * (1 << 3)),
+    @intToFloat(f16, 1      ) / (f16_epsilon_divisor * (1 << 4)),
+    @intToFloat(f16, 1      ) / (f16_epsilon_divisor * (1 << 5)),
+    @intToFloat(f16, 1      ) / (f16_epsilon_divisor * (1 << 6)),
+};
+
+pub const f32_epsilons: [65]f32 = .{
+    @intToFloat(f32, 1      ) / f32_epsilon_divisor,
+    @intToFloat(f32, 1      ) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 <<  1) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 <<  2) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 <<  3) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 <<  4) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 <<  5) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 <<  6) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 <<  7) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 <<  8) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 <<  9) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 << 10) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 << 11) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 << 12) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 << 13) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 << 14) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 << 15) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 << 16) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 << 17) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 << 18) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 << 19) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 << 20) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 << 21) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 << 22) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 << 23) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 << 24) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 << 25) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 << 26) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 << 27) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 << 28) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 << 29) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 << 30) / f32_epsilon_divisor,
+    @intToFloat(f32, 1 << 31) / f32_epsilon_divisor,
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 1)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 2)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 3)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 4)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 5)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 6)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 7)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 8)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 9)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 10)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 11)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 12)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 13)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 14)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 15)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 16)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 17)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 18)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 19)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 20)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 21)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 22)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 23)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 24)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 25)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 26)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 27)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 28)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 29)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 30)),
+    @intToFloat(f32, 1      ) / (f32_epsilon_divisor * (1 << 31)),
+};
+
+pub const f64_epsilons: [129]f64 = .{
+    @intToFloat(f64, 1      ) / f64_epsilon_divisor,
+    @intToFloat(f64, 1      ) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 <<  1) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 <<  2) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 <<  3) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 <<  4) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 <<  5) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 <<  6) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 <<  7) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 <<  8) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 <<  9) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 10) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 11) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 12) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 13) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 14) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 15) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 16) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 17) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 18) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 19) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 20) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 21) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 22) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 23) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 24) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 25) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 26) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 27) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 28) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 29) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 30) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 31) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 32) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 33) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 34) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 35) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 36) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 37) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 38) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 39) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 40) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 41) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 42) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 43) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 44) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 45) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 46) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 47) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 48) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 49) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 50) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 51) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 52) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 53) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 54) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 55) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 56) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 57) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 58) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 59) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 60) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 61) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 62) / f64_epsilon_divisor,
+    @intToFloat(f64, 1 << 63) / f64_epsilon_divisor,
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 1)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 2)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 3)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 4)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 5)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 6)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 7)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 8)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 9)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 10)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 11)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 12)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 13)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 14)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 15)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 16)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 17)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 18)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 19)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 20)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 21)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 22)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 23)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 24)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 25)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 26)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 27)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 28)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 29)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 30)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 31)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 32)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 33)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 34)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 35)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 36)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 37)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 38)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 39)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 40)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 41)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 42)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 43)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 44)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 45)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 46)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 47)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 48)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 49)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 50)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 51)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 52)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 53)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 54)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 55)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 56)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 57)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 58)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 59)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 60)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 61)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 62)),
+    @intToFloat(f64, 1      ) / (f64_epsilon_divisor * (1 << 63)),
+};
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- errors
@@ -1356,13 +1914,17 @@ const std = @import("std");
 const math = std.math;
 const expect = std.testing.expect;
 const print = std.debug.print;
+const benchmark = @import("benchmark.zig");
+const ScopeTimer = benchmark.ScopeTimer;
+const getScopeTimerID = benchmark.getScopeTimerID;
+const Prng = std.rand.DefaultPrng;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- test
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 test "SquareMatrix" {
-    var m1 = SquareMatrix(3).identity();
+    var m1 = fMat3x3.identity;
     _ = m1;
 }
 
@@ -1407,32 +1969,32 @@ test "fVec" {
     var v5 = fVec4.fromVec(v2);
     var v6 = fVec2.fromVec(v2);
     
-    try expect(vf3zero.dist(v1) < F32_EPSILON);
-    try expect(@fabs(v2.x()) < F32_EPSILON and @fabs(v2.y() - 1.0) < F32_EPSILON and @fabs(v2.z() - 2.0) < F32_EPSILON);
-    try expect(@fabs(v3.x() - 3.0001) < F32_EPSILON and @fabs(v3.y() - 3.0001) < F32_EPSILON and @fabs(v3.z() - 3.0001) < F32_EPSILON);
-    try expect(v4.dist(v2) < F32_EPSILON and v4.distSq(v2) < F32_EPSILON);
-    try expect(v5.dist3d(v2) < F32_EPSILON and v5.distSq3d(v2) < F32_EPSILON and @fabs(v5.w()) < F32_EPSILON);
-    try expect(v6.dist2d(v2) < F32_EPSILON and v6.distSq2d(v2) < F32_EPSILON);
+    try expect(vf3zero.dist(v1) < epsilonSmall(f32));
+    try expect(@fabs(v2.x()) < epsilonSmall(f32) and @fabs(v2.y() - 1.0) < epsilonSmall(f32) and @fabs(v2.z() - 2.0) < epsilonSmall(f32));
+    try expect(@fabs(v3.x() - 3.0001) < epsilonSmall(f32) and @fabs(v3.y() - 3.0001) < epsilonSmall(f32) and @fabs(v3.z() - 3.0001) < epsilonSmall(f32));
+    try expect(v4.dist(v2) < epsilonSmall(f32) and v4.distSq(v2) < epsilonSmall(f32));
+    try expect(v5.dist3d(v2) < epsilonSmall(f32) and v5.distSq3d(v2) < epsilonSmall(f32) and @fabs(v5.w()) < epsilonSmall(f32));
+    try expect(v6.dist2d(v2) < epsilonSmall(f32) and v6.distSq2d(v2) < epsilonSmall(f32));
 
-    var v7: iVec3 = v3.toIntVec(i32);
+    var v7: sVec3 = v3.toIntVec(i32);
     var v8: uVec3 = v3.toIntVec(u32);
-    var v9: dVec3 = v7.toFloatVec(f64);
-    var v9a = dVec3.fromVec(v3);
+    var v9: FVec3 = v7.toFloatVec(f64);
+    var v9a = FVec3.fromVec(v3);
 
     try expect(v7.x() == 3 and v7.y() == 3 and v7.z() == 3);
     try expect(v8.x() == 3 and v8.y() == 3 and v8.z() == 3);
-    try expect(@fabs(v9.x() - 3.0) < F32_EPSILON and @fabs(v9.y() - 3.0) < F32_EPSILON and @fabs(v9.z() - 3.0) < F32_EPSILON);
-    try expect(@fabs(v9a.x() - 3.0001) < F32_EPSILON and @fabs(v9a.y() - 3.0001) < F32_EPSILON and @fabs(v9a.z() - 3.0001) < F32_EPSILON);
+    try expect(@fabs(v9.x() - 3.0) < epsilonSmall(f32) and @fabs(v9.y() - 3.0) < epsilonSmall(f32) and @fabs(v9.z() - 3.0) < epsilonSmall(f32));
+    try expect(@fabs(v9a.x() - 3.0001) < epsilonSmall(f32) and @fabs(v9a.y() - 3.0001) < epsilonSmall(f32) and @fabs(v9a.z() - 3.0001) < epsilonSmall(f32));
 
     v3.set(.{ 4.001, 4.001, 5.001 });
     v6.scalarFill(2.58);
 
-    try expect(@fabs(v3.x() - 4.001) < F32_EPSILON and @fabs(v3.y() - 4.001) < F32_EPSILON and @fabs(v3.z() - 5.001) < F32_EPSILON);
-    try expect(@fabs(v6.x() - 2.58) < F32_EPSILON and @fabs(v6.y() - 2.58) < F32_EPSILON);
+    try expect(@fabs(v3.x() - 4.001) < epsilonSmall(f32) and @fabs(v3.y() - 4.001) < epsilonSmall(f32) and @fabs(v3.z() - 5.001) < epsilonSmall(f32));
+    try expect(@fabs(v6.x() - 2.58) < epsilonSmall(f32) and @fabs(v6.y() - 2.58) < epsilonSmall(f32));
 
     v6.copyAssymetric(v3);
 
-    try expect(v6.dist2d(v3) < F32_EPSILON);
+    try expect(v6.dist2d(v3) < epsilonSmall(f32));
 
     var v10sum = vf2a.addc(vf2b);
     var v11sum = vf3a.addc(vf3b);
@@ -1450,21 +2012,41 @@ test "fVec" {
     var v11qot = vf3a.divc(vf3b);
     var v12qot = vf4a.divc(vf4b);
 
-    try expect(v10sum.dist2d(vf4_sum) < F32_EPSILON);
-    try expect(v11sum.dist3d(vf4_sum) < F32_EPSILON);
-    try expect(v12sum.dist(vf4_sum) < F32_EPSILON);
+    try expect(v10sum.dist2d(vf4_sum) < epsilonMedium(f32));
+    try expect(v11sum.dist3d(vf4_sum) < epsilonMedium(f32));
+    try expect(v12sum.dist(vf4_sum) < epsilonMedium(f32));
 
-    try expect(v10dif.dist2d(vf4_dif) < F32_EPSILON);
-    try expect(v11dif.dist3d(vf4_dif) < F32_EPSILON);
-    try expect(v12dif.dist(vf4_dif) < F32_EPSILON);
+    try expect(v10dif.dist2d(vf4_dif) < epsilonMedium(f32));
+    try expect(v11dif.dist3d(vf4_dif) < epsilonMedium(f32));
+    try expect(v12dif.dist(vf4_dif) < epsilonMedium(f32));
 
-    try expect(v10prd.dist2d(vf4_prd) < F32_EPSILON);
-    try expect(v11prd.dist3d(vf4_prd) < F32_EPSILON);
-    try expect(v12prd.dist(vf4_prd) < F32_EPSILON);
+    try expect(v10prd.dist2d(vf4_prd) < epsilonMedium(f32));
+    try expect(v11prd.dist3d(vf4_prd) < epsilonMedium(f32));
+    try expect(v12prd.dist(vf4_prd) < epsilonMedium(f32));
 
-    try expect(v10qot.dist2d(vf4_qot) < F32_EPSILON);
-    try expect(v11qot.dist3d(vf4_qot) < F32_EPSILON);
-    try expect(v12qot.dist(vf4_qot) < F32_EPSILON);
+    try expect(v10qot.dist2d(vf4_qot) < epsilonMedium(f32));
+    try expect(v11qot.dist3d(vf4_qot) < epsilonMedium(f32));
+    try expect(v12qot.dist(vf4_qot) < epsilonMedium(f32));
+
+    try expect(v10sum.nearlyEqualAutoTolerance(fVec2.fromVec(vf4_sum)));
+    try expect(v10dif.nearlyEqualAutoTolerance(fVec2.fromVec(vf4_dif)));
+    try expect(v10prd.nearlyEqualAutoTolerance(fVec2.fromVec(vf4_prd)));
+    try expect(v10qot.nearlyEqualAutoTolerance(fVec2.fromVec(vf4_qot)));
+
+    try expect(v11sum.nearlyEqualAutoTolerance(fVec3.fromVec(vf4_sum)));
+    try expect(v11dif.nearlyEqualAutoTolerance(fVec3.fromVec(vf4_dif)));
+    try expect(v11prd.nearlyEqualAutoTolerance(fVec3.fromVec(vf4_prd)));
+    try expect(v11qot.nearlyEqualAutoTolerance(fVec3.fromVec(vf4_qot)));
+
+    try expect(v12sum.nearlyEqualAutoTolerance(vf4_sum));
+    try expect(v12dif.nearlyEqualAutoTolerance(vf4_dif));
+    try expect(v12prd.nearlyEqualAutoTolerance(vf4_prd));
+    try expect(v12qot.nearlyEqualAutoTolerance(vf4_qot));
+
+    try expect(v12sum.nearlyEqual(vf4_sum));
+    try expect(v12dif.nearlyEqual(vf4_dif));
+    try expect(v12prd.nearlyEqual(vf4_prd));
+    try expect(v12qot.nearlyEqual(vf4_qot));
 
     v10sum = vf2a;
     v11sum = vf3a;
@@ -1494,21 +2076,21 @@ test "fVec" {
     v11qot.div(vf3b);
     v12qot.div(vf4b);
 
-    try expect(v10sum.dist2d(vf4_sum) < F32_EPSILON);
-    try expect(v11sum.dist3d(vf4_sum) < F32_EPSILON);
-    try expect(v12sum.dist(vf4_sum) < F32_EPSILON);
+    try expect(v10sum.dist2d(vf4_sum) < epsilonMedium(f32));
+    try expect(v11sum.dist3d(vf4_sum) < epsilonMedium(f32));
+    try expect(v12sum.dist(vf4_sum) < epsilonMedium(f32));
 
-    try expect(v10dif.dist2d(vf4_dif) < F32_EPSILON);
-    try expect(v11dif.dist3d(vf4_dif) < F32_EPSILON);
-    try expect(v12dif.dist(vf4_dif) < F32_EPSILON);
+    try expect(v10dif.dist2d(vf4_dif) < epsilonMedium(f32));
+    try expect(v11dif.dist3d(vf4_dif) < epsilonMedium(f32));
+    try expect(v12dif.dist(vf4_dif) < epsilonMedium(f32));
 
-    try expect(v10prd.dist2d(vf4_prd) < F32_EPSILON);
-    try expect(v11prd.dist3d(vf4_prd) < F32_EPSILON);
-    try expect(v12prd.dist(vf4_prd) < F32_EPSILON);
+    try expect(v10prd.dist2d(vf4_prd) < epsilonMedium(f32));
+    try expect(v11prd.dist3d(vf4_prd) < epsilonMedium(f32));
+    try expect(v12prd.dist(vf4_prd) < epsilonMedium(f32));
 
-    try expect(v10qot.dist2d(vf4_qot) < F32_EPSILON);
-    try expect(v11qot.dist3d(vf4_qot) < F32_EPSILON);
-    try expect(v12qot.dist(vf4_qot) < F32_EPSILON);
+    try expect(v10qot.dist2d(vf4_qot) < epsilonMedium(f32));
+    try expect(v11qot.dist3d(vf4_qot) < epsilonMedium(f32));
+    try expect(v12qot.dist(vf4_qot) < epsilonMedium(f32));
 
     v10sum = vf2a;
     v11sum = vf3a;
@@ -1538,21 +2120,21 @@ test "fVec" {
     v11qot.div2d(vf2b);
     v12qot.div2d(vf2b);
 
-    try expect(v10sum.dist2d(vf4_sum) < F32_EPSILON);
-    try expect(v11sum.dist2d(vf4_sum) < F32_EPSILON);
-    try expect(v12sum.dist2d(vf4_sum) < F32_EPSILON);
+    try expect(v10sum.dist2d(vf4_sum) < epsilonMedium(f32));
+    try expect(v11sum.dist2d(vf4_sum) < epsilonMedium(f32));
+    try expect(v12sum.dist2d(vf4_sum) < epsilonMedium(f32));
 
-    try expect(v10dif.dist2d(vf4_dif) < F32_EPSILON);
-    try expect(v11dif.dist2d(vf4_dif) < F32_EPSILON);
-    try expect(v12dif.dist2d(vf4_dif) < F32_EPSILON);
+    try expect(v10dif.dist2d(vf4_dif) < epsilonMedium(f32));
+    try expect(v11dif.dist2d(vf4_dif) < epsilonMedium(f32));
+    try expect(v12dif.dist2d(vf4_dif) < epsilonMedium(f32));
 
-    try expect(v10prd.dist2d(vf4_prd) < F32_EPSILON);
-    try expect(v11prd.dist2d(vf4_prd) < F32_EPSILON);
-    try expect(v12prd.dist2d(vf4_prd) < F32_EPSILON);
+    try expect(v10prd.dist2d(vf4_prd) < epsilonMedium(f32));
+    try expect(v11prd.dist2d(vf4_prd) < epsilonMedium(f32));
+    try expect(v12prd.dist2d(vf4_prd) < epsilonMedium(f32));
 
-    try expect(v10qot.dist2d(vf4_qot) < F32_EPSILON);
-    try expect(v11qot.dist2d(vf4_qot) < F32_EPSILON);
-    try expect(v12qot.dist2d(vf4_qot) < F32_EPSILON);
+    try expect(v10qot.dist2d(vf4_qot) < epsilonMedium(f32));
+    try expect(v11qot.dist2d(vf4_qot) < epsilonMedium(f32));
+    try expect(v12qot.dist2d(vf4_qot) < epsilonMedium(f32));
 
     v10sum = vf2a.add2dc(vf2b);
     v11sum = vf3a.add2dc(vf2b);
@@ -1570,21 +2152,21 @@ test "fVec" {
     v11qot = vf3a.div2dc(vf2b);
     v12qot = vf4a.div2dc(vf2b);
 
-    try expect(v10sum.dist2d(vf4_sum) < F32_EPSILON);
-    try expect(v11sum.dist2d(vf4_sum) < F32_EPSILON);
-    try expect(v12sum.dist2d(vf4_sum) < F32_EPSILON);
+    try expect(v10sum.dist2d(vf4_sum) < epsilonMedium(f32));
+    try expect(v11sum.dist2d(vf4_sum) < epsilonMedium(f32));
+    try expect(v12sum.dist2d(vf4_sum) < epsilonMedium(f32));
 
-    try expect(v10dif.dist2d(vf4_dif) < F32_EPSILON);
-    try expect(v11dif.dist2d(vf4_dif) < F32_EPSILON);
-    try expect(v12dif.dist2d(vf4_dif) < F32_EPSILON);
+    try expect(v10dif.dist2d(vf4_dif) < epsilonMedium(f32));
+    try expect(v11dif.dist2d(vf4_dif) < epsilonMedium(f32));
+    try expect(v12dif.dist2d(vf4_dif) < epsilonMedium(f32));
 
-    try expect(v10prd.dist2d(vf4_prd) < F32_EPSILON);
-    try expect(v11prd.dist2d(vf4_prd) < F32_EPSILON);
-    try expect(v12prd.dist2d(vf4_prd) < F32_EPSILON);
+    try expect(v10prd.dist2d(vf4_prd) < epsilonMedium(f32));
+    try expect(v11prd.dist2d(vf4_prd) < epsilonMedium(f32));
+    try expect(v12prd.dist2d(vf4_prd) < epsilonMedium(f32));
 
-    try expect(v10qot.dist2d(vf4_qot) < F32_EPSILON);
-    try expect(v11qot.dist2d(vf4_qot) < F32_EPSILON);
-    try expect(v12qot.dist2d(vf4_qot) < F32_EPSILON);
+    try expect(v10qot.dist2d(vf4_qot) < epsilonMedium(f32));
+    try expect(v11qot.dist2d(vf4_qot) < epsilonMedium(f32));
+    try expect(v12qot.dist2d(vf4_qot) < epsilonMedium(f32));
 
     v11sum = vf3a;
     v12sum = vf4a;
@@ -1606,17 +2188,17 @@ test "fVec" {
     v11qot.div3d(vf3b);
     v12qot.div3d(vf3b);
 
-    try expect(v11sum.dist3d(vf4_sum) < F32_EPSILON);
-    try expect(v12sum.dist3d(vf4_sum) < F32_EPSILON);
+    try expect(v11sum.dist3d(vf4_sum) < epsilonMedium(f32));
+    try expect(v12sum.dist3d(vf4_sum) < epsilonMedium(f32));
 
-    try expect(v11dif.dist3d(vf4_dif) < F32_EPSILON);
-    try expect(v12dif.dist3d(vf4_dif) < F32_EPSILON);
+    try expect(v11dif.dist3d(vf4_dif) < epsilonMedium(f32));
+    try expect(v12dif.dist3d(vf4_dif) < epsilonMedium(f32));
 
-    try expect(v11prd.dist3d(vf4_prd) < F32_EPSILON);
-    try expect(v12prd.dist3d(vf4_prd) < F32_EPSILON);
+    try expect(v11prd.dist3d(vf4_prd) < epsilonMedium(f32));
+    try expect(v12prd.dist3d(vf4_prd) < epsilonMedium(f32));
 
-    try expect(v11qot.dist3d(vf4_qot) < F32_EPSILON);
-    try expect(v12qot.dist3d(vf4_qot) < F32_EPSILON);
+    try expect(v11qot.dist3d(vf4_qot) < epsilonMedium(f32));
+    try expect(v12qot.dist3d(vf4_qot) < epsilonMedium(f32));
 
     v11sum = vf3a.add3dc(vf3b);
     v12sum = vf4a.add3dc(vf4b);
@@ -1630,17 +2212,17 @@ test "fVec" {
     v11qot = vf3a.div3dc(vf3b);
     v12qot = vf4a.div3dc(vf4b);
 
-    try expect(v11sum.dist3d(vf4_sum) < F32_EPSILON);
-    try expect(v12sum.dist3d(vf4_sum) < F32_EPSILON);
+    try expect(v11sum.dist3d(vf4_sum) < epsilonMedium(f32));
+    try expect(v12sum.dist3d(vf4_sum) < epsilonMedium(f32));
 
-    try expect(v11dif.dist3d(vf4_dif) < F32_EPSILON);
-    try expect(v12dif.dist3d(vf4_dif) < F32_EPSILON);
+    try expect(v11dif.dist3d(vf4_dif) < epsilonMedium(f32));
+    try expect(v12dif.dist3d(vf4_dif) < epsilonMedium(f32));
 
-    try expect(v11prd.dist3d(vf4_prd) < F32_EPSILON);
-    try expect(v12prd.dist3d(vf4_prd) < F32_EPSILON);
+    try expect(v11prd.dist3d(vf4_prd) < epsilonMedium(f32));
+    try expect(v12prd.dist3d(vf4_prd) < epsilonMedium(f32));
 
-    try expect(v11qot.dist3d(vf4_qot) < F32_EPSILON);
-    try expect(v12qot.dist3d(vf4_qot) < F32_EPSILON);
+    try expect(v11qot.dist3d(vf4_qot) < epsilonMedium(f32));
+    try expect(v12qot.dist3d(vf4_qot) < epsilonMedium(f32));
 
     const v13x: f32 = 0.1;
     const v13y: f32 = 0.2;
@@ -1655,18 +2237,18 @@ test "fVec" {
     v13.add(add_val);
     var v13sumcheck = fVec4.init(.{v13xsum, v13ysum, v13zsum, v13wsum});
 
-    try expect(v13.dist(v13sumcheck) < F32_EPSILON);
+    try expect(v13.dist(v13sumcheck) < epsilonSmall(f32));
 
     var v14 = fVec3.init(.{-2201.3, 10083.2, 15.0});
     var v15 = fVec3.init(.{3434.341, 9207.8888, -22.87});
     var dot_product = v14.val[0] * v15.val[0] + v14.val[1] * v15.val[1] + v14.val[2] * v15.val[2];
 
-    try expect(@fabs(v14.dot(v15) - dot_product) < F32_EPSILON);
+    try expect(@fabs(v14.dot(v15) - dot_product) < epsilonSmall(f32));
 
     var v16 = v14.cross(v15).normSafe();
 
     try expect(v14.nearlyOrthogonal(v16) and v15.nearlyOrthogonal(v16));
-    try expect(v16.isNorm() and @fabs(v16.sizeSq() - 1.0) < F32_EPSILON);
+    try expect(v16.isNorm() and @fabs(v16.sizeSq() - 1.0) < epsilonSmall(f32));
 
     var v17 = v14.projectOnto(v15);
 
@@ -1674,49 +2256,170 @@ test "fVec" {
     try expect(!v16.nearlyParallel(v15));
     try expect(!v16.similarDirection(v15));
 
-    var v18 = fVec2.init(.{1.001, 2.001});
-    var v19 = fVec2.init(.{1.002, 2.002});
+    var v18 = fVec2.init(.{1.01, 2.01});
+    var v19 = fVec2.init(.{1.02, 2.02});
 
-    try expect(!v18.nearlyEqual(v19));
+    try expect(!v18.nearlyEqualAutoTolerance(v19));
+
+    var v20 = fVec3.zero;
+    try expect(v20.nearlyZero());
+
+    var v21 = fVec2.posx;
+    var v22 = fVec3.posx;
+    var v23 = fVec4.posx;
+    try expect (v21.isNorm());
+    try expect (v22.isNorm());
+    try expect (v23.isNorm());
 }
 
-// test "float precision" {
-//     var f1: f16 = 0.0;
-//     var f2: f16 = 0.0;
+// test "epsilon auto performance" {
+//     const iterations: usize = 1_000_000;
+//     var rand = Prng.init(0);
 
-//     var i: usize = 0;
-//     while(@fabs(f2 - f1) <= 0.1) : (i += 1) {
-//         f1 = @intToFloat(f16, i) * 0.09;
-//         f2 = @intToFloat(f16, i + 1) * 0.09;
-//     }
-
-//     print("\nfloat 16: {d}, {d}\n", .{f1, f2});
-
-//     var f3: f32 = 0.0;
-//     var f4: f32 = 0.0;
-
-//     i = 0;
-//     while(@fabs(f4 - f3) <= 1e-2) : (i += 1) {
-//         f3 = @intToFloat(f32, i) * 9e-4;
-//         f4 = @intToFloat(f32, i + 1) * 9e-4;
-//     }
-
-//     print("float 32: {d}, {d}\n", .{f3, f4});
-
-//     const start: f64 = 1_000_000.0;
-//     var f5: f64 = 0.0;
-//     var f6: f64 = 0.0;
-
-//     i = 0;
-//     var broke: bool = false;
-//     while(@fabs(f6 - f5) <= 1e-9) : (i += 1) {
-//         f5 = start + @intToFloat(f64, i) * 9e-10;
-//         f6 = start + @intToFloat(f64, i + 1) * 9e-10;
-//         if (i > 100000000) {
-//             broke = true;
-//             break;
+//     var values: [iterations]f32 = undefined;
+//     for (0..iterations) |i| {
+//         values[i] = rand.random().float(f32) * std.math.f32_max;
+//         if (i % 2 == 0) {
+//             values[i] *= -1.0;
 //         }
 //     }
 
-//     print("float 64: {d}, {d}, break: {}\n", .{f5, f6, broke});
+//     {
+//         var t = ScopeTimer.start("epsilon auto 32", getScopeTimerID());
+//         defer t.stop();
+//         for (1..iterations-1) |i| {
+//             values[i-1] = epsilonAuto(values[i], values[i + 1]);
+//         }
+//     }
+    
+//     benchmark.printAllScopeTimers();
 // }
+
+// test "fast math performance" {
+//     const iterations: usize = 1_000_00;
+//     var rand = Prng.init(0);
+
+//     var vecs: [iterations]fVec3 = undefined;
+
+//     for (0..iterations) |i| {
+//         vecs[i].set(.{rand.random().float(f32), rand.random().float(f32), rand.random().float(f32)});
+//         vecs[i].mul(std.math.f32_max);
+//         if (i % 2 == 0) {
+//             vecs[i].mul(-1.0);
+//         }
+//     }
+
+//     {
+//         var t = ScopeTimer.start("cross", getScopeTimerID());
+//         defer t.stop();
+//         for (1..iterations-1) |i| {
+//             vecs[i-1] = vecs[i].cross(vecs[i + 1]);
+//         }
+//     }
+
+//     benchmark.printAllScopeTimers();
+// }
+
+test "vector math performance" {
+    const iterations: usize = 10_000;
+    var rand = Prng.init(0);
+
+    var vecs3_32: [iterations]fVec3 = undefined;
+    var vecs3_32_out: [iterations]fVec3 = undefined;
+    for (0..iterations) |i| {
+        vecs3_32[i].set(.{rand.random().float(f32), rand.random().float(f32), rand.random().float(f32)});
+        vecs3_32[i].sub(0.5);
+        vecs3_32[i].mul(2.0);
+        vecs3_32[i].mul(std.math.f32_max);
+    }
+
+    var vecs3_64: [iterations]FVec3 = undefined;
+    var vecs3_64_out: [iterations]FVec3 = undefined;
+    for (0..iterations) |i| {
+        vecs3_64[i].set(.{rand.random().float(f64), rand.random().float(f64), rand.random().float(f64)});
+        vecs3_64[i].sub(0.5);
+        vecs3_64[i].mul(2.0);
+        vecs3_64[i].mul(std.math.f32_max);
+    }
+
+
+    var vecs4_32: [iterations]fVec4 = undefined;
+    var vecs4_32_out: [iterations]fVec4 = undefined;
+    for (0..iterations) |i| {
+        vecs4_32[i].set(.{rand.random().float(f32), rand.random().float(f32), rand.random().float(f32), rand.random().float(f32)});
+        vecs4_32[i].sub(0.5);
+        vecs4_32[i].mul(2.0);
+        vecs4_32[i].mul(std.math.f32_max);
+    }
+
+    var vecs4_64: [iterations]FVec4 = undefined;
+    var vecs4_64_out: [iterations]FVec4 = undefined;
+    for (0..iterations) |i| {
+        vecs4_64[i].set(.{rand.random().float(f64), rand.random().float(f64), rand.random().float(f64), rand.random().float(f64)});
+        vecs4_64[i].sub(0.5);
+        vecs4_64[i].mul(2.0);
+        vecs4_64[i].mul(std.math.f32_max);
+    }
+
+    {
+        var t = ScopeTimer.start("fVec3", getScopeTimerID());
+        defer t.stop();
+        for (0..iterations-1) |i| {
+            // vecs3_32_out[i] = vecs3_32[i].cross(vecs3_32[i + 1]);
+            vecs3_32_out[i].add(500.0);
+            vecs3_32_out[i].sub(2038.388);
+            vecs3_32_out[i].mul(2.388);
+            vecs3_32_out[i].div(8.388);
+            vecs3_32_out[i].add(vecs3_32[i].dot(vecs3_32[i + 1]));
+            vecs3_32_out[i].mul(vecs3_32[i].clampSize(3.999));
+            vecs3_32_out[i].add(vecs3_32[i].normSafe());
+            vecs3_32_out[i].add(vecs3_32[i + 1].normSafe());
+        }
+    }
+    {
+        var t = ScopeTimer.start("FVec3", getScopeTimerID());
+        defer t.stop();
+        for (0..iterations-1) |i| {
+            // vecs3_64_out[i] = vecs3_64[i].cross(vecs3_64[i + 1]);
+            vecs3_64_out[i].add(500.0);
+            vecs3_64_out[i].sub(2038.388);
+            vecs3_64_out[i].mul(2.388);
+            vecs3_64_out[i].div(8.388);
+            vecs3_64_out[i].add(vecs3_64[i].dot(vecs3_64[i + 1]));
+            vecs3_64_out[i].mul(vecs3_64[i].clampSize(3.999));
+            vecs3_64_out[i].add(vecs3_64[i].normSafe());
+            vecs3_64_out[i].add(vecs3_64[i + 1].normSafe());
+        }
+    }
+    {
+        var t = ScopeTimer.start("fVec4", getScopeTimerID());
+        defer t.stop();
+        for (0..iterations-1) |i| {
+            // vecs4_32_out[i] = vecs4_32[i].cross(vecs4_32[i + 1]);
+            vecs4_32_out[i].add(500.0);
+            vecs4_32_out[i].sub(2038.388);
+            vecs4_32_out[i].mul(2.388);
+            vecs4_32_out[i].div(8.388);
+            vecs4_32_out[i].add(vecs4_32[i].dot(vecs4_32[i + 1]));
+            vecs4_32_out[i].mul(vecs4_32[i].clampSize(3.999));
+            vecs4_32_out[i].add(vecs4_32[i].normSafe());
+            vecs4_32_out[i].add(vecs4_32[i + 1].normSafe());
+        }
+    }
+    {
+        var t = ScopeTimer.start("FVec4", getScopeTimerID());
+        defer t.stop();
+        for (0..iterations-1) |i| {
+            // vecs4_64_out[i] = vecs4_64[i].cross(vecs4_64[i + 1]);
+            vecs4_64_out[i].add(500.0);
+            vecs4_64_out[i].sub(2038.388);
+            vecs4_64_out[i].mul(2.388);
+            vecs4_64_out[i].div(8.388);
+            vecs4_64_out[i].add(vecs4_64[i].dot(vecs4_64[i + 1]));
+            vecs4_64_out[i].mul(vecs4_64[i].clampSize(3.999));
+            vecs4_64_out[i].add(vecs4_64[i].normSafe());
+            vecs4_64_out[i].add(vecs4_64[i + 1].normSafe());
+        }
+    }
+    benchmark.printAllScopeTimers();
+}

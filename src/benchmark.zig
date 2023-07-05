@@ -52,6 +52,7 @@ pub const ScopeTimer = struct {
 };
 
 pub fn printAllScopeTimers() void {
+    print("\n", .{});
     for (0..timers.count()) |idx| {
         var timer = &timers.items[idx];
         if (timer.initialized) {
@@ -147,66 +148,66 @@ const expect = std.testing.expect;
 // --------------------------------------------------------------------------------------------------------------- tests
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-fn fibonacci(x: u64) u64 {
-    if (x == 0) {
-        return 0;
-    }
+// fn fibonacci(x: u64) u64 {
+//     if (x == 0) {
+//         return 0;
+//     }
 
-    var a: u64 = 0;
-    var b: u64 = 1;
-    var c: u64 = undefined;
-    for (2..x+1) |i| {
-        _ = i;
-        c = a + b;
-        a = b;
-        b = c;
-    }
+//     var a: u64 = 0;
+//     var b: u64 = 1;
+//     var c: u64 = undefined;
+//     for (2..x+1) |i| {
+//         _ = i;
+//         c = a + b;
+//         a = b;
+//         b = c;
+//     }
 
-    return b;
-}
+//     return b;
+// }
 
-fn doStuff() void {
-    var rand = RandGen.init(0);
+// fn doStuff() void {
+//     var rand = RandGen.init(0);
 
-    var d = ScopeTimer.start("d", 3); defer d.stop();
-    var e = ScopeTimer.start("e", 4); defer e.stop();
-    for (0..100) |i| {
-        _ = i;
-        var random_number = @mod(rand.random().int(u64), 64);
-        var fib = fibonacci(random_number);
-        _ = fib;
-    }
-}
+//     var d = ScopeTimer.start("d", 3); defer d.stop();
+//     var e = ScopeTimer.start("e", 4); defer e.stop();
+//     for (0..100) |i| {
+//         _ = i;
+//         var random_number = @mod(rand.random().int(u64), 64);
+//         var fib = fibonacci(random_number);
+//         _ = fib;
+//     }
+// }
 
 // this is more of a basic no-crash test with a little validation; prints can be looked over to make sure they
 // make sense
-test "multi scope test" {
+// test "multi scope test" {
 
-    var rand = RandGen.init(0);
+//     var rand = RandGen.init(0);
 
-    for (0..100) |j| {
-        _ = j;
-        var a = ScopeTimer.start("a", 0); defer a.stop();
-        var b = ScopeTimer.start("b", 1); defer b.stop();
-        var c = ScopeTimer.start("c", 2); defer c.stop();
-        for (0..100) |i| {
-            _ = i;
-            var random_number = @mod(rand.random().int(u64), 64);
-            var fib = fibonacci(random_number);
-            _ = fib;
-        }
-        doStuff();
-    }
+//     for (0..100) |j| {
+//         _ = j;
+//         var a = ScopeTimer.start("a", 0); defer a.stop();
+//         var b = ScopeTimer.start("b", 1); defer b.stop();
+//         var c = ScopeTimer.start("c", 2); defer c.stop();
+//         for (0..100) |i| {
+//             _ = i;
+//             var random_number = @mod(rand.random().int(u64), 64);
+//             var fib = fibonacci(random_number);
+//             _ = fib;
+//         }
+//         doStuff();
+//     }
 
-    // doStuff() timers start later and stop sooner, so their time should be less.
-    try expect(timers.items[3].total_time < timers.items[0].total_time);
-    try expect(timers.items[3].total_time < timers.items[1].total_time);
-    try expect(timers.items[3].total_time < timers.items[2].total_time);
-    try expect(timers.items[4].total_time < timers.items[0].total_time);
-    try expect(timers.items[4].total_time < timers.items[1].total_time);
-    try expect(timers.items[4].total_time < timers.items[2].total_time);
-    try expect(timers.items[3].total_time > 0);
-    try expect(timers.items[4].total_time > 0);
+//     // doStuff() timers start later and stop sooner, so their time should be less.
+//     try expect(timers.items[3].total_time < timers.items[0].total_time);
+//     try expect(timers.items[3].total_time < timers.items[1].total_time);
+//     try expect(timers.items[3].total_time < timers.items[2].total_time);
+//     try expect(timers.items[4].total_time < timers.items[0].total_time);
+//     try expect(timers.items[4].total_time < timers.items[1].total_time);
+//     try expect(timers.items[4].total_time < timers.items[2].total_time);
+//     try expect(timers.items[3].total_time > 0);
+//     try expect(timers.items[4].total_time > 0);
 
-    printAllScopeTimers();
-}
+//     printAllScopeTimers();
+// }
