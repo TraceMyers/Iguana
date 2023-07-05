@@ -17,33 +17,51 @@ pub const fVec2 = Vec(2, f32);
 pub const fVec3 = Vec(3, f32);
 pub const fVec4 = Vec(4, f32);
 
-pub const FVec2 = Vec(2, f64);
-pub const FVec3 = Vec(3, f64);
-pub const FVec4 = Vec(4, f64);
+pub const dVec2 = Vec(2, f64);
+pub const dVec3 = Vec(3, f64);
+pub const dVec4 = Vec(4, f64);
 
-pub const hsVec2 = Vec(2, i16);
-pub const hsVec3 = Vec(3, i16);
-pub const hsVec4 = Vec(4, i16);
+pub inline fn iVec2(comptime ScalarType: type) type {
+    return switch (ScalarType) {
+        i16, i32, i64 => return Vec(2, ScalarType),
+        else => unreachable,
+    };
+}
 
-pub const sVec2 = Vec(2, i32);
-pub const sVec3 = Vec(3, i32);
-pub const sVec4 = Vec(4, i32);
+pub inline fn iVec3(comptime ScalarType: type) type {
+    return switch (ScalarType) {
+        i16, i32, i64 => return Vec(3, ScalarType),
+        else => unreachable,
+    };
+}
 
-pub const SVec2 = Vec(2, i64);
-pub const SVec3 = Vec(3, i64);
-pub const SVec4 = Vec(4, i64);
+pub inline fn iVec4(comptime ScalarType: type) type {
+    return switch (ScalarType) {
+        i16, i32, i64 => return Vec(4, ScalarType),
+        else => unreachable,
+    };
+}
 
-pub const huVec2 = Vec(2, u16);
-pub const huVec3 = Vec(3, u16);
-pub const huVec4 = Vec(4, u16);
+pub inline fn uVec2(comptime ScalarType: type) type {
+    return switch (ScalarType) {
+        u16, u32, u64 => return Vec(2, ScalarType),
+        else => unreachable,
+    };
+}
 
-pub const uVec2 = Vec(2, u32);
-pub const uVec3 = Vec(3, u32);
-pub const uVec4 = Vec(4, u32);
+pub inline fn uVec3(comptime ScalarType: type) type {
+    return switch (ScalarType) {
+        u16, u32, u64 => return Vec(3, ScalarType),
+        else => unreachable,
+    };
+}
 
-pub const UVec2 = Vec(2, u64);
-pub const UVec3 = Vec(3, u64);
-pub const UVec4 = Vec(4, u64);
+pub inline fn uVec4(comptime ScalarType: type) type {
+    return switch (ScalarType) {
+        u16, u32, u64 => return Vec(4, ScalarType),
+        else => unreachable,
+    };
+}
 
 // ------------------------------------------------------------------------------------------------------- type function
 
@@ -1976,10 +1994,10 @@ test "fVec" {
     try expect(v5.dist3d(v2) < epsilonSmall(f32) and v5.distSq3d(v2) < epsilonSmall(f32) and @fabs(v5.w()) < epsilonSmall(f32));
     try expect(v6.dist2d(v2) < epsilonSmall(f32) and v6.distSq2d(v2) < epsilonSmall(f32));
 
-    var v7: sVec3 = v3.toIntVec(i32);
-    var v8: uVec3 = v3.toIntVec(u32);
-    var v9: FVec3 = v7.toFloatVec(f64);
-    var v9a = FVec3.fromVec(v3);
+    var v7 = v3.toIntVec(i32);
+    var v8 = v3.toIntVec(u32);
+    var v9: dVec3 = v7.toFloatVec(f64);
+    var v9a = dVec3.fromVec(v3);
 
     try expect(v7.x() == 3 and v7.y() == 3 and v7.z() == 3);
     try expect(v8.x() == 3 and v8.y() == 3 and v8.z() == 3);
@@ -2333,8 +2351,8 @@ test "vector math performance" {
         vecs3_32[i].mul(std.math.f32_max);
     }
 
-    var vecs3_64: [iterations]FVec3 = undefined;
-    var vecs3_64_out: [iterations]FVec3 = undefined;
+    var vecs3_64: [iterations]dVec3 = undefined;
+    var vecs3_64_out: [iterations]dVec3 = undefined;
     for (0..iterations) |i| {
         vecs3_64[i].set(.{rand.random().float(f64), rand.random().float(f64), rand.random().float(f64)});
         vecs3_64[i].sub(0.5);
@@ -2352,8 +2370,8 @@ test "vector math performance" {
         vecs4_32[i].mul(std.math.f32_max);
     }
 
-    var vecs4_64: [iterations]FVec4 = undefined;
-    var vecs4_64_out: [iterations]FVec4 = undefined;
+    var vecs4_64: [iterations]dVec4 = undefined;
+    var vecs4_64_out: [iterations]dVec4 = undefined;
     for (0..iterations) |i| {
         vecs4_64[i].set(.{rand.random().float(f64), rand.random().float(f64), rand.random().float(f64), rand.random().float(f64)});
         vecs4_64[i].sub(0.5);
@@ -2377,7 +2395,7 @@ test "vector math performance" {
         }
     }
     {
-        var t = ScopeTimer.start("FVec3", getScopeTimerID());
+        var t = ScopeTimer.start("dVec3", getScopeTimerID());
         defer t.stop();
         for (0..iterations-1) |i| {
             // vecs3_64_out[i] = vecs3_64[i].cross(vecs3_64[i + 1]);
@@ -2407,7 +2425,7 @@ test "vector math performance" {
         }
     }
     {
-        var t = ScopeTimer.start("FVec4", getScopeTimerID());
+        var t = ScopeTimer.start("dVec4", getScopeTimerID());
         defer t.stop();
         for (0..iterations-1) |i| {
             // vecs4_64_out[i] = vecs4_64[i].cross(vecs4_64[i + 1]);
