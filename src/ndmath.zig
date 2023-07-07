@@ -1486,7 +1486,7 @@ pub fn Quaternion(comptime ScalarType: type) type {
             self.parts = result_2 - result_3;
         }
 
-        pub fn mulc(self: *const QuaternionType, other: QuaternionType) {
+        pub fn mulc(self: *const QuaternionType, other: QuaternionType) QuaternionType {
             const neg_vec: @Vector(4, f32) = .{1.0, 1.0, 1.0, -1.0};
             const wsplat = @splat(4, self.parts[3]) * other.parts;
 
