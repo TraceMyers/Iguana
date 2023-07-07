@@ -1619,10 +1619,10 @@ var current_frame: u32 = 0;
 var framebuffer_resized: bool = false;
 
 const vertices: [4]Vertex = .{
-    Vertex{.position = Vec2.init(-0.5, -0.5), .color = Vec3.init(1.0, 1.0, 0.8)},
-    Vertex{.position = Vec2.init(0.5, -0.5),  .color = Vec3.init(0.0, 1.0, 0.0)},
-    Vertex{.position = Vec2.init(0.5, 0.5),  .color = Vec3.init(0.0, 0.0, 1.0)},
-    Vertex{.position = Vec2.init(-0.5, 0.5),  .color = Vec3.init(1.0, 0.0, 1.0)}
+    Vertex{.position = fVec2.init(.{-0.5, -0.5}), .color = fVec3.init(.{1.0, 1.0, 0.8})},
+    Vertex{.position = fVec2.init(.{0.5, -0.5}),  .color = fVec3.init(.{0.0, 1.0, 0.0})},
+    Vertex{.position = fVec2.init(.{0.5, 0.5}),  .color = fVec3.init(.{0.0, 0.0, 1.0})},
+    Vertex{.position = fVec2.init(.{-0.5, 0.5}),  .color = fVec3.init(.{1.0, 0.0, 1.0})}
 };
 
 const indices: [6]u16 = .{0, 1, 2, 2, 3, 0};
@@ -1722,5 +1722,5 @@ const getScopeTimerID = benchmark.getScopeTimerID;
 const gfxmath = @import("gfxmath.zig");
 const Vertex = gfxmath.Vertex;
 const nd = @import("ndmath.zig");
-const Vec2 = nd.Vec2;
-const Vec3 = nd.Vec3;
+const fVec2 = nd.fVec2;
+const fVec3 = nd.fVec3;

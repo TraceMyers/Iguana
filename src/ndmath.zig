@@ -523,12 +523,16 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
             return self.parts[0] * other.parts[1] - other.parts[0] * self.parts[1];
         }
 
-        pub inline fn cross(self: VecType, other: VecType) Vec(3, ScalarType) {
-            return  Vec(3, ScalarType){ .parts = @Vector(3, ScalarType){
-                self.parts[1] * other.parts[2] - self.parts[2] * other.parts[1],
-                self.parts[2] * other.parts[0] - self.parts[0] * other.parts[2],
-                self.parts[0] * other.parts[1] - self.parts[1] * other.parts[0]
-            }};
+        pub inline fn cross(self: VecType, other: Vec(3, ScalarType)) Vec(3, ScalarType) {
+            const self_b = @shuffle(f32, self.parts, self.parts, @Vector(3, i32){2, 0, 1});
+            const other_b = @shuffle(f32, other.parts, other.parts, @Vector(3, i32){1, 2, 0});
+            const intermediate = -(self_b * other_b);
+
+            const self_a = @shuffle(f32, self.parts, self.parts, @Vector(3, i32){1, 2, 0});
+            const other_a = @shuffle(f32, other.parts, other.parts, @Vector(3, i32){2, 0, 1});
+            const result = @mulAdd(@TypeOf(self.parts), self_a, other_a, intermediate);
+
+            return  Vec(3, ScalarType){ .parts = result };
         }
 
     // ------------------------------------------------------------------------------------------------------------ size
@@ -1364,7 +1368,7 @@ pub fn Quaternion(comptime ScalarType: type) type {
         
         parts: @Vector(4, ScalarType) = undefined,
 
-        pub fn new() QuaternionType {
+        pub inline fn new() QuaternionType {
             return QuaternionType{ .parts = .{0.0, 0.0, 0.0, 1.0} };
         }
 
@@ -1463,21 +1467,42 @@ pub fn Quaternion(comptime ScalarType: type) type {
             self.parts *= inv_size_vec;
         }
 
-        pub fn mulc(self: *const QuaternionType, other: QuaternionType) QuaternionType {
-            var b: @Vector(4, ScalarType) = .{other.parts[0], -other.parts[1], -other.parts[2], -other.parts[3]};
-            const sum1 = @reduce(.Add, self.parts * b);
-            b = .{other.parts[3], other.parts[2], other.parts[1], -other.parts[0]};
-            const sum2 = @reduce(.Add, self.parts * b);
-            var a: @Vector(4, ScalarType) = .{self.parts[1], self.parts[2], self.parts[0], self.parts[3]};
-            b = .{other.parts[3], other.parts[0], other.parts[2], -other.parts[1]};
-            const sum3 = @reduce(.Add, a * b);
-            a = .{self.parts[2], self.parts[0], self.parts[1], self.parts[3]};
-            b = .{other.parts[3], other.parts[1], other.parts[0], -other.parts[2]};
-            const sum4 = @reduce(.Add, a * b);
-            a = .{sum1, sum2, sum3, sum4};
-            const vec_size = @sqrt(@reduce(.Add, a * a));
-            const inv_size_vec = @splat(4, 1.0 / vec_size);
-            return QuaternionType.init(a * inv_size_vec);
+        pub fn mul(self: *QuaternionType, other: QuaternionType) void {
+            const neg_vec: @Vector(4, f32) = .{1.0, 1.0, 1.0, -1.0};
+            const wsplat = @splat(4, self.parts[3]) * other.parts;
+
+            const a_shuf1 = @shuffle(f32, self.parts, self.parts, @Vector(4, i32){0, 1, 2, 0}) * neg_vec;
+            const b_shuf1 = @shuffle(f32, other.parts, other.parts, @Vector(4, i32){3, 3, 3, 0});
+            const result_1 = @mulAdd(@Vector(4, f32), a_shuf1, b_shuf1, wsplat);
+
+            const a_shuf2 = @shuffle(f32, self.parts, self.parts, @Vector(4, i32){1, 2, 0, 1}) * neg_vec;
+            const b_shuf2 = @shuffle(f32, other.parts, other.parts, @Vector(4, i32){2, 0, 1, 1});
+            const result_2 = @mulAdd(@Vector(4, f32), a_shuf2, b_shuf2, result_1);
+
+            const a_shuf3 = @shuffle(f32, self.parts, self.parts, @Vector(4, i32){2, 0, 1, 2});
+            const b_shuf3 = @shuffle(f32, other.parts, other.parts, @Vector(4, i32){1, 2, 0, 2});
+            const result_3 = a_shuf3 * b_shuf3;
+
+            self.parts = result_2 - result_3;
+        }
+
+        pub fn mulc(self: *const QuaternionType, other: QuaternionType) {
+            const neg_vec: @Vector(4, f32) = .{1.0, 1.0, 1.0, -1.0};
+            const wsplat = @splat(4, self.parts[3]) * other.parts;
+
+            const a_shuf1 = @shuffle(f32, self.parts, self.parts, @Vector(4, i32){0, 1, 2, 0}) * neg_vec;
+            const b_shuf1 = @shuffle(f32, other.parts, other.parts, @Vector(4, i32){3, 3, 3, 0});
+            const result_1 = @mulAdd(@Vector(4, f32), a_shuf1, b_shuf1, wsplat);
+
+            const a_shuf2 = @shuffle(f32, self.parts, self.parts, @Vector(4, i32){1, 2, 0, 1}) * neg_vec;
+            const b_shuf2 = @shuffle(f32, other.parts, other.parts, @Vector(4, i32){2, 0, 1, 1});
+            const result_2 = @mulAdd(@Vector(4, f32), a_shuf2, b_shuf2, result_1);
+
+            const a_shuf3 = @shuffle(f32, self.parts, self.parts, @Vector(4, i32){2, 0, 1, 2});
+            const b_shuf3 = @shuffle(f32, other.parts, other.parts, @Vector(4, i32){1, 2, 0, 2});
+            const result_3 = a_shuf3 * b_shuf3;
+
+            return QuaternionType.init(result_2 - result_3);
         }
 
     // ------------------------------------------------------------------------------------------------------- constants
@@ -1612,12 +1637,6 @@ const epsilonLarge = flt.epsilonLarge;
 const epsilonMedium = flt.epsilonMedium;
 const epsilonSmall = flt.epsilonSmall;
 const epsilonAuto = flt.epsilonAuto;
-const cintrinsics = @cImport ({
-    @cInclude("x86intrin.h");
-});
-const __m128 = cintrinsics.__m128;
-const __m256 = cintrinsics.__m256;
-const __m128i = cintrinsics.__m128i;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- test
@@ -1973,13 +1992,21 @@ test "fVec" {
     try expect (v23.isNorm());
 }
 
-test "Quaternion" {
-    var q1 = fQuat.fromScalar(4.0);
-    var q2 = fQuat.fromScalar(5.0);
-    var q3 = q1.mulc(q2);
-    print("\nq1\n{any}\nq2\n{any}\nq3\n{any}\n", .{q1, q2, q3});
+pub fn testQuaternion() void {
+    var q1 = fQuat.init(.{0.0, 1.0, 2.0, 3.0});
+    var q2 = fQuat.init(.{4.0, 5.0, 6.0, 7.0});
+    print("\nq1\n{any}\nq2\n{any}\n", .{q1, q2});
+    q1.mul(q2);
+    print("\nq1\n{any}\nq2\n{any}\n", .{q1, q2});
 }
 
+test "testQuaternion" {
+    var q1 = fQuat.init(.{0.0, 1.0, 2.0, 3.0});
+    var q2 = fQuat.init(.{4.0, 5.0, 6.0, 7.0});
+    print("\nq1\n{any}\nq2\n{any}\n", .{q1, q2});
+    q1.mul(q2);
+    print("\nq1\n{any}\nq2\n{any}\n", .{q1, q2});
+}
 // test "epsilon auto performance" {
 //     const iterations: usize = 1_000_000;
 //     var rand = Prng.init(0);
