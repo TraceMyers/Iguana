@@ -524,15 +524,13 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
         }
 
         pub inline fn cross(self: VecType, other: Vec(3, ScalarType)) Vec(3, ScalarType) {
-            const self_b = @shuffle(f32, self.parts, self.parts, @Vector(3, i32){2, 0, 1});
-            const other_b = @shuffle(f32, other.parts, other.parts, @Vector(3, i32){1, 2, 0});
-            const intermediate = -(self_b * other_b);
+            const other_b = @shuffle(f32, other.parts, other.parts, @Vector(3, i32){2, 0, 1});
+            const intermediate = -(self.parts * other_b);
 
-            const self_a = @shuffle(f32, self.parts, self.parts, @Vector(3, i32){1, 2, 0});
-            const other_a = @shuffle(f32, other.parts, other.parts, @Vector(3, i32){2, 0, 1});
-            const result = @mulAdd(@TypeOf(self.parts), self_a, other_a, intermediate);
+            const self_a = @shuffle(f32, self.parts, self.parts, @Vector(3, i32){2, 0, 1});
+            const result = @mulAdd(@TypeOf(self.parts), self_a, other.parts, intermediate);
 
-            return  Vec(3, ScalarType){ .parts = result };
+            return  Vec(3, ScalarType){ .parts = @shuffle(f32, result, result, @Vector(3, i32){2, 0, 1}) };
         }
 
     // ------------------------------------------------------------------------------------------------------------ size
