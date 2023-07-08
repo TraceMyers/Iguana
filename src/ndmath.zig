@@ -1464,38 +1464,38 @@ pub fn Quaternion(comptime ScalarType: type) type {
         }
 
         pub fn mul(self: *QuaternionType, other: QuaternionType) void {
-            const neg_vec: @Vector(4, f32) = .{1.0, 1.0, 1.0, -1.0};
+            const neg_vec: @Vector(4, ScalarType) = .{1.0, 1.0, 1.0, -1.0};
             const wsplat = @splat(4, self.parts[3]) * other.parts;
 
-            const a_shuf1 = @shuffle(f32, self.parts, self.parts, @Vector(4, i32){0, 1, 2, 0}) * neg_vec;
-            const b_shuf1 = @shuffle(f32, other.parts, other.parts, @Vector(4, i32){3, 3, 3, 0});
-            const result_1 = @mulAdd(@Vector(4, f32), a_shuf1, b_shuf1, wsplat);
+            const a_shuf1 = @shuffle(ScalarType, self.parts, self.parts, @Vector(4, i32){0, 1, 2, 0}) * neg_vec;
+            const b_shuf1 = @shuffle(ScalarType, other.parts, other.parts, @Vector(4, i32){3, 3, 3, 0});
+            const result_1 = @mulAdd(@Vector(4, ScalarType), a_shuf1, b_shuf1, wsplat);
 
-            const a_shuf2 = @shuffle(f32, self.parts, self.parts, @Vector(4, i32){1, 2, 0, 1}) * neg_vec;
-            const b_shuf2 = @shuffle(f32, other.parts, other.parts, @Vector(4, i32){2, 0, 1, 1});
-            const result_2 = @mulAdd(@Vector(4, f32), a_shuf2, b_shuf2, result_1);
+            const a_shuf2 = @shuffle(ScalarType, self.parts, self.parts, @Vector(4, i32){1, 2, 0, 1}) * neg_vec;
+            const b_shuf2 = @shuffle(ScalarType, other.parts, other.parts, @Vector(4, i32){2, 0, 1, 1});
+            const result_2 = @mulAdd(@Vector(4, ScalarType), a_shuf2, b_shuf2, result_1);
 
-            const a_shuf3 = @shuffle(f32, self.parts, self.parts, @Vector(4, i32){2, 0, 1, 2});
-            const b_shuf3 = @shuffle(f32, other.parts, other.parts, @Vector(4, i32){1, 2, 0, 2});
+            const a_shuf3 = @shuffle(ScalarType, self.parts, self.parts, @Vector(4, i32){2, 0, 1, 2});
+            const b_shuf3 = @shuffle(ScalarType, other.parts, other.parts, @Vector(4, i32){1, 2, 0, 2});
             const result_3 = a_shuf3 * b_shuf3;
 
             self.parts = result_2 - result_3;
         }
 
         pub fn mulc(self: *const QuaternionType, other: QuaternionType) QuaternionType {
-            const neg_vec: @Vector(4, f32) = .{1.0, 1.0, 1.0, -1.0};
+            const neg_vec: @Vector(4, ScalarType) = .{1.0, 1.0, 1.0, -1.0};
             const wsplat = @splat(4, self.parts[3]) * other.parts;
 
-            const a_shuf1 = @shuffle(f32, self.parts, self.parts, @Vector(4, i32){0, 1, 2, 0}) * neg_vec;
-            const b_shuf1 = @shuffle(f32, other.parts, other.parts, @Vector(4, i32){3, 3, 3, 0});
-            const result_1 = @mulAdd(@Vector(4, f32), a_shuf1, b_shuf1, wsplat);
+            const a_shuf1 = @shuffle(ScalarType, self.parts, self.parts, @Vector(4, i32){0, 1, 2, 0}) * neg_vec;
+            const b_shuf1 = @shuffle(ScalarType, other.parts, other.parts, @Vector(4, i32){3, 3, 3, 0});
+            const result_1 = @mulAdd(@Vector(4, ScalarType), a_shuf1, b_shuf1, wsplat);
 
-            const a_shuf2 = @shuffle(f32, self.parts, self.parts, @Vector(4, i32){1, 2, 0, 1}) * neg_vec;
-            const b_shuf2 = @shuffle(f32, other.parts, other.parts, @Vector(4, i32){2, 0, 1, 1});
-            const result_2 = @mulAdd(@Vector(4, f32), a_shuf2, b_shuf2, result_1);
+            const a_shuf2 = @shuffle(ScalarType, self.parts, self.parts, @Vector(4, i32){1, 2, 0, 1}) * neg_vec;
+            const b_shuf2 = @shuffle(ScalarType, other.parts, other.parts, @Vector(4, i32){2, 0, 1, 1});
+            const result_2 = @mulAdd(@Vector(4, ScalarType), a_shuf2, b_shuf2, result_1);
 
-            const a_shuf3 = @shuffle(f32, self.parts, self.parts, @Vector(4, i32){2, 0, 1, 2});
-            const b_shuf3 = @shuffle(f32, other.parts, other.parts, @Vector(4, i32){1, 2, 0, 2});
+            const a_shuf3 = @shuffle(ScalarType, self.parts, self.parts, @Vector(4, i32){2, 0, 1, 2});
+            const b_shuf3 = @shuffle(ScalarType, other.parts, other.parts, @Vector(4, i32){1, 2, 0, 2});
             const result_3 = a_shuf3 * b_shuf3;
 
             return QuaternionType.init(result_2 - result_3);
@@ -1546,11 +1546,11 @@ pub fn Matrix(comptime h: u32, comptime w: u32, comptime ScalarType: type) type 
         parts: [h][w]ScalarType = undefined,
 
         pub inline fn new() MatrixType {
-            return MatrixType{.parts = std.mem.zeroes(MatrixType)};
+            return MatrixType{.parts = zero};
         }
 
         pub inline fn fromScalar(scalar: ScalarType) MatrixType {
-            var self = std.mem.zeroes(MatrixType);
+            var self = MatrixType{.parts = zero};
             inline for (0..min_dimension) |i| {
                 self.parts[i][i] = scalar;
             }
@@ -1563,7 +1563,7 @@ pub fn Matrix(comptime h: u32, comptime w: u32, comptime ScalarType: type) type 
             const vec_len = @TypeOf(vec).length;
             std.debug.assert(min_dimension >= vec_len);
 
-            var self = MatrixType.new();
+            var self = MatrixType{.parts = zero};
             inline for(0..vec_len) |i| {
                 self.parts[i][i] = vec.parts[i];
             }
@@ -1578,11 +1578,49 @@ pub fn Matrix(comptime h: u32, comptime w: u32, comptime ScalarType: type) type 
         pub fn fromVecOnRightCol(vec: anytype) MatrixType {
             const vec_len = @TypeOf(vec).length;
             std.debug.assert(min_dimension >= vec_len);
-            var self = MatrixType.identity();
+            var self = identity;
             inline for(0..vec_len) |i| {
                 self.parts[i][width - 1] = vec.parts[i];
             }
             return self;
+        }
+
+        pub fn fromQuaternion(quat: Quaternion(ScalarType)) fMat4x4 {
+            const y_squared = quat.parts[1] * quat.parts[1];
+            const shuf1 = @shuffle(f32, quat.parts, quat.parts, @Vector(4, i32){0, 3, 2, 0});
+            // x^2, yw, z^2, xw
+            const prod1 = quat.parts * shuf1;
+
+            const shuf3 = @shuffle(f32, prod1, prod1, @Vector(4, i32){0, 2, 2, 1});
+            const load1 = @Vector(4, f32){y_squared, y_squared, shuf3[0], 0};
+            const sum1 = @splat(4, @as(f32, 2.0)) * (shuf3 + load1);
+
+            // xz, xy, yz, zw
+            const shuf2 = @shuffle(f32, quat.parts, quat.parts, @Vector(4, i32){3, 0, 1, 2});
+            const prod2 = quat.parts * shuf2;
+
+            const alt_neg = @Vector(4, f32){1.0, -1.0, 1.0, -1.0};
+            const shuf4 = @shuffle(f32, prod2, prod2, @Vector(4, i32){2, 2, 1, 1});
+            const shuf5 = @shuffle(f32, prod2, prod1, @Vector(4, i32){-4, -4, 3, 3}) * alt_neg;
+            // [ yz + xw |#| yz - yw |#| xy + zw |#| xy - zw ]
+            const base_2 = @splat(4, @as(f32, 2.0)) * (shuf4 + shuf5);
+            
+            const sub_vec = @Vector(4, f32){1.0, 1.0, 1.0, 2.0 * prod2[0]};
+            // [ 1 - 2(x^2 + y^2) |#| 1 - 2(z^2 + y^2) |#| 1 - 2(x^2 + z^2) |#| 2(xz - yw) ]
+            const base_1 = sub_vec - sum1;
+
+            const _2xz_plus_zw = 2.0 * (prod2[0] + prod2[3]);
+
+            var self: MatrixType = undefined;
+            const col1 = @Vector(4, f32){base_1[1], base_2[3], _2xz_plus_zw, 0.0};
+            self.parts[0] = col1;
+            // putting a zero in
+            const base_2b = @shuffle(f32, base_2, col1, @Vector(4, i32){0, 1, 2, -4});
+            self.parts[1] = @shuffle(f32, base_1, base_2b, @Vector(4, i32){-3, 2, -2, -4});
+            self.parts[2] = @shuffle(f32, base_1, base_2b, @Vector(4, i32){3, -1, 0, -4});
+            self.parts[3] = @Vector(4, f32){0.0, 0.0, 0.0, 1.0};
+
+            return self; 
         }
 
     // ------------------------------------------------------------------------------------------------------- constants
@@ -1640,8 +1678,9 @@ const epsilonAuto = flt.epsilonAuto;
 // need to add -lc arg for testing to link libc
 
 test "SquareMatrix" {
-    var m1 = fMat3x3.identity;
-    _ = m1;
+    var q1 = fQuat.init(.{1.0, 2.0, 3.0, 4.0});
+    var m1 = fMat4x4.fromQuaternion(q1);
+    print("\n{any}\n", .{m1});
 }
 
 test "fVec" {
@@ -1999,10 +2038,12 @@ pub fn testQuaternion() void {
 test "testQuaternion" {
     var q1 = fQuat.init(.{0.0, 1.0, 2.0, 3.0});
     var q2 = fQuat.init(.{4.0, 5.0, 6.0, 7.0});
-    print("\nq1\n{any}\nq2\n{any}\n", .{q1, q2});
     q1.mul(q2);
-    print("\nq1\n{any}\nq2\n{any}\n", .{q1, q2});
+
+    var f1: f32 = 1.4142136;
+    print("\nsqrt(2)^2 = {d}\n", .{f1 * f1});
 }
+
 // test "epsilon auto performance" {
 //     const iterations: usize = 1_000_000;
 //     var rand = Prng.init(0);
