@@ -524,13 +524,11 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
         }
 
         pub inline fn cross(self: VecType, other: Vec(3, ScalarType)) Vec(3, ScalarType) {
-            const other_b = @shuffle(f32, other.parts, other.parts, @Vector(3, i32){2, 0, 1});
-            const intermediate = -(self.parts * other_b);
-
-            const self_a = @shuffle(f32, self.parts, self.parts, @Vector(3, i32){2, 0, 1});
-            const result = @mulAdd(@TypeOf(self.parts), self_a, other.parts, intermediate);
-
-            return  Vec(3, ScalarType){ .parts = @shuffle(f32, result, result, @Vector(3, i32){2, 0, 1}) };
+            return Vec(3, ScalarType){ .parts = .{
+                self.parts[1] * other.parts[2] - other.parts[1] * self.parts[2],
+                other.parts[0] * self.parts[2] - other.parts[2] * self.parts[0],
+                self.parts[0] * other.parts[1] - other.parts[0] * self.parts[1]
+            }};
         }
 
     // ------------------------------------------------------------------------------------------------------------ size
@@ -2028,30 +2026,85 @@ test "testQuaternion" {
 //     benchmark.printAllScopeTimers();
 // }
 
-// test "fast math performance" {
-//     const iterations: usize = 1_000_00;
-//     var rand = Prng.init(0);
+fn stopOptim() u64 {
+    const k = struct {
+        var i: i64 = -1;
+    };
+    k.i += 1;
+    return @intCast(u64, k.i);
+}
 
-//     var vecs: [iterations]fVec3 = undefined;
+pub fn crossPerformance() void {
+    const iterations: usize = 1_000_00;
+    var rand = Prng.init(stopOptim());
 
-//     for (0..iterations) |i| {
-//         vecs[i].set(.{rand.random().float(f32), rand.random().float(f32), rand.random().float(f32)});
-//         vecs[i].mul(std.math.f32_max);
-//         if (i % 2 == 0) {
-//             vecs[i].mul(-1.0);
-//         }
-//     }
+    var vecs: [iterations]fVec3 = undefined;
 
-//     {
-//         var t = ScopeTimer.start("cross", getScopeTimerID());
-//         defer t.stop();
-//         for (1..iterations-1) |i| {
-//             vecs[i-1] = vecs[i].cross(vecs[i + 1]);
-//         }
-//     }
+    for (0..iterations) |i| {
+        vecs[i].set(.{rand.random().float(f32), rand.random().float(f32), rand.random().float(f32)});
+        vecs[i].mul(100000.0);
+        if (i % 2 == 0) {
+            vecs[i].mul(-1.0);
+        }
+    }
+    var output: [iterations]fVec3 = undefined;
 
-//     benchmark.printAllScopeTimers();
-// }
+    {
+        var t = ScopeTimer.start("cross", getScopeTimerID());
+        defer t.stop();
+        for (0..iterations-1) |i| {
+            output[i] = vecs[i].cross(vecs[i + 1]);
+        }
+    }
+
+    benchmark.printAllScopeTimers();
+}
+
+pub fn quatMulPerformance() void {
+    const iterations: usize = 1_000_00;
+    var rand = Prng.init(stopOptim());
+
+    var quats: [iterations]fQuat = undefined;
+
+    for (0..iterations) |i| {
+        quats[i].set(.{rand.random().float(f32), rand.random().float(f32), rand.random().float(f32), rand.random().float(f32)});
+        if (rand.random().boolean()) {
+            quats[i].parts[0] *= 10000.0;
+        }
+        else {
+            quats[i].parts[0] *= -10000.0;
+        }
+        if (rand.random().boolean()) {
+            quats[i].parts[1] *= 10000.0;
+        }
+        else {
+            quats[i].parts[1] *= -10000.0;
+        }if (rand.random().boolean()) {
+            quats[i].parts[2] *= 10000.0;
+        }
+        else {
+            quats[i].parts[2] *= -10000.0;
+        }if (rand.random().boolean()) {
+            quats[i].parts[3] *= 10000.0;
+        }
+        else {
+            quats[i].parts[3] *= -10000.0;
+        }
+    }
+    var output: [iterations]fQuat = undefined;
+
+    {
+        var t = ScopeTimer.start("quat mul simd", getScopeTimerID());
+        defer t.stop();
+        for (0..iterations-1) |i| {
+            output[i] = quats[i].mulc(quats[i + 1]);
+        }
+    }
+
+    print("{any}\n", .{output[0]});
+
+    benchmark.printAllScopeTimers();
+}
 
 // test "vector math performance" {
 //     const iterations: usize = 10_000;

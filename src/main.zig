@@ -16,7 +16,8 @@ pub fn main() !void {
     // }
 
     // benchmark.printAllScopeTimers();
-    nd.testQuaternion();
+    // nd.testQuaternion();
+    nd.quatMulPerformance();
 }
 
 const std = @import("std");

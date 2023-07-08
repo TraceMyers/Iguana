@@ -31,6 +31,8 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(exe);
 
+    exe.emit_asm = .emit;
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
 
