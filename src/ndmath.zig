@@ -1,7 +1,4 @@
 
-// TODO: is there a way to cast scalar types such that same-bitw vector types could do arithmetic with each other?
-// TODO: ... or just make it easy to convert between them.
-// TODO: test @setFloatMode() (a per-scope thing that allows ffast-math optimizations)
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------------- Vec
@@ -76,7 +73,7 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
     // ------------------------------------------------------------------------------------------------------------ init
 
         pub inline fn new() VecType {
-            return VecType{ .parts = std.mem.zeroes([len]ScalarType) };
+            return zero;
         }
 
         pub inline fn init(scalars: anytype) VecType {
@@ -87,53 +84,65 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
             return VecType{ .parts = @splat(len, scalar) };
         }
 
-        // convert vector with scalar type Ta and len Na to a vector with scalar type Tb and len Nb, where Na
-        // does not need to equal Nb. If Ta != Tb, then bitw(Tb) must be >= bitw(Ta)
-        // example: var new_vec3 = fVec3.fromVec(some_vec4);
-        pub inline fn fromVec(vec: anytype) VecType {
-            if (len > @TypeOf(vec).length) {
-                var self = VecType{ .parts = std.mem.zeroes([len]ScalarType) };
-                inline for (0..@TypeOf(vec).length) |i| {
-                    self.parts[i] = vec.parts[i];
-                }
-                return self;
-            }
-            else if (len < @TypeOf(vec).length or @TypeOf(vec) != VecType) {
-                var self: VecType = undefined;
-                inline for (0..len) |i| {
-                    self.parts[i] = vec.parts[i];
-                }
-                return self;
-            }
-            else {
-                return vec;
-            }
-        }
-
     // ------------------------------------------------------------------------------------------------------ conversion
 
-        pub inline fn toIntVec(self: *const VecType, comptime IntType: type) Vec(len, IntType) {
-            var int_vec: Vec(len, IntType) = undefined;
-            inline for(0..len) |i| {
-                int_vec.parts[i] = @floatToInt(IntType, self.parts[i]);
+        // copy vector with scalar type Ta and len Na into self (vector with scalar type Tb and len Nb), where Na
+        // does not need to equal Nb. If Ta != Tb, then the cast must be legal by zig compiler's rules.
+        // example: 
+        // var new_vec3 = fVec3.new();
+        // new_vec3.replicate(some_intvec4, false);
+        pub fn replicate(self: *VecType, other: anytype, fill_zero: bool) void {
+            const from_type_float = switch(@typeInfo(@TypeOf(other).scalar_type)) { .Float => true, else => false };
+            const to_type_float = switch(@typeInfo(ScalarType)) { .Float => true, else => false };
+
+            if (fill_zero) {
+                self.* = zero;
             }
-            return int_vec;
+
+            if (from_type_float) {
+                if (to_type_float) {
+                    self.floatToFloat(other);
+                }
+                else {
+                    self.floatToInt(other);
+                }
+            }
+            else {
+                if (to_type_float) {
+                    self.intToFloat(other);
+                }
+                else {
+                    self.intToInt(other);
+                }
+            }
         }
 
-        pub inline fn toIntVecRounded(self: *const VecType, comptime IntType: type) Vec(len, IntType) {
-            var int_vec: Vec(len, IntType) = undefined;
-            inline for(0..len) |i| {
-                int_vec.parts[i] = @floatToInt(IntType, @round(self.parts[i]) + epsilonLarge(ScalarType));
+        inline fn floatToFloat(self: *VecType, other: anytype) void {
+            const min_len = @min(len, @TypeOf(other).length);
+            inline for (0..min_len) |i| {
+                self.parts[i] = @floatCast(ScalarType, other.parts[i]);
             }
-            return int_vec;
         }
 
-        pub inline fn toFloatVec(self: *const VecType, comptime FloatType: type) Vec(len, FloatType) {
-            var float_vec: Vec(len, FloatType) = undefined;
-            inline for(0..len) |i| {
-                float_vec.parts[i] = @intToFloat(FloatType, self.parts[i]);
+        inline fn floatToInt(self: *VecType, other: anytype) void {
+            const min_len = @min(len, @TypeOf(other).length);
+            inline for (0..min_len) |i| {
+                self.parts[i] = @floatToInt(ScalarType, other.parts[i]);
             }
-            return float_vec;
+        }
+
+        inline fn intToFloat(self: *VecType, other: anytype) void {
+            const min_len = @min(len, @TypeOf(other).length);
+            inline for (0..min_len) |i| {
+                self.parts[i] = @intToFloat(ScalarType, other.parts[i]);
+            }
+        }
+
+        inline fn intToInt(self: *VecType, other: anytype) void {
+            const min_len = @min(len, @TypeOf(other).length);
+            inline for (0..min_len) |i| {
+                self.parts[i] = @intCast(ScalarType, other.parts[i]);
+            }
         }
 
     // --------------------------------------------------------------------------------------------------------- re-init
@@ -169,24 +178,92 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
             return self.parts[3];
         }
 
-        pub inline fn setX(self: *VecType, in_x: f32) void {
+        pub inline fn xAdd(self: *VecType, val: ScalarType) void {
+            self.parts[0] += val;
+        }
+
+        pub inline fn yAdd(self: *VecType, val: ScalarType) void {
+            self.parts[1] += val;
+        }
+
+        pub inline fn zAdd(self: *VecType, val: ScalarType) void {
+            self.parts[2] += val;
+        }
+
+        pub inline fn wAdd(self: *VecType, val: ScalarType) void {
+            self.parts[3] += val;
+        }
+
+        pub inline fn xSub(self: *VecType, val: ScalarType) void {
+            self.parts[0] -= val;
+        }
+
+        pub inline fn ySub(self: *VecType, val: ScalarType) void {
+            self.parts[1] -= val;
+        }
+
+        pub inline fn zSub(self: *VecType, val: ScalarType) void {
+            self.parts[2] -= val;
+        }
+
+        pub inline fn wSub(self: *VecType, val: ScalarType) void {
+            self.parts[3] -= val;
+        }
+
+        pub inline fn xMul(self: *VecType, val: ScalarType) void {
+            self.parts[0] *= val;
+        }
+
+        pub inline fn yMul(self: *VecType, val: ScalarType) void {
+            self.parts[1] *= val;
+        }
+
+        pub inline fn zMul(self: *VecType, val: ScalarType) void {
+            self.parts[2] *= val;
+        }
+
+        pub inline fn wMul(self: *VecType, val: ScalarType) void {
+            self.parts[3] *= val;
+        }
+
+        pub inline fn xDiv(self: *VecType, val: ScalarType) void {
+            self.parts[0] /= val;
+        }
+
+        pub inline fn yDiv(self: *VecType, val: ScalarType) void {
+            self.parts[1] /= val;
+        }
+
+        pub inline fn zDiv(self: *VecType, val: ScalarType) void {
+            self.parts[2] /= val;
+        }
+
+        pub inline fn wDiv(self: *VecType, val: ScalarType) void {
+            self.parts[3] /= val;
+        }
+
+        pub inline fn setX(self: *VecType, in_x: ScalarType) void {
             self.parts[0] = in_x;
         }
 
-        pub inline fn setY(self: *VecType, in_y: f32) void {
+        pub inline fn setY(self: *VecType, in_y: ScalarType) void {
             self.parts[1] = in_y;
         }
 
-        pub inline fn setZ(self: *VecType, in_z: f32) void {
+        pub inline fn setZ(self: *VecType, in_z: ScalarType) void {
             self.parts[2] = in_z;
         }
 
-        pub inline fn setW(self: *VecType, in_w: f32) void {
+        pub inline fn setW(self: *VecType, in_w: ScalarType) void {
             self.parts[3] = in_w;
         }
 
-        pub inline fn part(self: *const VecType, idx: usize) ScalarType {
+        pub inline fn component(self: *const VecType, idx: usize) ScalarType {
             return self.parts[idx];
+        }
+
+        pub inline fn setComponent(self: *VecType, idx: usize, scalar: ScalarType) void {
+            self.parts[idx] = scalar;
         }
 
     // ----------------------------------------------------------------------------------------------- vector arithmetic
@@ -199,7 +276,7 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
             else {
                 return switch(len) {
                     0, 1 => unreachable,
-                    2 => vAddcLoop(self, other),
+                    2, 3 => vAddcLoop(self, other),
                     else => blk: {
                         if (@TypeOf(other).length != len) {
                             break :blk vAddcLoop(self, other);
@@ -220,13 +297,13 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
             else {
                 switch(len) {
                     0, 1 => unreachable,
-                    2 => vAddLoop(self, other),
+                    2, 3 => vAddLoop(self, other),
                     else => blk: {
                         if (@TypeOf(other).length != len) {
                             break :blk vAddLoop(self, other);
                         }
                         else {
-                            self.parts += other.parts;
+                            self.parts = self.parts + other.parts;
                         }
                     },
                 }
@@ -241,7 +318,7 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
             else {
                 return switch(len) {
                     0, 1 => unreachable,
-                    2 => vSubcLoop(self, other),
+                    2, 3 => vSubcLoop(self, other),
                     else => blk: {
                         if (@TypeOf(other).length != len) {
                             break :blk vSubcLoop(self, other);
@@ -262,7 +339,7 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
             else {
                 switch(len) {
                     0, 1 => unreachable,
-                    2 => vSubLoop(self, other),
+                    2, 3 => vSubLoop(self, other),
                     else => blk: {
                         if (@TypeOf(other).length != len) {
                             break :blk vSubLoop(self, other);
@@ -283,7 +360,7 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
             else {
                 return switch(len) {
                     0, 1 => unreachable,
-                    2 => vMulcLoop(self, other),
+                    2, 3 => vMulcLoop(self, other),
                     else => blk: {
                         if (@TypeOf(other).length != len) {
                             break :blk vMulcLoop(self, other);
@@ -304,7 +381,7 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
             else {
                 switch(len) {
                     0, 1 => unreachable,
-                    2 => vMulLoop(self, other),
+                    2, 3 => vMulLoop(self, other),
                     else => blk: {
                         if (@TypeOf(other).length != len) {
                             break :blk vMulLoop(self, other);
@@ -325,7 +402,7 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
             else {
                 return switch(len) {
                     0, 1 => unreachable,
-                    2 => vDivcLoop(self, other),
+                    2, 3 => vDivcLoop(self, other),
                     else => blk: {
                         if (@TypeOf(other).length != len) {
                             break :blk vDivcLoop(self, other);
@@ -346,7 +423,7 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
             else {
                 switch(len) {
                     0, 1 => unreachable,
-                    2 => vDivLoop(self, other),
+                    2, 3 => vDivLoop(self, other),
                     else => blk: {
                         if (@TypeOf(other).length != len) {
                             break :blk vDivLoop(self, other);
@@ -560,7 +637,9 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
     // -------------------------------------------------------------------------------------------------------- distance
 
         pub inline fn dist(self: VecType, other: VecType) ScalarType {
-            const diff = self.parts - other.parts;
+            const a: @Vector(len, ScalarType) = self.parts;
+            const b: @Vector(len, ScalarType) = other.parts;
+            const diff = a - b;
             return @sqrt(@reduce(.Add, diff * diff));
         }
 
@@ -777,8 +856,9 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
 
     // ------------------------------------------------------------------------------------------------------- constants
 
+        pub const scalar_type = ScalarType;
         pub const length = len;
-        pub const zero = VecType.new();
+        pub const zero = std.mem.zeroes(VecType);
         pub const posx = switch(len) {
             2 => switch(ScalarType) {
                 f16, f32, f64 => VecType.init(.{1.0,  0.0}),
@@ -1014,6 +1094,296 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
 
     };
 }
+
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// --------------------------------------------------------------------------------------------------- VecNx4 (for SIMD)
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// ------------------------------------------------------------------------------------------------- convenience aliases
+
+pub const hVec2x4 = Vec2x4(f16);
+pub const hVec3x4 = Vec3x4(f16);
+pub const hVec4x4 = Vec4x4(f16);
+
+pub const fVec2x4 = Vec2x4(f32);
+pub const fVec3x4 = Vec3x4(f32);
+pub const fVec4x4 = Vec4x4(f32);
+
+pub const dVec2x4 = Vec2x4(f64);
+pub const dVec3x4 = Vec3x4(f64);
+pub const dVec4x4 = Vec4x4(f64);
+
+// ------------------------------------------------------------------------------------------------------ type functions
+
+pub fn Vec2x4(comptime ScalarType: type) type {
+
+    return struct {
+        const SelfType = @This();
+
+        x: @Vector(4, ScalarType),
+        y: @Vector(4, ScalarType),
+
+        pub inline fn vec(self: *const SelfType, idx: usize) Vec(2, ScalarType) {
+            return Vec(2, ScalarType).init(.{self.x[idx], self.y[idx]});
+        }
+
+        pub const scalar_type = ScalarType;
+        pub const width = 2;
+
+    };
+
+}
+
+pub fn Vec3x4(comptime ScalarType: type) type {
+    
+    return struct {
+        const SelfType = @This();
+
+        x: @Vector(4, ScalarType),
+        y: @Vector(4, ScalarType),
+        z: @Vector(4, ScalarType),
+
+        pub inline fn vec(self: *const SelfType, idx: usize) Vec(3, ScalarType) {
+            return Vec(3, ScalarType).init(.{self.x[idx], self.y[idx], self.z[idx]});
+        }
+
+        pub const scalar_type = ScalarType;
+        pub const width = 3;
+    };
+
+}
+
+pub fn Vec4x4(comptime ScalarType: type) type {
+    
+    return struct {
+        const SelfType = @This();
+
+        x: @Vector(4, ScalarType),
+        y: @Vector(4, ScalarType),
+        z: @Vector(4, ScalarType),
+        w: @Vector(4, ScalarType),
+
+        pub inline fn vec(self: *const SelfType, idx: usize) Vec(4, ScalarType) {
+            return Vec(4, ScalarType).init(.{self.x[idx], self.y[idx], self.z[idx], self.w[idx]});
+        }
+
+        pub const scalar_type = ScalarType;
+        pub const width = 4;
+    };
+
+}
+
+// ----------------------------------------------------------------------------------------------------------- functions
+
+// pub fn multiAdd(vec: anytype, in_multi: anytype, out_multi: anytype) void {
+
+// }
+
+pub fn multiDot(vec: anytype, multi_vec: anytype) Vec(4, @TypeOf(vec).scalar_type) {
+    const scalar_type = @TypeOf(vec).scalar_type;
+    return switch (@TypeOf(vec).length) {
+        2 => blk: {
+            const x_splat = @splat(4, vec.parts[0]);
+            const x_mul = x_splat * multi_vec.x;
+            const y_splat = @splat(4, vec.parts[1]);
+            const dots = @mulAdd(scalar_type, y_splat, multi_vec.y, x_mul);
+            break :blk Vec(4, scalar_type).init(dots);
+        },
+        3 => blk: {
+            const x_splat = @splat(4, vec.parts[0]);
+            const x_mul = x_splat * multi_vec.x;
+            const y_splat = @splat(4, vec.parts[1]);
+            const cur_sum = @mulAdd(scalar_type, y_splat, multi_vec.y, x_mul);
+            const z_splat = @splat(4, vec.parts[2]);
+            const dots = @mulAdd(scalar_type, z_splat, multi_vec.z, cur_sum);
+            break :blk Vec(4, scalar_type).init(dots);
+        },
+        4 => blk: {
+            const x_splat = @splat(4, vec.parts[0]);
+            const x_mul = x_splat * multi_vec.x;
+            const y_splat = @splat(4, vec.parts[1]);
+            const cur_sum = @mulAdd(scalar_type, y_splat, multi_vec.y, x_mul);
+            const z_splat = @splat(4, vec.parts[2]);
+            const cur_sum2 = @mulAdd(scalar_type, z_splat, multi_vec.z, cur_sum);
+            const w_splat = @splat(4, vec.parts[3]);
+            const dots = @mulAdd(scalar_type, w_splat, multi_vec.w, cur_sum2);
+            break :blk Vec(4, scalar_type).init(dots);
+        },
+        else => unreachable,
+    };
+}
+
+pub fn multiDistSq(vec: anytype, multi_vec: anytype) Vec(4, @TypeOf(vec).scalar_type) {
+    const scalar_type = @TypeOf(vec).scalar_type;
+    return switch (@TypeOf(vec).length) {
+        2 => blk: {
+            const x_splat = @splat(4, vec.parts[0]);
+            const x_sub = x_splat - multi_vec.x;
+            const x_square = x_sub * x_sub;
+            const y_splat = @splat(4, vec.parts[1]);
+            const y_sub = y_splat - multi_vec.y;
+            const sq_dists = @mulAdd(scalar_type, y_sub, y_sub, x_square);
+            break :blk Vec(4, scalar_type).init(sq_dists);
+        },
+        3 => blk: {
+            const x_splat = @splat(4, vec.parts[0]);
+            const x_sub = x_splat - multi_vec.x;
+            const x_square = x_sub * x_sub;
+            const y_splat = @splat(4, vec.parts[1]);
+            const y_sub = y_splat - multi_vec.y;
+            const cur_sum = @mulAdd(scalar_type, y_sub, y_sub, x_square);
+            const z_splat = @splat(4, vec.parts[2]);
+            const z_sub = z_splat - multi_vec.z;
+            const sq_dists = @mulAdd(scalar_type, z_sub, z_sub, cur_sum);
+            break :blk Vec(4, scalar_type).init(sq_dists);
+        },
+        4 => blk: {
+            const x_splat = @splat(4, vec.parts[0]);
+            const x_sub = x_splat - multi_vec.x;
+            const x_square = x_sub * x_sub;
+            const y_splat = @splat(4, vec.parts[1]);
+            const y_sub = y_splat - multi_vec.y;
+            const cur_sum = @mulAdd(scalar_type, y_sub, y_sub, x_square);
+            const z_splat = @splat(4, vec.parts[2]);
+            const z_sub = z_splat - multi_vec.z;
+            const cur_sum2 = @mulAdd(scalar_type, z_sub, z_sub, cur_sum);
+            const w_splat = @splat(4, vec.parts[3]);
+            const w_sub = w_splat - multi_vec.w;
+            const sq_dists = @mulAdd(scalar_type, w_sub, w_sub, cur_sum2);
+            break :blk Vec(4, scalar_type).init(sq_dists);
+        },
+        else => unreachable,
+    };
+}
+
+pub fn multiDist(vec: anytype, multi_vec: anytype) Vec(4, @TypeOf(vec).scalar_type) {
+    const scalar_type = @TypeOf(vec).scalar_type;
+    return switch (@TypeOf(vec).length) {
+        2 => blk: {
+            const x_splat = @splat(4, vec.parts[0]);
+            const x_sub = x_splat - multi_vec.x;
+            const x_square = x_sub * x_sub;
+            const y_splat = @splat(4, vec.parts[1]);
+            const y_sub = y_splat - multi_vec.y;
+            const sq_dists = @mulAdd(scalar_type, y_sub, y_sub, x_square);
+            break :blk Vec(4, scalar_type).init(@sqrt(sq_dists));
+        },
+        3 => blk: {
+            const x_splat = @splat(4, vec.parts[0]);
+            const x_sub = x_splat - multi_vec.x;
+            const x_square = x_sub * x_sub;
+            const y_splat = @splat(4, vec.parts[1]);
+            const y_sub = y_splat - multi_vec.y;
+            const cur_sum = @mulAdd(scalar_type, y_sub, y_sub, x_square);
+            const z_splat = @splat(4, vec.parts[2]);
+            const z_sub = z_splat - multi_vec.z;
+            const sq_dists = @mulAdd(scalar_type, z_sub, z_sub, cur_sum);
+            break :blk Vec(4, scalar_type).init(@sqrt(sq_dists));
+        },
+        4 => blk: {
+            const x_splat = @splat(4, vec.parts[0]);
+            const x_sub = x_splat - multi_vec.x;
+            const x_square = x_sub * x_sub;
+            const y_splat = @splat(4, vec.parts[1]);
+            const y_sub = y_splat - multi_vec.y;
+            const cur_sum = @mulAdd(scalar_type, y_sub, y_sub, x_square);
+            const z_splat = @splat(4, vec.parts[2]);
+            const z_sub = z_splat - multi_vec.z;
+            const cur_sum2 = @mulAdd(scalar_type, z_sub, z_sub, cur_sum);
+            const w_splat = @splat(4, vec.parts[3]);
+            const w_sub = w_splat - multi_vec.w;
+            const sq_dists = @mulAdd(scalar_type, w_sub, w_sub, cur_sum2);
+            break :blk Vec(4, scalar_type).init(@sqrt(sq_dists));
+        },
+        else => unreachable,
+    };
+}
+
+pub fn multiDot2d(vec: anytype, multi_vec: anytype) Vec(4, @TypeOf(vec).scalar_type) {
+    const scalar_type = @TypeOf(vec).scalar_type;
+    const x_splat = @splat(4, vec.parts[0]);
+    const x_mul = x_splat * multi_vec.x;
+    const y_splat = @splat(4, vec.parts[1]);
+    const dots = @mulAdd(scalar_type, y_splat, multi_vec.y, x_mul);
+    return Vec(4, scalar_type).init(dots);
+}
+
+pub fn multiDot3d(vec: anytype, multi_vec: anytype) Vec(4, @TypeOf(vec).scalar_type) {
+    const scalar_type = @TypeOf(vec).scalar_type;
+    const x_splat = @splat(4, vec.parts[0]);
+    const x_mul = x_splat * multi_vec.x;
+    const y_splat = @splat(4, vec.parts[1]);
+    const cur_sum = @mulAdd(scalar_type, y_splat, multi_vec.y, x_mul);
+    const z_splat = @splat(4, vec.parts[2]);
+    const dots = @mulAdd(scalar_type, z_splat, multi_vec.z, cur_sum);
+    return Vec(4, scalar_type).init(dots);
+}
+
+pub fn multiDistSq2d(vec: anytype, multi_vec: anytype) Vec(4, @TypeOf(vec).scalar_type) {
+    const scalar_type = @TypeOf(vec).scalar_type;
+    const x_splat = @splat(4, vec.parts[0]);
+    const x_sub = x_splat - multi_vec.x;
+    const x_square = x_sub * x_sub;
+    const y_splat = @splat(4, vec.parts[1]);
+    const y_sub = y_splat - multi_vec.y;
+    const sq_dists = @mulAdd(scalar_type, y_sub, y_sub, x_square);
+    return Vec(4, scalar_type).init(sq_dists);
+}
+
+pub fn multiDist2d(vec: anytype, multi_vec: anytype) Vec(4, @TypeOf(vec).scalar_type) {
+    const scalar_type = @TypeOf(vec).scalar_type;
+    const x_splat = @splat(4, vec.parts[0]);
+    const x_sub = x_splat - multi_vec.x;
+    const x_square = x_sub * x_sub;
+    const y_splat = @splat(4, vec.parts[1]);
+    const y_sub = y_splat - multi_vec.y;
+    const sq_dists = @mulAdd(scalar_type, y_sub, y_sub, x_square);
+    return Vec(4, scalar_type).init(@sqrt(sq_dists));
+}
+
+pub fn multiDistSq3d(vec: anytype, multi_vec: anytype) Vec(4, @TypeOf(vec).scalar_type) {
+    const scalar_type = @TypeOf(vec).scalar_type;
+    const x_splat = @splat(4, vec.parts[0]);
+    const x_sub = x_splat - multi_vec.x;
+    const x_square = x_sub * x_sub;
+    const y_splat = @splat(4, vec.parts[1]);
+    const y_sub = y_splat - multi_vec.y;
+    const cur_sum = @mulAdd(scalar_type, y_sub, y_sub, x_square);
+    const z_splat = @splat(4, vec.parts[2]);
+    const z_sub = z_splat - multi_vec.z;
+    const sq_dists = @mulAdd(scalar_type, z_sub, z_sub, cur_sum);
+    return Vec(4, scalar_type).init(sq_dists);
+}
+
+pub fn multiDist3d(vec: anytype, multi_vec: anytype) Vec(4, @TypeOf(vec).scalar_type) {
+    const scalar_type = @TypeOf(vec).scalar_type;
+    const x_splat = @splat(4, vec.parts[0]);
+    const x_sub = x_splat - multi_vec.x;
+    const x_square = x_sub * x_sub;
+    const y_splat = @splat(4, vec.parts[1]);
+    const y_sub = y_splat - multi_vec.y;
+    const cur_sum = @mulAdd(scalar_type, y_sub, y_sub, x_square);
+    const z_splat = @splat(4, vec.parts[2]);
+    const z_sub = z_splat - multi_vec.z;
+    const sq_dists = @mulAdd(scalar_type, z_sub, z_sub, cur_sum);
+    return Vec(4, scalar_type).init(@sqrt(sq_dists));
+}
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ---------------------------------------------------------------------- VecArray (Array of Structs of Arrays for SIMD)
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// for bulk retrieval and bulk storage: assuming the nx4's are stored contiguously, it might be fastest to access
+// them by getting the 0th index vector per nx4, then the 1st, and so on, so addresses are equally spaced per each  
+// of the 4 iterations.
+
+// pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type, comptime count: comptime_int) type {
+
+//     return struct {
+
+//         const VecArrayType = @This();
+
+//     };
+// }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------------- Ray
@@ -1720,9 +2090,12 @@ test "fVec" {
     var v1 = fVec3.new();
     var v2 = fVec3.init(.{0.0, 1.0, 2.0});
     var v3 = fVec3.fromScalar(3.0001);
-    var v4 = fVec3.fromVec(v2);
-    var v5 = fVec4.fromVec(v2);
-    var v6 = fVec2.fromVec(v2);
+    var v4 = fVec3.new();
+    v4.replicate(v2, false);
+    var v5 = fVec4.new();
+    v5.replicate(v2, false);
+    var v6 = fVec2.new();
+    v6.replicate(v2, false);
     
     try expect(vf3zero.dist(v1) < epsilonSmall(f32));
     try expect(@fabs(v2.x()) < epsilonSmall(f32) and @fabs(v2.y() - 1.0) < epsilonSmall(f32) and @fabs(v2.z() - 2.0) < epsilonSmall(f32));
@@ -1731,10 +2104,14 @@ test "fVec" {
     try expect(v5.dist3d(v2) < epsilonSmall(f32) and v5.distSq3d(v2) < epsilonSmall(f32) and @fabs(v5.w()) < epsilonSmall(f32));
     try expect(v6.dist2d(v2) < epsilonSmall(f32) and v6.distSq2d(v2) < epsilonSmall(f32));
 
-    var v7 = v3.toIntVec(i32);
-    var v8 = v3.toIntVec(u32);
-    var v9: dVec3 = v7.toFloatVec(f64);
-    var v9a = dVec3.fromVec(v3);
+    var v7 = iVec3(i32).new();
+    var v8 = uVec3(u32).new();
+    v7.replicate(v3, false);
+    v8.replicate(v3, false);
+    var v9 = dVec3.new();
+    v9.replicate(v7, false);
+    var v9a = dVec3.new();
+    v9a.replicate(v3, false);
 
     try expect(v7.x() == 3 and v7.y() == 3 and v7.z() == 3);
     try expect(v8.x() == 3 and v8.y() == 3 and v8.z() == 3);
@@ -1783,15 +2160,33 @@ test "fVec" {
     try expect(v11qot.dist3d(vf4_qot) < epsilonMedium(f32));
     try expect(v12qot.dist(vf4_qot) < epsilonMedium(f32));
 
-    try expect(v10sum.nearlyEqualAutoTolerance(fVec2.fromVec(vf4_sum)));
-    try expect(v10dif.nearlyEqualAutoTolerance(fVec2.fromVec(vf4_dif)));
-    try expect(v10prd.nearlyEqualAutoTolerance(fVec2.fromVec(vf4_prd)));
-    try expect(v10qot.nearlyEqualAutoTolerance(fVec2.fromVec(vf4_qot)));
+    var va = fVec2.new();
+    var vb = fVec2.new();
+    var vc = fVec2.new();
+    var vd = fVec2.new();
+    va.replicate(vf4_sum, false);
+    vb.replicate(vf4_dif, false);
+    vc.replicate(vf4_prd, false);
+    vd.replicate(vf4_qot, false);
 
-    try expect(v11sum.nearlyEqualAutoTolerance(fVec3.fromVec(vf4_sum)));
-    try expect(v11dif.nearlyEqualAutoTolerance(fVec3.fromVec(vf4_dif)));
-    try expect(v11prd.nearlyEqualAutoTolerance(fVec3.fromVec(vf4_prd)));
-    try expect(v11qot.nearlyEqualAutoTolerance(fVec3.fromVec(vf4_qot)));
+    try expect(v10sum.nearlyEqualAutoTolerance(va));
+    try expect(v10dif.nearlyEqualAutoTolerance(vb));
+    try expect(v10prd.nearlyEqualAutoTolerance(vc));
+    try expect(v10qot.nearlyEqualAutoTolerance(vd));
+
+    var ve = fVec3.new();
+    var vf = fVec3.new();
+    var vg = fVec3.new();
+    var vh = fVec3.new();
+    ve.replicate(vf4_sum, false);
+    vf.replicate(vf4_dif, false);
+    vg.replicate(vf4_prd, false);
+    vh.replicate(vf4_qot, false);
+
+    try expect(v11sum.nearlyEqualAutoTolerance(ve));
+    try expect(v11dif.nearlyEqualAutoTolerance(vf));
+    try expect(v11prd.nearlyEqualAutoTolerance(vg));
+    try expect(v11qot.nearlyEqualAutoTolerance(vh));
 
     try expect(v12sum.nearlyEqualAutoTolerance(vf4_sum));
     try expect(v12dif.nearlyEqualAutoTolerance(vf4_dif));
@@ -2025,6 +2420,10 @@ test "fVec" {
     try expect (v21.isNorm());
     try expect (v22.isNorm());
     try expect (v23.isNorm());
+
+    const test1: @Vector(4, f32) = .{0.0, 0.0, 0.0, 0.0};
+    var test2 = fVec4.init(test1);
+    _ = test2;
 }
 
 pub fn testQuaternion() void {
