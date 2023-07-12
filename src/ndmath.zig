@@ -1122,14 +1122,38 @@ pub fn Vec2x4(comptime ScalarType: type) type {
     return struct {
         const SelfType = @This();
 
-        x: @Vector(4, ScalarType),
-        y: @Vector(4, ScalarType),
+        x: @Vector(4, ScalarType) = undefined,
+        y: @Vector(4, ScalarType) = undefined,
 
         pub inline fn new() SelfType {
             return std.mem.zeroes(SelfType);
         }
 
-        pub inline fn vec(self: *const SelfType, idx: usize) Vec(2, ScalarType) {
+        pub inline fn fromVec(vec: Vec(2, ScalarType)) SelfType {
+            return SelfType {
+                .x = @splat(4, vec.parts[0]),
+                .y = @splat(4, vec.parts[1]),
+            };
+        }
+
+        pub fn set(self: *SelfType, vec: Vec(2, ScalarType)) void {
+            self.x = @splat(4, vec.parts[0]);
+            self.y = @splat(4, vec.parts[1]);
+        }
+
+        pub fn setInverted(self: *SelfType, vec: Vec(2, ScalarType)) void {
+            const long_vec = @Vector(4, ScalarType) {vec.parts[0], vec.parts[1], vec.parts[0], vec.parts[1]};
+            self.x = long_vec;
+            self.y = long_vec;
+        }
+
+        pub fn setInverted2(self: *SelfType, vec1: Vec(2, ScalarType), vec2: Vec(2, ScalarType)) void {
+            const long_vec = @Vector(4, ScalarType) {vec1.parts[0], vec1.parts[1], vec2.parts[0], vec2.parts[1]};
+            self.x = long_vec;
+            self.y = long_vec;
+        }
+
+        pub inline fn vector(self: *const SelfType, idx: usize) Vec(2, ScalarType) {
             return Vec(2, ScalarType).init(.{self.x[idx], self.y[idx]});
         }
 
@@ -1144,15 +1168,36 @@ pub fn Vec3x4(comptime ScalarType: type) type {
     return struct {
         const SelfType = @This();
 
-        x: @Vector(4, ScalarType),
-        y: @Vector(4, ScalarType),
-        z: @Vector(4, ScalarType),
+        x: @Vector(4, ScalarType) = undefined,
+        y: @Vector(4, ScalarType) = undefined,
+        z: @Vector(4, ScalarType) = undefined,
 
         pub inline fn new() SelfType {
             return std.mem.zeroes(SelfType);
         }
 
-        pub inline fn vec(self: *const SelfType, idx: usize) Vec(3, ScalarType) {
+        pub inline fn fromVec(vec: Vec(3, ScalarType)) SelfType {
+            return SelfType {
+                .x = @splat(4, vec.parts[0]),
+                .y = @splat(4, vec.parts[1]),
+                .z = @splat(4, vec.parts[2]),
+            };
+        }
+
+        pub fn set(self: *SelfType, vec: Vec(3, ScalarType)) void {
+            self.x = @splat(4, vec.parts[0]);
+            self.y = @splat(4, vec.parts[1]);
+            self.z = @splat(4, vec.parts[2]);
+        }
+
+        pub fn setInverted(self: *SelfType, vec: Vec(3, ScalarType)) void {
+            const long_vec = @Vector(4, ScalarType) {vec.parts[0], vec.parts[1], vec.parts[2], 0.0};
+            self.x = long_vec;
+            self.y = long_vec;
+            self.z = long_vec;
+        }
+
+        pub inline fn vector(self: *const SelfType, idx: usize) Vec(3, ScalarType) {
             return Vec(3, ScalarType).init(.{self.x[idx], self.y[idx], self.z[idx]});
         }
 
@@ -1167,16 +1212,39 @@ pub fn Vec4x4(comptime ScalarType: type) type {
     return struct {
         const SelfType = @This();
 
-        x: @Vector(4, ScalarType),
-        y: @Vector(4, ScalarType),
-        z: @Vector(4, ScalarType),
-        w: @Vector(4, ScalarType),
+        x: @Vector(4, ScalarType) = undefined,
+        y: @Vector(4, ScalarType) = undefined,
+        z: @Vector(4, ScalarType) = undefined,
+        w: @Vector(4, ScalarType) = undefined,
 
         pub inline fn new() SelfType {
             return std.mem.zeroes(SelfType);
         }
 
-        pub inline fn vec(self: *const SelfType, idx: usize) Vec(4, ScalarType) {
+        pub inline fn fromVec(vec: Vec(4, ScalarType)) SelfType {
+            return SelfType {
+                .x = @splat(4, vec.parts[0]),
+                .y = @splat(4, vec.parts[1]),
+                .z = @splat(4, vec.parts[2]),
+                .w = @splat(4, vec.parts[3]),
+            };
+        }
+
+        pub fn set(self: *SelfType, vec: Vec(4, ScalarType)) void {
+            self.x = @splat(4, vec.parts[0]);
+            self.y = @splat(4, vec.parts[1]);
+            self.z = @splat(4, vec.parts[2]);
+            self.w = @splat(4, vec.parts[3]);
+        }
+
+        pub fn setInverted(self: *SelfType, vec: Vec(4, ScalarType)) void {
+            self.x = vec;
+            self.y = vec;
+            self.z = vec;
+            self.w = vec;
+        }
+
+        pub inline fn vector(self: *const SelfType, idx: usize) Vec(4, ScalarType) {
             return Vec(4, ScalarType).init(.{self.x[idx], self.y[idx], self.z[idx], self.w[idx]});
         }
 
@@ -1196,9 +1264,68 @@ pub fn Vec4x4(comptime ScalarType: type) type {
 
 // ----------------------------------------------------------------------------------------------------------- functions
 
-// pub fn multiAdd(vec: anytype, in_multi: anytype, out_multi: anytype) void {
+pub inline fn multiAdd(multi_a: anytype, multi_b: anytype) void {
+    switch (@TypeOf(multi_a).width) {
+        2 => {
+            multi_a.x += multi_b.x;
+            multi_a.y += multi_b.y;
+        },
+        3 => {
+            multi_a.x += multi_b.x;
+            multi_a.y += multi_b.y;
+            multi_a.z += multi_b.z;
+        },
+        4 => {
+            multi_a.x += multi_b.x;
+            multi_a.y += multi_b.y;
+            multi_a.z += multi_b.z;
+            multi_a.w += multi_b.w;
+        },
+        else => unreachable,
+    }
+}
 
-// }
+pub inline fn multiSub(multi_a: anytype, multi_b: anytype) void {
+    switch (@TypeOf(multi_a).width) {
+        2 => {
+            multi_a.x -= multi_b.x;
+            multi_a.y -= multi_b.y;
+        },
+        3 => {
+            multi_a.x -= multi_b.x;
+            multi_a.y -= multi_b.y;
+            multi_a.z -= multi_b.z;
+        },
+        4 => {
+            multi_a.x -= multi_b.x;
+            multi_a.y -= multi_b.y;
+            multi_a.z -= multi_b.z;
+            multi_a.w -= multi_b.w;
+        },
+        else => unreachable,
+    }
+}
+
+pub inline fn multiMul(multi_a: anytype, multi_b: anytype) void {
+    switch (@TypeOf(multi_a).width) {
+        2 => {
+            multi_a.x *= multi_b.x;
+            multi_a.y *= multi_b.y;
+        },
+        3 => {
+            multi_a.x *= multi_b.x;
+            multi_a.y *= multi_b.y;
+            multi_a.z *= multi_b.z;
+        },
+        4 => {
+            multi_a.x *= multi_b.x;
+            multi_a.y *= multi_b.y;
+            multi_a.z *= multi_b.z;
+            multi_a.w *= multi_b.w;
+        },
+        else => unreachable,
+    }
+}
 
 pub fn multiDot(vec: anytype, multi_vec: anytype, result: *Vec(4, @TypeOf(vec).scalar_type)) void {
     const scalar_type = @TypeOf(vec).scalar_type;
