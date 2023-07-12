@@ -1870,7 +1870,7 @@ const dVec4Array = VecArray(4, f64);
 
 // ------------------------------------------------------------------------------------------------------- type function
 
-const VecArrayIndices = struct {
+const VecArrayRange = struct {
     start: usize = undefined,
     vec_start: usize = undefined,
     end: usize = undefined,
@@ -1905,20 +1905,19 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
             var in_array_idx: usize = undefined;
             vecIdxToArrayIndices(idx, &array_idx, &in_array_idx);
             var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[array_idx];
-            multi_vec.x[in_array_idx] = vec.parts[0];
-            multi_vec.y[in_array_idx] = vec.parts[1];
-            multi_vec.z[in_array_idx] = vec.parts[2];
+            multi_vec.setSingle(vec, in_array_idx);
         }
 
         pub inline fn setMany(self: *VecArrayType, vectors: []const Vec(vec_len, ScalarType), boundaries: anytype) void {
-            var indices = VecArrayIndices{};
-            boundariesToArrayIndices(boundaries, @as(usize, vectors.len), &indices);
+            var range = VecArrayRange{};
+            boundariesToRange(boundaries, @as(usize, vectors.len), &range);
+            std.debug.assert(self.dbgValidateRange(&range, vectors.len));
 
             // if we're only setting one multivec, return early
-            if (indices.start == indices.end) {
-                var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[indices.start];
-                for (indices.vec_start..indices.vec_end) |i| {
-                    const vector_offset: usize = i - indices.vec_start;
+            if (range.start == range.end) {
+                var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[range.start];
+                for (range.vec_start..range.vec_end) |i| {
+                    const vector_offset: usize = i - range.vec_start;
                     multi_vec.setSingle(vectors[vector_offset], i);
                 }
                 return;
@@ -1926,20 +1925,19 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
 
             {
                 // do first
-                var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[indices.start];
-                print("\nvec start: {}\n", .{indices.vec_start});
-                for (indices.vec_start..4) |i| {
-                    const vector_offset: usize = i - indices.vec_start;
+                var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[range.start];
+                for (range.vec_start..4) |i| {
+                    const vector_offset: usize = i - range.vec_start;
                     multi_vec.setSingle(vectors[vector_offset], i);
                 }
             }
 
             // if we're only setting two multivecs, return early
-            indices.start += 1;
-            var in_idx: usize = 4 - indices.vec_start;
-            if (indices.start == indices.end) {
-                var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[indices.start];
-                for (0..indices.vec_end) |i| {
+            range.start += 1;
+            var in_idx: usize = 4 - range.vec_start;
+            if (range.start == range.end) {
+                var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[range.start];
+                for (0..range.vec_end) |i| {
                     const vector_offset: usize = i + in_idx;
                     multi_vec.setSingle(vectors[vector_offset], i);
                 }
@@ -1949,26 +1947,25 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
             // xyz0xyz0xyz0xyz0xyz0xyz0xyz0xyz0...
             // xxxxyyyyzzzzxxxxyyyyzzzz...
             for (0..4) |i| {
-                // vector 0|0|0, 4|4|4, 8|8|8, ... (in_idx + (j - indices.start) * 4)
+                // vector 0|0|0, 4|4|4, 8|8|8, ... (in_idx + (j - range.start) * 4)
                 // array 0x0|0y0|0z0, 1x0|1y0|1z0 ... (j, i)
 
                 // vector 1|1|1, 5|5|5, 9|9|9, ...
                 // array 0x1|0y1|0z1, 1x1|1y1|1z1 ...
-                for (indices.start..indices.end) |j| {
+                for (range.start..range.end) |j| {
                     var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[j];
-                    const vector_offset: usize = (j - indices.start) * 4 + in_idx;
+                    const vector_offset: usize = (j - range.start) * 4 + in_idx;
                     multi_vec.setSingle(vectors[vector_offset], i);
                 }
                 in_idx += 1;
             }
 
-            if (indices.vec_end != 4) {
+            if (range.vec_end != 4) {
                 // do last
-                in_idx = in_idx + (indices.end - indices.start) * 4 + 1;
-                print("\n in idx: {}, start: {}, end: {}, vec end: {}\n", .{in_idx, indices.start, indices.end, indices.vec_end});
-                var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[indices.end];
-                for (0..indices.vec_end) |i| {
-                    const vector_offset: usize = i + in_idx; // this is not right
+                in_idx = range.end * 4;
+                var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[range.end];
+                for (0..range.vec_end) |i| {
+                    const vector_offset: usize = i + in_idx; 
                     multi_vec.setSingle(vectors[vector_offset], i);
                 }
             }
@@ -1978,15 +1975,27 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
             return (vec_ct / @as(usize, 4)) + if (vec_ct % @as(usize, 4) > @as(usize, 0)) @as(usize, 1) else @as(usize, 0);
         }
 
-        inline fn vecIdxToArrayIndices(vec_idx: usize, array_idx: *usize, in_array_idx: *usize, is_end: bool) void {
-            array_idx.* = if (vec_idx == 0) 0 else (vec_idx - 1) / 4;
-            in_array_idx.* = if (is_end) 3 - vec_idx % 4 + 1 else vec_idx % 4;
+        inline fn vecIdxToArrayIndices(vec_idx: usize, array_idx: *usize, in_array_idx: *usize) void {
+            if (vec_idx == 0) {
+                array_idx.* = 0;
+                in_array_idx.* = 0;
+            }
+            else {
+                const idx_div_4 = @divTrunc(vec_idx, 4);
+                const idx_is_multiple_of_4 = @intCast(u32, @boolToInt(vec_idx % 4 == 0));
+                array_idx.* = idx_div_4 - idx_is_multiple_of_4;
+                in_array_idx.* = vec_idx - array_idx.* * 4;
+            }
         }
 
-        fn boundariesToArrayIndices(
+        inline fn arrayIndicesToVecIdx(array_idx: usize, in_array_idx: usize, vec_idx: *usize) void {
+            vec_idx.* = array_idx * 4 + in_array_idx;
+        }
+
+        fn boundariesToRange(
             boundaries: anytype, 
             vector_ct: usize,
-            indices: *VecArrayIndices
+            indices: *VecArrayRange
         ) void {
             var vec_start_idx: usize = undefined;
             var vec_end_idx: usize = undefined;
@@ -2005,8 +2014,16 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
                 },
                 else => unreachable,
             }
-            vecIdxToArrayIndices(vec_start_idx, &indices.start, &indices.vec_start, false);
-            vecIdxToArrayIndices(vec_end_idx, &indices.end, &indices.vec_end, true);
+            vecIdxToArrayIndices(vec_start_idx, &indices.start, &indices.vec_start);
+            vecIdxToArrayIndices(vec_end_idx, &indices.end, &indices.vec_end);
+        }
+
+        fn dbgValidateRange(self: *const VecArrayType, range: *const VecArrayRange, in_array_len: usize) bool {
+            var start_idx: usize = undefined;
+            var end_idx: usize = undefined;
+            arrayIndicesToVecIdx(range.start, range.vec_start, &start_idx);
+            arrayIndicesToVecIdx(range.end, range.vec_end, &end_idx);
+            return end_idx > start_idx and end_idx <= self.vector_ct and end_idx <= in_array_len;
         }
     };
 }
@@ -2679,7 +2696,8 @@ const epsilonAuto = flt.epsilonAuto;
 test "SquareMatrix" {
     var q1 = fQuat.init(.{1.0, 2.0, 3.0, 4.0});
     var m1 = fMat4x4.fromQuaternion(q1);
-    print("\n{any}\n", .{m1});
+    _ = m1;
+    // print("\n{any}\n", .{m1});
 }
 
 test "fVec" {
@@ -3065,23 +3083,32 @@ test "Multi Vec" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var arr1 = try fVec3Array.new(8, &allocator);
 
     var vectors: [8]fVec3 = undefined;
     for (0..8) |i| {
         vectors[i].set(.{1.0, 2.0, 3.0});
     }
+    var arr1 = try fVec3Array.new(8, &allocator);
     arr1.zero();
     arr1.setMany(&vectors, .{});
-    print("\nvec array:\n{any}\n", .{arr1});
+    // print("\nvec array:\n{any}\n", .{arr1});
+
+    var vectors2: [9]fVec4 = undefined;
+    for (0..9) |i| {
+        vectors2[i].set(.{1.0, 2.0, 3.0, 4.0});
+    }
+    var arr2 = try fVec4Array.new(10, &allocator);
+    arr2.zero();
+    arr2.setMany(&vectors2, .{});
+    // print("\nvec array 2:\n{any}\n", .{arr2});
 }
 
 pub fn testQuaternion() void {
     var q1 = fQuat.init(.{0.0, 1.0, 2.0, 3.0});
     var q2 = fQuat.init(.{4.0, 5.0, 6.0, 7.0});
-    print("\nq1\n{any}\nq2\n{any}\n", .{q1, q2});
+    // print("\nq1\n{any}\nq2\n{any}\n", .{q1, q2});
     q1.mul(q2);
-    print("\nq1\n{any}\nq2\n{any}\n", .{q1, q2});
+    // print("\nq1\n{any}\nq2\n{any}\n", .{q1, q2});
 }
 
 test "testQuaternion" {
@@ -3089,8 +3116,6 @@ test "testQuaternion" {
     var q2 = fQuat.init(.{4.0, 5.0, 6.0, 7.0});
     q1.mul(q2);
 
-    var f1: f32 = 1.4142136;
-    print("\nsqrt(2)^2 = {d}\n", .{f1 * f1});
 }
 
 // test "epsilon auto performance" {
@@ -3190,8 +3215,6 @@ pub fn quatMulPerformance() void {
             output[i] = quats[i].mulc(quats[i + 1]);
         }
     }
-
-    print("{any}\n", .{output[0]});
 
     benchmark.printAllScopeTimers();
 }
