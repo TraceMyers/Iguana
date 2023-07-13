@@ -1937,7 +1937,9 @@ pub fn VAScalarResult(comptime vec_len: comptime_int, comptime ScalarType: type)
             self.range.vec_end = 4;
             const alloc_ct: usize = (self.range.end - self.range.start + 1) * 4;
             if (self.items) |items| {
-                self.items = try allocator.realloc(items, alloc_ct);
+                if (alloc_ct != self.items.?.len) {
+                    self.items = try allocator.realloc(items, alloc_ct);
+                }
             }
             else {
                 self.items = try allocator.alloc(ScalarType, alloc_ct);
@@ -1958,7 +1960,9 @@ pub fn VAScalarResult(comptime vec_len: comptime_int, comptime ScalarType: type)
             self.range.vec_end = 4;
             const alloc_ct: usize = (self.range.end - self.range.start + 1) * 4;
             if (self.items) |items| {
-                items.* = try allocator.realloc(items, alloc_ct);
+                if (alloc_ct != self.items.?.len) {
+                    self.items = try allocator.realloc(items, alloc_ct);
+                }
             }
             else {
                 self.items = try allocator.alloc(ScalarType, alloc_ct);
@@ -2001,6 +2005,16 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
                 self.items = try allocator.realloc(self.items, array_ct);
             }
             self.vector_ct = vec_ct; 
+        }
+
+        pub inline fn shrink(self: *VecArrayType, allocator: *const std.mem.Allocator) void {
+            if (self.items.len > 0) {
+                const multivec_ct = vecCtToMultiVecCt(self.vector_ct);
+                if (multivec_ct < self.items.len) {
+                    self.items = try allocator.realloc(self.items, multivec_ct);
+                }
+            }
+            self.vector_ct = self.items.len * 4;
         }
 
         pub inline fn zero(self: *VecArrayType) void {
