@@ -1964,6 +1964,14 @@ pub fn VAScalarResult(comptime vec_len: comptime_int, comptime ScalarType: type)
                 self.items = try allocator.alloc(ScalarType, alloc_ct);
             }
         }
+
+        pub inline fn item(self: *const ResultType, idx: usize) ScalarType {
+            return self.items.?[idx + self.start];
+        }
+
+        pub inline fn length(self: *const ResultType) usize {
+            return self.end - self.start;
+        }
         
     };
 }
@@ -3271,8 +3279,8 @@ test "Multi Vec" {
     arr2.dot(vectors3[0], &r2);
 
     print("\ndot result:\n", .{});
-    for (r2.start..r2.end) |i| {
-        print("{d}\n", .{r2.items.?[i]});
+    for (0..r2.length()) |i| {
+        print("{d}\n", .{r2.item(i)});
     }
 
     print("\nout of range dot result:\n", .{});
@@ -3373,12 +3381,14 @@ pub fn quatMulPerformance() void {
         }
         else {
             quats[i].parts[1] *= -10000.0;
-        }if (rand.random().boolean()) {
+        }
+        if (rand.random().boolean()) {
             quats[i].parts[2] *= 10000.0;
         }
         else {
             quats[i].parts[2] *= -10000.0;
-        }if (rand.random().boolean()) {
+        }
+        if (rand.random().boolean()) {
             quats[i].parts[3] *= 10000.0;
         }
         else {
