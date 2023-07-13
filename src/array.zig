@@ -121,7 +121,7 @@ pub fn LocalArray(comptime ItemType: type, comptime array_size: usize) type {
         }
 
         // for types comparable with ==. remove all items with equal value (order is not retained).
-        pub fn removeAll(self: *Self, item: ItemType) usize {
+        pub fn removeAny(self: *Self, item: ItemType) usize {
             var new_ct = self.ct;
             var idx: usize = 0;
 
@@ -140,7 +140,7 @@ pub fn LocalArray(comptime ItemType: type, comptime array_size: usize) type {
         }
 
         // for types comparable with ==. remove all items with equal value and retain order.
-        pub fn removeAllOrdered(self: *Self, item: ItemType) usize {
+        pub fn removeAnyOrdered(self: *Self, item: ItemType) usize {
             var to_idx: usize = 0;
             var from_idx: usize = 0;
 
@@ -256,7 +256,7 @@ pub fn LocalArray(comptime ItemType: type, comptime array_size: usize) type {
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
         // for structs with an id member function. remove one all structs with a matching id (order is not retained).
-        pub fn idRemoveAll(self: *Self, find_id: u32) usize {
+        pub fn idRemoveAny(self: *Self, find_id: u32) usize {
             var new_ct = self.ct;
             var idx: usize = 0;
 
@@ -275,7 +275,7 @@ pub fn LocalArray(comptime ItemType: type, comptime array_size: usize) type {
         }
 
         // for structs with an id member function. remove all structs with a matching id whie retaining order.
-        pub fn idRemoveAllOrdered(self: *Self, find_id: u32) usize {
+        pub fn idRemoveAnyOrdered(self: *Self, find_id: u32) usize {
             var to_idx: usize = 0;
             var from_idx: usize = 0;
 
@@ -370,7 +370,7 @@ pub fn LocalArray(comptime ItemType: type, comptime array_size: usize) type {
 
         // remove all structs with equal data (order is not retained).
         // returns true if at least one struct was removed.
-        pub fn sRemoveAll(self: *Self, item: *const ItemType) usize {
+        pub fn sRemoveAny(self: *Self, item: *const ItemType) usize {
             var new_ct = self.ct;
             var idx: usize = 0;
 
@@ -393,7 +393,7 @@ pub fn LocalArray(comptime ItemType: type, comptime array_size: usize) type {
 
         // remove all structs with equal data while retaining order.
         // returns true if at least one struct was removed.
-        pub fn sRemoveAllOrdered(self: *Self, item: *const ItemType) usize {
+        pub fn sRemoveAnyOrdered(self: *Self, item: *const ItemType) usize {
             var to_idx: usize = 0;
             var from_idx: usize = 0;
 
@@ -557,7 +557,7 @@ test "remove all by id" {
     array.push(TestStruct{ .someval = 4 });
     array.push(TestStruct{ .someval = 4 }); // ..28
 
-    var removed_item_ct = array.idRemoveAllOrdered(4);
+    var removed_item_ct = array.idRemoveAnyOrdered(4);
 
     try expect(removed_item_ct == 8);
     try expect(array.count() == 7 + 6 + 5 + 3);
@@ -615,7 +615,7 @@ test "remove all by struct match" {
     array.push(TestStruct{ .someval = 4 }); // ..28
     // 29 values
 
-    var removed_item_ct = array.sRemoveAllOrdered(&array.items[18]);
+    var removed_item_ct = array.sRemoveAnyOrdered(&array.items[18]);
     // 21 values
 
     try expect(removed_item_ct == 8);
@@ -637,7 +637,7 @@ test "remove all by struct match" {
     array.push(TestStruct{ .someval = 3 });
     // 22 values
 
-    removed_item_ct = array.sRemoveAll(&array.items[13]);
+    removed_item_ct = array.sRemoveAny(&array.items[13]);
     // 16 values
 
     try expect(removed_item_ct == 6);
@@ -648,7 +648,7 @@ test "remove all by struct match" {
     }
 
     while (array.count() > 0) {
-        _ = array.sRemoveAll(&array.items[0]);
+        _ = array.sRemoveAny(&array.items[0]);
     }
 }
 
