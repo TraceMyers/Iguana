@@ -2067,7 +2067,7 @@ pub fn VAResult(comptime vec_len: comptime_int, comptime ScalarType: type, compt
 
 // in other words, VecArray is valuable when...
 // (m) >= 4n(a) + 3(c)
-// ... where m = math operations, a = result allocations, and c = conversions
+// ... where m = math operations, a = allocations, and c = conversions
 
 // - in general, it's a good idea to reuse results structs (and their allocations) for multiple operations and/or store
 //   them long-term when possible, where/when it doesn't disrupt cache performance.
