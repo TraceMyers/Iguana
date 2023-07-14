@@ -2061,12 +2061,12 @@ pub fn VAResult(comptime vec_len: comptime_int, comptime ScalarType: type, compt
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // ------------------------------------------------------------------------------------------------------ RULES OF THUMB
-// given "math operations" means things like dot() and dist():
-// 1. need to be doing >=512x as many math operations as allocations for results
-// 2. need to be doing >=3x as many math operations as conversions between a single vector and its VecArray representation
+// given "math operations" means individual vector operations like dot() and dist(), and n is the number of vectors:
+// 1. need to be doing >=4n times as many math operations as allocations for results
+// 2. need to be doing >=3 times as many math operations as conversions between a single vector and its VecArray representation
 
 // in other words, VecArray is valuable when...
-// m >= 512a + 3c
+// m >= 4n(a) + 3(c)
 // ... where m = math operations, a = result allocations, and c = conversions
 
 // in general, it's a good idea to reuse results structs (and their allocations) for multiple operations and/or store
@@ -2076,8 +2076,8 @@ pub fn VAResult(comptime vec_len: comptime_int, comptime ScalarType: type, compt
 // - VecArrays should likely be stored long-term most of the time, since they require allocations themselves.
 // - rules of thumb are not meant to stand in for performance measurements. they are guidance for design choices.
 // - rules of thumb may change as further performance improvements are introduced.
-// - rules of thumb are based on measurements gotten from a test using 128 vectors on my machine.  the rate of
-//   increasing advantage to SIMD depends on your specs.
+// - rules of thumb are based on measurements gotten from a test using 128 vectors in a tight loop on my machine.  the
+//   rate of increasing advantage to SIMD depends on host specs and the program's performance characteristics.
 
 // TODO: continue work om mem6 so this can move away from using zig allocator
 
