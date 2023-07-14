@@ -2060,6 +2060,26 @@ pub fn VAResult(comptime vec_len: comptime_int, comptime ScalarType: type, compt
 // ---------------------------------------------------------------------- VecArray (Array of Structs of Arrays for SIMD)
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// ------------------------------------------------------------------------------------------------------ RULES OF THUMB
+// given "math operations" means things like dot() and dist():
+// 1. need to be doing >=4x as many math operations as allocations for results
+// 2. need to be doing >=3x as many math operations as conversions between SIMD and simple vec types
+
+// in other words, VecArray is valuable when...
+// m >= 4a + 3c
+// ... where m = math operations, a = result allocations, and c = conversions
+
+// in general, it's a good idea to reuse results structs (and their allocations) for multiple operations and/or store
+// them long-term when possible, where/when it doesn't disrupt cache performance.
+
+// --------------------------------------------------------------------------------------------------------------- NOTES
+// - VecArrays should likely be stored long-term most of the time, since they require allocations themselves.
+// - rules of thumb are not meant to stand in for performance measurements. they are guidance for design choices.
+// - rules of thumb may change as further performance improvements are introduced.
+// - rules of thumb are based on measurements gotten from a test using 128 vectors on my machine. at 1024 vectors, it's
+//   more like m >= 3a + 2c. the rate of increasing advantage to SIMD depends on your specs as well as the number of
+//   vectors. 
+
 // TODO: continue work om mem6 so this can move away from using zig allocator
 
 // ------------------------------------------------------------------------------------------------- convenience aliases
@@ -2135,8 +2155,87 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
             return self.items.len * 4;
         }
 
-// ------------------------------------------------------------------------------------------------------ set/add/remove
+// -------------------------------------------------------------------------------------------------- get/set/add/remove
 
+        pub fn getRange(self: *VecArrayType, vectors: []Vec(vec_len, ScalarType), boundaries: anytype) void {
+            var range = VARange{};
+            boundariesToRange(boundaries, @as(usize, vectors.len), &range);
+            std.debug.assert(self.dbgValidateRange(&range));
+
+            if (range.start == range.end) {
+                var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[range.start];
+                for (range.vec_start..range.vec_end) |i| {
+                    const vector_offset: usize = i - range.vec_start;
+                    vectors[vector_offset] = multi_vec.vector(i);
+                }
+            }
+            else {
+                var vec_idx: usize = 0;
+                for (range.start..range.end + 1) |i| {
+                    var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[i];
+                    if (i == range.start) {
+                        for (range.vec_start..4) |j| {
+                            vectors[vec_idx] = multi_vec.vector(j);
+                            vec_idx += 1;
+                        }
+                    }
+                    else if (i == range.end) {
+                        for (0..range.vec_end) |j| {
+                            vectors[vec_idx] = multi_vec.vector(j);
+                            vec_idx += 1;
+                        }
+                    }
+                    else for (0..4) |j| {
+                        vectors[vec_idx] = multi_vec.vector(j);
+                        vec_idx += 1;
+                    }
+                }
+            }
+        }
+
+        pub fn setRange(self: *VecArrayType, vectors: []const Vec(vec_len, ScalarType), boundaries: anytype) void {
+            var range = VARange{};
+            boundariesToRange(boundaries, @as(usize, vectors.len), &range);
+            std.debug.assert(self.dbgValidateRange(&range));
+
+            if (range.start == range.end) {
+                var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[range.start];
+                for (range.vec_start..range.vec_end) |i| {
+                    const vector_offset: usize = i - range.vec_start;
+                    multi_vec.setSingle(vectors[vector_offset], i);
+                }
+            }
+            else {
+                var vec_idx: usize = 0;
+                for (range.start..range.end + 1) |i| {
+                    var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[i];
+                    if (i == range.start) {
+                        for (range.vec_start..4) |j| {
+                            multi_vec.setSingle(vectors[vec_idx], j);
+                            vec_idx += 1;
+                        }
+                    }
+                    else if (i == range.end) {
+                        for (0..range.vec_end) |j| {
+                            multi_vec.setSingle(vectors[vec_idx], j);
+                            vec_idx += 1;
+                        }
+                    }
+                    else for (0..4) |j| {
+                        multi_vec.setSingle(vectors[vec_idx], j);
+                        vec_idx += 1;
+                    }
+                }
+            }
+        }
+
+        pub inline fn getSingle(self: *const VecArrayType, idx: usize) Vec(vec_len, ScalarType) {
+            var array_idx: usize = undefined;
+            var in_array_idx: usize = undefined;
+            vecIdxToArrayIndices(idx, &array_idx, &in_array_idx);
+            return self.items[array_idx].vector(in_array_idx);
+        }
+       
         pub inline fn setSingle(self: *VecArrayType, vec: Vec(vec_len, ScalarType), idx: usize) void {
             var array_idx: usize = undefined;
             var in_array_idx: usize = undefined;
@@ -2145,74 +2244,19 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
             multi_vec.setSingle(vec, in_array_idx);
         }
 
-        pub fn setRange(self: *VecArrayType, vectors: []const Vec(vec_len, ScalarType), boundaries: anytype) void {
-            var range = VARange{};
-            boundariesToRange(boundaries, @as(usize, vectors.len), &range);
-            std.debug.assert(self.dbgValidateRange(&range, vectors.len));
-
-            // if we're only setting one multivec, return early
-            if (range.start == range.end) {
-                var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[range.start];
-                for (range.vec_start..range.vec_end) |i| {
-                    const vector_offset: usize = i - range.vec_start;
-                    multi_vec.setSingle(vectors[vector_offset], i);
-                }
-                return;
-            }
-
-            {
-                // do first
-                var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[range.start];
-                for (range.vec_start..4) |i| {
-                    const vector_offset: usize = i - range.vec_start;
-                    multi_vec.setSingle(vectors[vector_offset], i);
-                }
-            }
-
-            // if we're only setting two multivecs, return early
-            range.start += 1;
-            var in_idx: usize = 4 - range.vec_start;
-            if (range.start == range.end) {
-                var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[range.start];
-                for (0..range.vec_end) |i| {
-                    const vector_offset: usize = i + in_idx;
-                    multi_vec.setSingle(vectors[vector_offset], i);
-                }
-                return;
-            }
-
-            for (0..4) |i| {
-                for (range.start..range.end) |j| {
-                    var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[j];
-                    const vector_offset: usize = (j - range.start) * 4 + in_idx;
-                    multi_vec.setSingle(vectors[vector_offset], i);
-                }
-                in_idx += 1;
-            }
-
-            if (range.vec_end != 4) {
-                // do last
-                in_idx = range.end * 4;
-                var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[range.end];
-                for (0..range.vec_end) |i| {
-                    const vector_offset: usize = i + in_idx; 
-                    multi_vec.setSingle(vectors[vector_offset], i);
-                }
-            }
-        }
-
-        pub fn removeSingle(self: *VecArrayType, vec_idx: usize) void {
+        pub fn removeSingle(self: *VecArrayType, vec_idx: usize) usize {
             std.debug.assert(vec_idx < self.vector_ct);
+            self.vector_ct -= 1;
             var rm_array_idx: usize = undefined;
             var rm_in_array_idx: usize = undefined;
             vecIdxToArrayIndices(vec_idx, &rm_array_idx, &rm_in_array_idx);
             var cb_array_idx: usize = undefined;
             var cb_in_array_idx: usize = undefined;
-            vecIdxToArrayIndices(self.vector_ct - 1, &cb_array_idx, &cb_in_array_idx);
+            vecIdxToArrayIndices(self.vector_ct, &cb_array_idx, &cb_in_array_idx);
             var rm_multi_vec = &self.items[rm_array_idx];
             var last_multi_vec = &self.items[cb_array_idx];
             rm_multi_vec.setSingleFromMulti(&last_multi_vec, rm_in_array_idx, cb_in_array_idx);
-            self.vector_ct -= 1;
+            return self.vector_ct;
         }
 
         pub inline fn addSingle(self: *VecArrayType, vec: Vec(vec_len, ScalarType)) void {
@@ -2425,6 +2469,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
                 2 => {
                     vec_start_idx = @as(usize, boundaries[0]);
                     vec_end_idx = @as(usize, boundaries[1]);
+                    std.debug.assert(vec_end_idx - vec_start_idx <= vector_ct);
                 },
                 else => unreachable,
             }
@@ -2432,12 +2477,12 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
             vecIdxToArrayIndices(vec_end_idx, &indices.end, &indices.vec_end);
         }
 
-        fn dbgValidateRange(self: *const VecArrayType, range: *const VARange, in_array_len: usize) bool {
+        fn dbgValidateRange(self: *const VecArrayType, range: *const VARange) bool {
             var start_idx: usize = undefined;
             var end_idx: usize = undefined;
             arrayIndicesToVecIdx(range.start, range.vec_start, &start_idx);
             arrayIndicesToVecIdx(range.end, range.vec_end, &end_idx);
-            return end_idx > start_idx and end_idx <= self.vector_ct and end_idx <= in_array_len;
+            return end_idx > start_idx and end_idx <= self.vector_ct;
         }
     };
 }
@@ -3548,6 +3593,53 @@ test "Multi Vec" {
         print("{d}\n", .{r2.items.?[i]});
     }
 
+    const perf_test_ct: usize = 128;
+
+    var arr3 = try fVec3Array.new(perf_test_ct, &allocator);
+    arr3.zero();
+    var vectors4: [perf_test_ct]fVec3 = undefined;
+    {
+        for (0..2048) |i| {
+            var t = ScopeTimer.start("getRange()", getScopeTimerID());
+            defer t.stop();
+            _ = i;
+            arr3.getRange(&vectors4, .{});
+        }
+    }
+    print("{any}\n", .{vectors4[0]});
+
+    var vtest1 = vectors4[0];
+    var vtestresult1: [perf_test_ct]f32 = undefined;
+    {
+        for (0..perf_test_ct) |i| {
+            vtestresult1[i] = 1.0;
+        }
+    }
+    print("{d}\n", .{vtestresult1[0]});
+    {
+        for (0..2048) |i| {
+            _ = i;
+            var t = ScopeTimer.start("dot()", getScopeTimerID());
+            defer t.stop();
+            for (0..perf_test_ct) |j| {
+                vtestresult1[j] = vtest1.dot(vectors4[j]);
+            }
+        }
+    }
+    print("{d}\n", .{vtestresult1[0]});
+    {
+        var result = fVAScalarResult3.new();
+        for (0..2048) |i| {
+            _ = i;
+            var t = ScopeTimer.start("multidot()", getScopeTimerID());
+            defer t.stop();
+            try result.init(&arr3, &allocator);
+            arr3.dot(vtest1, &result);
+        }
+    }
+    print("{d}\n", .{vtestresult1[0]});
+
+    benchmark.printAllScopeTimers();
 }
 
 pub fn testQuaternion() void {
@@ -3619,7 +3711,7 @@ pub fn crossPerformance() void {
         }
     }
 
-    benchmark.printAllScopeTimers();
+    // benchmark.printAllScopeTimers();
 }
 
 pub fn quatMulPerformance() void {
@@ -3665,7 +3757,7 @@ pub fn quatMulPerformance() void {
         }
     }
 
-    benchmark.printAllScopeTimers();
+    // benchmark.printAllScopeTimers();
 }
 
 // test "vector math performance" {
