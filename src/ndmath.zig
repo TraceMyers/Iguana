@@ -2062,11 +2062,11 @@ pub fn VAResult(comptime vec_len: comptime_int, comptime ScalarType: type, compt
 
 // ------------------------------------------------------------------------------------------------------ RULES OF THUMB
 // given "math operations" means things like dot() and dist():
-// 1. need to be doing >=4x as many math operations as allocations for results
-// 2. need to be doing >=3x as many math operations as conversions between SIMD and simple vec types
+// 1. need to be doing >=512x as many math operations as allocations for results
+// 2. need to be doing >=3x as many math operations as conversions between a single vector and its VecArray representation
 
 // in other words, VecArray is valuable when...
-// m >= 4a + 3c
+// m >= 512a + 3c
 // ... where m = math operations, a = result allocations, and c = conversions
 
 // in general, it's a good idea to reuse results structs (and their allocations) for multiple operations and/or store
@@ -2076,9 +2076,8 @@ pub fn VAResult(comptime vec_len: comptime_int, comptime ScalarType: type, compt
 // - VecArrays should likely be stored long-term most of the time, since they require allocations themselves.
 // - rules of thumb are not meant to stand in for performance measurements. they are guidance for design choices.
 // - rules of thumb may change as further performance improvements are introduced.
-// - rules of thumb are based on measurements gotten from a test using 128 vectors on my machine. at 1024 vectors, it's
-//   more like m >= 3a + 2c. the rate of increasing advantage to SIMD depends on your specs as well as the number of
-//   vectors. 
+// - rules of thumb are based on measurements gotten from a test using 128 vectors on my machine.  the rate of
+//   increasing advantage to SIMD depends on your specs.
 
 // TODO: continue work om mem6 so this can move away from using zig allocator
 
