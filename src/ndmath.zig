@@ -517,7 +517,11 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
                 return add_vec;
             }
             else {
-                return VecType{ .parts = .{self.parts[0] + other.parts[0], self.parts[1] + other.parts[1], self.parts[2] + other.parts[2]} };
+                return VecType{ .parts = .{
+                    self.parts[0] + other.parts[0], 
+                    self.parts[1] + other.parts[1], 
+                    self.parts[2] + other.parts[2]
+                }};
             }
         }
 
@@ -536,7 +540,11 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
                 return sub_vec;
             }
             else {
-                return VecType{ .parts = .{self.parts[0] - other.parts[0], self.parts[1] - other.parts[1], self.parts[2] - other.parts[2]} };
+                return VecType{ .parts = .{
+                    self.parts[0] - other.parts[0], 
+                    self.parts[1] - other.parts[1], 
+                    self.parts[2] - other.parts[2]}
+                };
             }
         }
 
@@ -555,7 +563,11 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
                 return mul_vec;
             }
             else {
-                return VecType{ .parts = .{self.parts[0] * other.parts[0], self.parts[1] * other.parts[1], self.parts[2] * other.parts[2]} };
+                return VecType{ .parts = .{
+                    self.parts[0] * other.parts[0], 
+                    self.parts[1] * other.parts[1], 
+                    self.parts[2] * other.parts[2]}
+                };
             }
         }
 
@@ -574,7 +586,11 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
                 return div_vec;
             }
             else {
-                return VecType{ .parts = .{self.parts[0] / other.parts[0], self.parts[1] / other.parts[1], self.parts[2] / other.parts[2]} };
+                return VecType{ .parts = .{
+                    self.parts[0] / other.parts[0], 
+                    self.parts[1] / other.parts[1], 
+                    self.parts[2] / other.parts[2]}
+                };
             }
         }
 
@@ -661,12 +677,20 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
         }
 
         pub inline fn dist3d(self: VecType, other: anytype) ScalarType {
-            const diff = @Vector(3, ScalarType){self.parts[0] - other.parts[0], self.parts[1] - other.parts[1], self.parts[2] - other.parts[2]};
+            const diff = @Vector(3, ScalarType){
+                self.parts[0] - other.parts[0], 
+                self.parts[1] - other.parts[1], 
+                self.parts[2] - other.parts[2]
+            };
             return @sqrt(@reduce(.Add, diff * diff));
         }
 
         pub inline fn distSq3d(self: VecType, other: anytype) ScalarType {
-            const diff = @Vector(3, ScalarType){self.parts[0] - other.parts[0], self.parts[1] - other.parts[1], self.parts[2] - other.parts[2]};
+            const diff = @Vector(3, ScalarType){
+                self.parts[0] - other.parts[0], 
+                self.parts[1] - other.parts[1], 
+                self.parts[2] - other.parts[2]
+            };
             return @reduce(.Add, diff * diff);
         }
 
@@ -1098,34 +1122,34 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// --------------------------------------------------------------------------------------------------- VecNx4 (for SIMD)
+// --------------------------------------------------------------------------------------------------- VecNxN (for SIMD)
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // ------------------------------------------------------------------------------------------------- convenience aliases
 
-pub const hVec2x4 = Vec2xN(4, f16);
-pub const hVec3x4 = Vec3xN(4, f16);
-pub const hVec4x4 = Vec4xN(4, f16);
-
-pub const fVec2x4 = Vec2xN(4, f32);
-pub const fVec3x4 = Vec3xN(4, f32);
-pub const fVec4x4 = Vec4xN(4, f32);
-
-pub const dVec2x4 = Vec2xN(4, f64);
-pub const dVec3x4 = Vec3xN(4, f64);
-pub const dVec4x4 = Vec4xN(4, f64);
+// ------ 128 bit ------
 
 pub const hVec2x8 = Vec2xN(8, f16);
 pub const hVec3x8 = Vec3xN(8, f16);
 pub const hVec4x8 = Vec4xN(8, f16);
 
+pub const fVec2x4 = Vec2xN(4, f32);
+pub const fVec3x4 = Vec3xN(4, f32);
+pub const fVec4x4 = Vec4xN(4, f32);
+
+// ------ 256 bit ------
+
+pub const hVec2x16 = Vec2xN(16, f16);
+pub const hVec3x16 = Vec3xN(16, f16);
+pub const hVec4x16 = Vec4xN(16, f16);
+
 pub const fVec2x8 = Vec2xN(8, f32);
 pub const fVec3x8 = Vec3xN(8, f32);
 pub const fVec4x8 = Vec4xN(8, f32);
 
-pub const dVec2x8 = Vec2xN(8, f64);
-pub const dVec3x8 = Vec3xN(8, f64);
-pub const dVec4x8 = Vec4xN(8, f64);
+pub const dVec2x4 = Vec2xN(4, f64);
+pub const dVec3x4 = Vec3xN(4, f64);
+pub const dVec4x4 = Vec4xN(4, f64);
 
 // ------------------------------------------------------------------------------------------------------ type functions
 
@@ -1381,7 +1405,7 @@ pub fn Vec4xN(comptime _width: comptime_int, comptime ScalarType: type) type {
 
 pub fn MultiVec(comptime vec_len: comptime_int, comptime width: comptime_int, comptime ScalarType: type) type {
     return switch(width) {
-        4, 8 => return switch(vec_len) {
+        4, 8, 16 => return switch(vec_len) {
             2 => Vec2xN(width, ScalarType),
             3 => Vec3xN(width, ScalarType),
             4 => Vec4xN(width, ScalarType),
@@ -1391,7 +1415,7 @@ pub fn MultiVec(comptime vec_len: comptime_int, comptime width: comptime_int, co
     };
 }
 
-// ----------------------------------------------------------------------------------------------------------- functions
+// ---------------------------------------------------------------------------------------------------------------- math
 
 pub inline fn multiAdd(multi_a: anytype, multi_b: @TypeOf(multi_a), result: @TypeOf(multi_a)) void {
     result.x = multi_a.x + multi_b.x;
@@ -2044,6 +2068,84 @@ pub inline fn multiDist3d(
 // ---------------------------------------------------------------------------------------------- Vec Array Helper Types
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// ------------------------------------------------------------------------------------------------- convenience aliases
+
+// ------ 128 bit ------
+
+// --- f16
+
+pub const hVAScalarResult2x8 = VAResult(2, 8, f16, f16);
+pub const hVAScalarResult3x8 = VAResult(3, 8, f16, f16);
+pub const hVAScalarResult4x8 = VAResult(4, 8, f16, f16);
+
+pub const hVABoolResult2x8 = VAResult(2, 8, f16, bool);
+pub const hVABoolResult3x8 = VAResult(3, 8, f16, bool);
+pub const hVABoolResult4x8 = VAResult(4, 8, f16, bool);
+
+pub const hVAMultiResult2x8 = VAResult(2, 8, f16, hVec2x8);
+pub const hVAMultiResult3x8 = VAResult(3, 8, f16, hVec3x8);
+pub const hVAMultiResult4x8 = VAResult(4, 8, f16, hVec4x8);
+
+// --- f32
+
+pub const fVAScalarResult2x4 = VAResult(2, 4, f32, f32);
+pub const fVAScalarResult3x4 = VAResult(3, 4, f32, f32);
+pub const fVAScalarResult4x4 = VAResult(4, 4, f32, f32);
+
+pub const fVABoolResult2x4 = VAResult(2, 4, f32, bool);
+pub const fVABoolResult3x4 = VAResult(3, 4, f32, bool);
+pub const fVABoolResult4x4 = VAResult(4, 4, f32, bool);
+
+pub const fVAMultiResult2x4 = VAResult(2, 4, f32, fVec2x4);
+pub const fVAMultiResult3x4 = VAResult(3, 4, f32, fVec3x4);
+pub const fVAMultiResult4x4 = VAResult(4, 4, f32, fVec4x4);
+
+// ------ 256 bit ------
+
+// --- f16
+
+pub const hVAScalarResult2x16 = VAResult(2, 16, f16, f16);
+pub const hVAScalarResult3x16 = VAResult(3, 16, f16, f16);
+pub const hVAScalarResult4x16 = VAResult(4, 16, f16, f16);
+
+pub const hVABoolResult2x16 = VAResult(2, 16, f16, bool);
+pub const hVABoolResult3x16 = VAResult(3, 16, f16, bool);
+pub const hVABoolResult4x16 = VAResult(4, 16, f16, bool);
+
+pub const hVAMultiResult2x16 = VAResult(2, 16, f16, hVec2x16);
+pub const hVAMultiResult3x16 = VAResult(3, 16, f16, hVec3x16);
+pub const hVAMultiResult4x16 = VAResult(4, 16, f16, hVec4x16);
+
+// --- f32
+
+pub const fVAScalarResult2x8 = VAResult(2, 8, f32, f32);
+pub const fVAScalarResult3x8 = VAResult(3, 8, f32, f32);
+pub const fVAScalarResult4x8 = VAResult(4, 8, f32, f32);
+
+pub const fVABoolResult2x8 = VAResult(2, 8, f32, bool);
+pub const fVABoolResult3x8 = VAResult(3, 8, f32, bool);
+pub const fVABoolResult4x8 = VAResult(4, 8, f32, bool);
+
+pub const fVAMultiResult2x8 = VAResult(2, 8, f32, fVec2x8);
+pub const fVAMultiResult3x8 = VAResult(3, 8, f32, fVec3x8);
+pub const fVAMultiResult4x8 = VAResult(4, 8, f32, fVec4x8);
+
+// --- f64
+
+pub const dVAScalarResult2x4 = VAResult(2, 4, f64, f64);
+pub const dVAScalarResult3x4 = VAResult(3, 4, f64, f64);
+pub const dVAScalarResult4x4 = VAResult(4, 4, f64, f64);
+
+pub const dVABoolResult2x4 = VAResult(2, 4, f64, bool);
+pub const dVABoolResult3x4 = VAResult(3, 4, f64, bool);
+pub const dVABoolResult4x4 = VAResult(4, 4, f64, bool);
+
+pub const dVAMultiResult2x4 = VAResult(2, 4, f64, dVec2x4);
+pub const dVAMultiResult3x4 = VAResult(3, 4, f64, dVec3x4);
+pub const dVAMultiResult4x4 = VAResult(4, 4, f64, dVec4x4);
+
+// ------------------------------------------------------------------------------------------------------ type functions
+
 const VARange = struct {
     start: usize = undefined,
     vec_start: usize = undefined,
@@ -2051,63 +2153,13 @@ const VARange = struct {
     vec_end: usize = undefined
 };
 
-pub const hVAScalarResult2x4 = VAResult(2, 4, f16, f16);
-pub const hVAScalarResult3x4 = VAResult(3, 4, f16, f16);
-pub const hVAScalarResult4x4 = VAResult(4, 4, f16, f16);
-pub const fVAScalarResult2x4 = VAResult(2, 4, f32, f32);
-pub const fVAScalarResult3x4 = VAResult(3, 4, f32, f32);
-pub const fVAScalarResult4x4 = VAResult(4, 4, f32, f32);
-pub const dVAScalarResult2x4 = VAResult(2, 4, f64, f64);
-pub const dVAScalarResult3x4 = VAResult(3, 4, f64, f64);
-pub const dVAScalarResult4x4 = VAResult(4, 4, f64, f64);
-pub const hVABoolResult2x4 = VAResult(2, 4, f16, f16);
-pub const hVABoolResult3x4 = VAResult(3, 4, f16, f16);
-pub const hVABoolResult4x4 = VAResult(4, 4, f16, f16);
-pub const fVABoolResult2x4 = VAResult(2, 4, f32, f32);
-pub const fVABoolResult3x4 = VAResult(3, 4, f32, f32);
-pub const fVABoolResult4x4 = VAResult(4, 4, f32, f32);
-pub const dVABoolResult2x4 = VAResult(2, 4, f64, f64);
-pub const dVABoolResult3x4 = VAResult(3, 4, f64, f64);
-pub const dVABoolResult4x4 = VAResult(4, 4, f64, f64);
-pub const hVAMultiResult2x4 = VAResult(2, 4, f16, hVec2x4);
-pub const hVAMultiResult3x4 = VAResult(3, 4, f16, hVec3x4);
-pub const hVAMultiResult4x4 = VAResult(4, 4, f16, hVec4x4);
-pub const fVAMultiResult2x4 = VAResult(2, 4, f32, fVec2x4);
-pub const fVAMultiResult3x4 = VAResult(3, 4, f32, fVec3x4);
-pub const fVAMultiResult4x4 = VAResult(4, 4, f32, fVec4x4);
-pub const dVAMultiResult2x4 = VAResult(2, 4, f64, dVec2x4);
-pub const dVAMultiResult3x4 = VAResult(3, 4, f64, dVec3x4);
-pub const dVAMultiResult4x4 = VAResult(4, 4, f64, dVec4x4);
 
-pub const hVAScalarResult2x8 = VAResult(2, 8, f16, f16);
-pub const hVAScalarResult3x8 = VAResult(3, 8, f16, f16);
-pub const hVAScalarResult4x8 = VAResult(4, 8, f16, f16);
-pub const fVAScalarResult2x8 = VAResult(2, 8, f32, f32);
-pub const fVAScalarResult3x8 = VAResult(3, 8, f32, f32);
-pub const fVAScalarResult4x8 = VAResult(4, 8, f32, f32);
-pub const dVAScalarResult2x8 = VAResult(2, 8, f64, f64);
-pub const dVAScalarResult3x8 = VAResult(3, 8, f64, f64);
-pub const dVAScalarResult4x8 = VAResult(4, 8, f64, f64);
-pub const hVABoolResult2x8 = VAResult(2, 8, f16, f16);
-pub const hVABoolResult3x8 = VAResult(3, 8, f16, f16);
-pub const hVABoolResult4x8 = VAResult(4, 8, f16, f16);
-pub const fVABoolResult2x8 = VAResult(2, 8, f32, f32);
-pub const fVABoolResult3x8 = VAResult(3, 8, f32, f32);
-pub const fVABoolResult4x8 = VAResult(4, 8, f32, f32);
-pub const dVABoolResult2x8 = VAResult(2, 8, f64, f64);
-pub const dVABoolResult3x8 = VAResult(3, 8, f64, f64);
-pub const dVABoolResult4x8 = VAResult(4, 8, f64, f64);
-pub const hVAMultiResult2x8 = VAResult(2, 8, f16, hVec2x8);
-pub const hVAMultiResult3x8 = VAResult(3, 8, f16, hVec3x8);
-pub const hVAMultiResult4x8 = VAResult(4, 8, f16, hVec4x8);
-pub const fVAMultiResult2x8 = VAResult(2, 8, f32, fVec2x8);
-pub const fVAMultiResult3x8 = VAResult(3, 8, f32, fVec3x8);
-pub const fVAMultiResult4x8 = VAResult(4, 8, f32, fVec4x8);
-pub const dVAMultiResult2x8 = VAResult(2, 8, f64, dVec2x8);
-pub const dVAMultiResult3x8 = VAResult(3, 8, f64, dVec3x8);
-pub const dVAMultiResult4x8 = VAResult(4, 8, f64, dVec4x8);
-
-pub fn VAResult(comptime vec_len: comptime_int, comptime vec_width: comptime_int, comptime ScalarType: type, comptime ResultType: type) type {
+pub fn VAResult(
+    comptime vec_len: comptime_int, 
+    comptime vec_width: comptime_int, 
+    comptime ScalarType: type, 
+    comptime ResultType: type
+) type {
 
     return struct {
 
@@ -2123,7 +2175,11 @@ pub fn VAResult(comptime vec_len: comptime_int, comptime vec_width: comptime_int
             return SelfType{.start = 0, .end = 0, .multi_start = 0, .multi_end = 0};
         }
 
-        pub fn init(self: *SelfType, array: *VecArray(vec_len, vec_width, ScalarType), allocator: *const std.mem.Allocator) !void {
+        pub fn init(
+            self: *SelfType, 
+            array: *VecArray(vec_len, vec_width, ScalarType), 
+            allocator: *const std.mem.Allocator
+        ) !void {
             std.debug.assert(array.vector_ct > 0);
 
             self.start = 0;
@@ -2671,6 +2727,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
             arrayIndicesToVecIdx(range.end, range.vec_end, &end_idx);
             return end_idx > start_idx and end_idx <= self.vector_ct;
         }
+
     };
 }
 
@@ -3173,14 +3230,10 @@ pub fn Quaternion(comptime ScalarType: type) type {
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ------------------------------------------------------------------------------------------------------- Square Matrix
+// -------------------------------------------------------------------------------------------------------------- Matrix
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // ------------------------------------------------------------------------------------------------- convenience aliases
-
-pub fn SquareMatrix(comptime size: u32, comptime ScalarType: type) type {
-    return Matrix(size, size, ScalarType);
-}
 
 pub const hMat2x2 = SquareMatrix(2, f16);
 pub const hMat3x3 = SquareMatrix(3, f16);
@@ -3197,7 +3250,12 @@ pub const dMat3x3 = SquareMatrix(3, f64);
 pub const dMat4x4 = SquareMatrix(4, f64);
 pub const dMat5x5 = SquareMatrix(5, f64);
 
-// ------------------------------------------------------------------------------------------------------- type function
+// ------------------------------------------------------------------------------------------------------ type functions
+
+pub fn SquareMatrix(comptime size: u32, comptime ScalarType: type) type {
+    return Matrix(size, size, ScalarType);
+}
+
 
 pub fn Matrix(comptime h: u32, comptime w: u32, comptime ScalarType: type) type {
 
