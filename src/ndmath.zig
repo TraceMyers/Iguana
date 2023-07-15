@@ -1103,27 +1103,39 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
 
 // ------------------------------------------------------------------------------------------------- convenience aliases
 
-pub const hVec2x4 = Vec2x4(f16);
-pub const hVec3x4 = Vec3x4(f16);
-pub const hVec4x4 = Vec4x4(f16);
+pub const hVec2x4 = Vec2xN(4, f16);
+pub const hVec3x4 = Vec3xN(4, f16);
+pub const hVec4x4 = Vec4xN(4, f16);
 
-pub const fVec2x4 = Vec2x4(f32);
-pub const fVec3x4 = Vec3x4(f32);
-pub const fVec4x4 = Vec4x4(f32);
+pub const fVec2x4 = Vec2xN(4, f32);
+pub const fVec3x4 = Vec3xN(4, f32);
+pub const fVec4x4 = Vec4xN(4, f32);
 
-pub const dVec2x4 = Vec2x4(f64);
-pub const dVec3x4 = Vec3x4(f64);
-pub const dVec4x4 = Vec4x4(f64);
+pub const dVec2x4 = Vec2xN(4, f64);
+pub const dVec3x4 = Vec3xN(4, f64);
+pub const dVec4x4 = Vec4xN(4, f64);
+
+pub const hVec2x8 = Vec2xN(8, f16);
+pub const hVec3x8 = Vec3xN(8, f16);
+pub const hVec4x8 = Vec4xN(8, f16);
+
+pub const fVec2x8 = Vec2xN(8, f32);
+pub const fVec3x8 = Vec3xN(8, f32);
+pub const fVec4x8 = Vec4xN(8, f32);
+
+pub const dVec2x8 = Vec2xN(8, f64);
+pub const dVec3x8 = Vec3xN(8, f64);
+pub const dVec4x8 = Vec4xN(8, f64);
 
 // ------------------------------------------------------------------------------------------------------ type functions
 
-pub fn Vec2x4(comptime ScalarType: type) type {
+pub fn Vec2xN(comptime _width: comptime_int, comptime ScalarType: type) type {
 
     return struct {
         const SelfType = @This();
 
-        x: @Vector(4, ScalarType) = undefined,
-        y: @Vector(4, ScalarType) = undefined,
+        x: @Vector(_width, ScalarType) = undefined,
+        y: @Vector(_width, ScalarType) = undefined,
 
         pub inline fn new() SelfType {
             return std.mem.zeroes(SelfType);
@@ -1131,21 +1143,21 @@ pub fn Vec2x4(comptime ScalarType: type) type {
 
         pub inline fn fromVec(vec: Vec(2, ScalarType)) SelfType {
             return SelfType {
-                .x = @splat(4, vec.parts[0]),
-                .y = @splat(4, vec.parts[1]),
+                .x = @splat(_width, vec.parts[0]),
+                .y = @splat(_width, vec.parts[1]),
             };
         }
 
         pub inline fn fromScalar(scalar: ScalarType) SelfType {
             return SelfType {
-                .x = @splat(4, scalar),
-                .y = @splat(4, scalar),
+                .x = @splat(_width, scalar),
+                .y = @splat(_width, scalar),
             };
         }
 
         pub inline fn set(self: *SelfType, vec: Vec(2, ScalarType)) void {
-            self.x = @splat(4, vec.parts[0]);
-            self.y = @splat(4, vec.parts[1]);
+            self.x = @splat(_width, vec.parts[0]);
+            self.y = @splat(_width, vec.parts[1]);
         }
 
         pub inline fn setSingle(self: *SelfType, vec: Vec(2, ScalarType), idx: usize) void {
@@ -1154,13 +1166,13 @@ pub fn Vec2x4(comptime ScalarType: type) type {
         }
 
         pub inline fn setTransposed(self: *SelfType, vec: Vec(2, ScalarType)) void {
-            const long_vec = @Vector(4, ScalarType) {vec.parts[0], vec.parts[1], vec.parts[0], vec.parts[1]};
+            const long_vec = @Vector(_width, ScalarType) {vec.parts[0], vec.parts[1], vec.parts[0], vec.parts[1]};
             self.x = long_vec;
             self.y = long_vec;
         }
 
         pub fn setTransposed2(self: *SelfType, vec1: Vec(2, ScalarType), vec2: Vec(2, ScalarType)) void {
-            const long_vec = @Vector(4, ScalarType) {vec1.parts[0], vec1.parts[1], vec2.parts[0], vec2.parts[1]};
+            const long_vec = @Vector(_width, ScalarType) {vec1.parts[0], vec1.parts[1], vec2.parts[0], vec2.parts[1]};
             self.x = long_vec;
             self.y = long_vec;
         }
@@ -1185,19 +1197,21 @@ pub fn Vec2x4(comptime ScalarType: type) type {
         }
 
         pub const scalar_type = ScalarType;
-        pub const width = 2;
+        pub const height = 2;
+        pub const width = _width;
+
     };
 
 }
 
-pub fn Vec3x4(comptime ScalarType: type) type {
+pub fn Vec3xN(comptime _width: comptime_int, comptime ScalarType: type) type {
     
     return struct {
         const SelfType = @This();
 
-        x: @Vector(4, ScalarType) = undefined,
-        y: @Vector(4, ScalarType) = undefined,
-        z: @Vector(4, ScalarType) = undefined,
+        x: @Vector(_width, ScalarType) = undefined,
+        y: @Vector(_width, ScalarType) = undefined,
+        z: @Vector(_width, ScalarType) = undefined,
 
         pub inline fn new() SelfType {
             return std.mem.zeroes(SelfType);
@@ -1205,24 +1219,24 @@ pub fn Vec3x4(comptime ScalarType: type) type {
 
         pub inline fn fromVec(vec: Vec(3, ScalarType)) SelfType {
             return SelfType {
-                .x = @splat(4, vec.parts[0]),
-                .y = @splat(4, vec.parts[1]),
-                .z = @splat(4, vec.parts[2]),
+                .x = @splat(_width, vec.parts[0]),
+                .y = @splat(_width, vec.parts[1]),
+                .z = @splat(_width, vec.parts[2]),
             };
         }
 
         pub inline fn fromScalar(scalar: ScalarType) SelfType {
             return SelfType {
-                .x = @splat(4, scalar),
-                .y = @splat(4, scalar),
-                .z = @splat(4, scalar),
+                .x = @splat(_width, scalar),
+                .y = @splat(_width, scalar),
+                .z = @splat(_width, scalar),
             };
         }
 
         pub inline fn set(self: *SelfType, vec: Vec(3, ScalarType)) void {
-            self.x = @splat(4, vec.parts[0]);
-            self.y = @splat(4, vec.parts[1]);
-            self.z = @splat(4, vec.parts[2]);
+            self.x = @splat(_width, vec.parts[0]);
+            self.y = @splat(_width, vec.parts[1]);
+            self.z = @splat(_width, vec.parts[2]);
         }
 
         pub inline fn setSingle(self: *SelfType, vec: Vec(3, ScalarType), idx: usize) void {
@@ -1232,7 +1246,7 @@ pub fn Vec3x4(comptime ScalarType: type) type {
         }
 
         pub inline fn setTransposed(self: *SelfType, vec: Vec(3, ScalarType)) void {
-            const long_vec = @Vector(4, ScalarType) {vec.parts[0], vec.parts[1], vec.parts[2], 0.0};
+            const long_vec = @Vector(_width, ScalarType) {vec.parts[0], vec.parts[1], vec.parts[2], 0.0};
             self.x = long_vec;
             self.y = long_vec;
             self.z = long_vec;
@@ -1262,20 +1276,22 @@ pub fn Vec3x4(comptime ScalarType: type) type {
         }
 
         pub const scalar_type = ScalarType;
-        pub const width = 3;
+        pub const height = 3;
+        pub const width = _width;
+
     };
 
 }
 
-pub fn Vec4x4(comptime ScalarType: type) type {
+pub fn Vec4xN(comptime _width: comptime_int, comptime ScalarType: type) type {
     
     return struct {
         const SelfType = @This();
 
-        x: @Vector(4, ScalarType) = undefined,
-        y: @Vector(4, ScalarType) = undefined,
-        z: @Vector(4, ScalarType) = undefined,
-        w: @Vector(4, ScalarType) = undefined,
+        x: @Vector(_width, ScalarType) = undefined,
+        y: @Vector(_width, ScalarType) = undefined,
+        z: @Vector(_width, ScalarType) = undefined,
+        w: @Vector(_width, ScalarType) = undefined,
 
         pub inline fn new() SelfType {
             return std.mem.zeroes(SelfType);
@@ -1283,27 +1299,27 @@ pub fn Vec4x4(comptime ScalarType: type) type {
 
         pub inline fn fromVec(vec: Vec(4, ScalarType)) SelfType {
             return SelfType {
-                .x = @splat(4, vec.parts[0]),
-                .y = @splat(4, vec.parts[1]),
-                .z = @splat(4, vec.parts[2]),
-                .w = @splat(4, vec.parts[3]),
+                .x = @splat(_width, vec.parts[0]),
+                .y = @splat(_width, vec.parts[1]),
+                .z = @splat(_width, vec.parts[2]),
+                .w = @splat(_width, vec.parts[3]),
             };
         }
 
         pub inline fn fromScalar(scalar: ScalarType) SelfType {
             return SelfType {
-                .x = @splat(4, scalar),
-                .y = @splat(4, scalar),
-                .z = @splat(4, scalar),
-                .w = @splat(4, scalar),
+                .x = @splat(_width, scalar),
+                .y = @splat(_width, scalar),
+                .z = @splat(_width, scalar),
+                .w = @splat(_width, scalar),
             };
         }
 
         pub inline fn set(self: *SelfType, vec: Vec(4, ScalarType)) void {
-            self.x = @splat(4, vec.parts[0]);
-            self.y = @splat(4, vec.parts[1]);
-            self.z = @splat(4, vec.parts[2]);
-            self.w = @splat(4, vec.parts[3]);
+            self.x = @splat(_width, vec.parts[0]);
+            self.y = @splat(_width, vec.parts[1]);
+            self.z = @splat(_width, vec.parts[2]);
+            self.w = @splat(_width, vec.parts[3]);
         }
 
         pub inline fn setSingle(self: *SelfType, vec: Vec(4, ScalarType), idx: usize) void {
@@ -1356,16 +1372,21 @@ pub fn Vec4x4(comptime ScalarType: type) type {
         }
 
         pub const scalar_type = ScalarType;
-        pub const width = 4;
+        pub const height = 4;
+        pub const width = _width;
+
     };
 
 }
 
-pub fn MultiVec(comptime vec_len: comptime_int, comptime ScalarType: type) type {
-    return switch(vec_len) {
-        2 => Vec2x4(ScalarType),
-        3 => Vec3x4(ScalarType),
-        4 => Vec4x4(ScalarType),
+pub fn MultiVec(comptime vec_len: comptime_int, comptime width: comptime_int, comptime ScalarType: type) type {
+    return switch(width) {
+        4, 8 => return switch(vec_len) {
+            2 => Vec2xN(width, ScalarType),
+            3 => Vec3xN(width, ScalarType),
+            4 => Vec4xN(width, ScalarType),
+            else => unreachable,
+        },
         else => unreachable,
     };
 }
@@ -1376,7 +1397,7 @@ pub inline fn multiAdd(multi_a: anytype, multi_b: @TypeOf(multi_a), result: @Typ
     result.x = multi_a.x + multi_b.x;
     result.y = multi_a.y + multi_b.y;
 
-    switch (@TypeOf(multi_a.*).width) {
+    switch (@TypeOf(multi_a.*).height) {
         2 => {},
         3 => {
             result.z = multi_a.z + multi_b.z;
@@ -1393,7 +1414,7 @@ pub inline fn multiSub(multi_a: anytype, multi_b: @TypeOf(multi_a), result: @Typ
     result.x = multi_a.x - multi_b.x;
     result.y = multi_a.y - multi_b.y;
 
-    switch (@TypeOf(multi_a.*).width) {
+    switch (@TypeOf(multi_a.*).height) {
         2 => {},
         3 => {
             result.z = multi_a.z - multi_b.z;
@@ -1410,7 +1431,7 @@ pub inline fn multiMul(multi_a: anytype, multi_b: @TypeOf(multi_a), result: @Typ
     result.x = multi_a.x * multi_b.x;
     result.y = multi_a.y * multi_b.y;
 
-    switch (@TypeOf(multi_a.*).width) {
+    switch (@TypeOf(multi_a.*).height) {
         2 => {},
         3 => {
             result.z = multi_a.z * multi_b.z;
@@ -1423,23 +1444,24 @@ pub inline fn multiMul(multi_a: anytype, multi_b: @TypeOf(multi_a), result: @Typ
     }
 }
 
-pub fn multiDot(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[4]@TypeOf(multi_a.*).scalar_type) void {
+pub fn multiDot(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type) void {
     const scalar_type = @TypeOf(multi_a.*).scalar_type;
+    const scalar_width = @TypeOf(multi_a.*).width;
 
     const x_mul = multi_a.x * multi_b.x;
 
-    switch (@TypeOf(multi_a.*).width) {
+    switch (@TypeOf(multi_a.*).height) {
         2 => {
-            result.* = @mulAdd(@Vector(4, scalar_type), multi_a.y, multi_b.y, x_mul);
+            result.* = @mulAdd(@Vector(scalar_width, scalar_type), multi_a.y, multi_b.y, x_mul);
         },
         3 => {
-            const cur_sum = @mulAdd(@Vector(4, scalar_type), multi_a.y, multi_b.y, x_mul);
-            result.* = @mulAdd(@Vector(4, scalar_type), multi_a.z, multi_b.z, cur_sum);
+            const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), multi_a.y, multi_b.y, x_mul);
+            result.* = @mulAdd(@Vector(scalar_width, scalar_type), multi_a.z, multi_b.z, cur_sum);
         },
         4 => {
-            const cur_sum = @mulAdd(@Vector(4, scalar_type), multi_a.y, multi_b.y, x_mul);
-            const cur_sum2 = @mulAdd(@Vector(4, scalar_type), multi_a.z, multi_b.z, cur_sum);
-            result.* = @mulAdd(@Vector(4, scalar_type), multi_a.w, multi_b.w, cur_sum2);
+            const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), multi_a.y, multi_b.y, x_mul);
+            const cur_sum2 = @mulAdd(@Vector(scalar_width, scalar_type), multi_a.z, multi_b.z, cur_sum);
+            result.* = @mulAdd(@Vector(scalar_width, scalar_type), multi_a.w, multi_b.w, cur_sum2);
         },
         else => unreachable,
     }
@@ -1447,72 +1469,76 @@ pub fn multiDot(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[4]@TypeOf
 
 pub fn multiCross(multi_a: anytype, multi_b: @TypeOf(multi_a), result: @TypeOf(multi_a)) void {
     const scalar_type = @TypeOf(multi_a.*).scalar_type;
-    switch (@TypeOf(multi_a.*).width) {
+    const scalar_width = @TypeOf(multi_a.*).width;
+
+    switch (@TypeOf(multi_a.*).height) {
         3, 4 => {
             // x = a.y * b.z - a.z * b.y
             // y = a.z * b.x - a.x * b.z
             // z = a.x * b.y - a.y * b.x
             const x_neg_part = multi_a.z * multi_b.y;
-            result.x = @mulAdd(@Vector(4, scalar_type), multi_a.y, multi_b.z, -x_neg_part);
+            result.x = @mulAdd(@Vector(scalar_width, scalar_type), multi_a.y, multi_b.z, -x_neg_part);
             const y_neg_part = multi_a.x * multi_b.z;
-            result.y = @mulAdd(@Vector(4, scalar_type), multi_a.z, multi_b.x, -y_neg_part);
+            result.y = @mulAdd(@Vector(scalar_width, scalar_type), multi_a.z, multi_b.x, -y_neg_part);
             const z_neg_part = multi_a.y * multi_b.x;
-            result.z = @mulAdd(@Vector(4, scalar_type), multi_a.x, multi_b.y, -z_neg_part);
+            result.z = @mulAdd(@Vector(scalar_width, scalar_type), multi_a.x, multi_b.y, -z_neg_part);
         },
         else => unreachable,
     }
 }
 
-pub inline fn multiDistSq(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[4]@TypeOf(multi_a.*).scalar_type) void {
+pub inline fn multiDistSq(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type) void {
     const scalar_type = @TypeOf(multi_a.*).scalar_type;
+    const scalar_width = @TypeOf(multi_a.*).width;
 
     const x_sub = multi_a.x - multi_b.x;
     const x_square = x_sub * x_sub;
     const y_sub = multi_a.y - multi_b.y;
 
-    switch (@TypeOf(multi_a.*).width) {
+    switch (@TypeOf(multi_a.*).height) {
         2 => {
-            result.* = @mulAdd(@Vector(4, scalar_type), y_sub, y_sub, x_square);
+            result.* = @mulAdd(@Vector(scalar_width, scalar_type), y_sub, y_sub, x_square);
         },
         3 => {
-            const cur_sum = @mulAdd(@Vector(4, scalar_type), y_sub, y_sub, x_square);
+            const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), y_sub, y_sub, x_square);
             const z_sub = multi_a.z - multi_b.z;
-            result.* = @mulAdd(@Vector(4, scalar_type), z_sub, z_sub, cur_sum);
+            result.* = @mulAdd(@Vector(scalar_width, scalar_type), z_sub, z_sub, cur_sum);
         },
         4 => {
-            const cur_sum = @mulAdd(@Vector(4, scalar_type), y_sub, y_sub, x_square);
+            const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), y_sub, y_sub, x_square);
             const z_sub = multi_a.z - multi_b.z;
-            const cur_sum2 = @mulAdd(@Vector(4, scalar_type), z_sub, z_sub, cur_sum);
+            const cur_sum2 = @mulAdd(@Vector(scalar_width, scalar_type), z_sub, z_sub, cur_sum);
             const w_sub = multi_a.w - multi_b.w;
-            result.* = @mulAdd(@Vector(4, scalar_type), w_sub, w_sub, cur_sum2);
+            result.* = @mulAdd(@Vector(scalar_width, scalar_type), w_sub, w_sub, cur_sum2);
         },
         else => unreachable,
     }
 }
 
-pub inline fn multiDist(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[4]@TypeOf(multi_a.*).scalar_type) void {
+pub inline fn multiDist(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type) void {
     const scalar_type = @TypeOf(multi_a.*).scalar_type;
+    const scalar_width = @TypeOf(multi_a.*).width;
 
     const x_sub = multi_a.x - multi_b.x;
     const x_square = x_sub * x_sub;
     const y_sub = multi_a.y - multi_b.y;
 
-    switch (@TypeOf(multi_a.*).width) {
+    switch (@TypeOf(multi_a.*).height) {
         2 => {
-            result.* = @sqrt(@mulAdd(@Vector(4, scalar_type), y_sub, y_sub, x_square));
+            result.* = @sqrt(@mulAdd(@Vector(scalar_width, scalar_type), y_sub, y_sub, x_square));
         },
         3 => {
-            const cur_sum = @mulAdd(@Vector(4, scalar_type), y_sub, y_sub, x_square);
+            const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), y_sub, y_sub, x_square);
             const z_sub = multi_a.z - multi_b.z;
-            result.* = @sqrt(@mulAdd(@Vector(4, scalar_type), z_sub, z_sub, cur_sum));
+            result.* = @sqrt(@mulAdd(@Vector(scalar_width, scalar_type), z_sub, z_sub, cur_sum));
             
         },
         4 => {
-            const cur_sum = @mulAdd(@Vector(4, scalar_type), y_sub, y_sub, x_square);
+            const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), y_sub, y_sub, x_square);
             const z_sub = multi_a.z - multi_b.z;
-            const cur_sum2 = @mulAdd(@Vector(4, scalar_type), z_sub, z_sub, cur_sum);
+            const cur_sum2 = @mulAdd(@Vector(scalar_width, scalar_type), z_sub, z_sub, cur_sum);
             const w_sub = multi_a.w - multi_b.w;
-            result.* = @sqrt(@mulAdd(@Vector(4, scalar_type), w_sub, w_sub, cur_sum2));
+            result.* = @sqrt(@mulAdd(@Vector(scalar_width, scalar_type), w_sub, w_sub, cur_sum2));
         },
         else => unreachable,
     }
@@ -1521,29 +1547,30 @@ pub inline fn multiDist(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[4
 pub fn multiNormalizeUnsafe(multi_vec: anytype) void {
     @setFloatMode(std.builtin.FloatMode.Optimized);
     const scalar_type = @TypeOf(multi_vec.*).scalar_type;
+    const scalar_width = @TypeOf(multi_vec.*).width;
 
     const x_square = multi_vec.x * multi_vec.x;
 
-    switch (@TypeOf(multi_vec.*).width) {
+    switch (@TypeOf(multi_vec.*).height) {
         2 => {
-            const size_sq = @mulAdd(@Vector(4, scalar_type), multi_vec.y, multi_vec.y, x_square);
-            const size_inv = @splat(4, @as(scalar_type, 1.0)) / @sqrt(size_sq);
+            const size_sq = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.y, multi_vec.y, x_square);
+            const size_inv = @splat(scalar_width, @as(scalar_type, 1.0)) / @sqrt(size_sq);
             multi_vec.x *= size_inv;
             multi_vec.y *= size_inv;
         },
         3 => {
-            const cur_sum = @mulAdd(@Vector(4, scalar_type), multi_vec.y, multi_vec.y, x_square);
-            const size_sq = @mulAdd(@Vector(4, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
-            const size_inv = @splat(4, @as(scalar_type, 1.0)) / @sqrt(size_sq);
+            const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.y, multi_vec.y, x_square);
+            const size_sq = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
+            const size_inv = @splat(scalar_width, @as(scalar_type, 1.0)) / @sqrt(size_sq);
             multi_vec.x *= size_inv;
             multi_vec.y *= size_inv;
             multi_vec.z *= size_inv;
         },
         4 => {
-            const cur_sum = @mulAdd(@Vector(4, scalar_type), multi_vec.y, multi_vec.y, x_square);
-            const cur_sum2 = @mulAdd(@Vector(4, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
-            const size_sq = @mulAdd(@Vector(4, scalar_type), multi_vec.w, multi_vec.w, cur_sum2);
-            const size_inv = @splat(4, @as(scalar_type, 1.0)) / @sqrt(size_sq);
+            const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.y, multi_vec.y, x_square);
+            const cur_sum2 = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
+            const size_sq = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.w, multi_vec.w, cur_sum2);
+            const size_inv = @splat(scalar_width, @as(scalar_type, 1.0)) / @sqrt(size_sq);
             multi_vec.x *= size_inv;
             multi_vec.y *= size_inv;
             multi_vec.z *= size_inv;
@@ -1555,35 +1582,36 @@ pub fn multiNormalizeUnsafe(multi_vec: anytype) void {
 
 pub fn multiNormalizeSafe(multi_vec: anytype) void {
     const scalar_type = @TypeOf(multi_vec.*).scalar_type;
+    const scalar_width = @TypeOf(multi_vec.*).width;
 
     const x_square = multi_vec.x * multi_vec.x;
 
-    switch (@TypeOf(multi_vec.*).width) {
+    switch (@TypeOf(multi_vec.*).height) {
         2 => {
-            const size_sq = @mulAdd(@Vector(4, scalar_type), multi_vec.y, multi_vec.y, x_square);
-            const safe_to_mul = size_sq >= @splat(4, @as(scalar_type, epsilonSmall(scalar_type)));
-            const size_inv = @splat(4, @as(scalar_type, 1.0)) / @sqrt(size_sq);
-            const size_inv_safe = @select(scalar_type, safe_to_mul, size_inv, @splat(4, @as(scalar_type, 0.0)));
+            const size_sq = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.y, multi_vec.y, x_square);
+            const safe_to_mul = size_sq >= @splat(scalar_width, @as(scalar_type, epsilonSmall(scalar_type)));
+            const size_inv = @splat(scalar_width, @as(scalar_type, 1.0)) / @sqrt(size_sq);
+            const size_inv_safe = @select(scalar_type, safe_to_mul, size_inv, @splat(scalar_width, @as(scalar_type, 0.0)));
             multi_vec.x *= size_inv_safe;
             multi_vec.y *= size_inv_safe;
         },
         3 => {
-            const cur_sum = @mulAdd(@Vector(4, scalar_type), multi_vec.y, multi_vec.y, x_square);
-            const size_sq = @mulAdd(@Vector(4, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
-            const safe_to_mul = size_sq >= @splat(4, @as(scalar_type, epsilonSmall(scalar_type)));
-            const size_inv = @splat(4, @as(scalar_type, 1.0)) / @sqrt(size_sq);
-            const size_inv_safe = @select(scalar_type, safe_to_mul, size_inv, @splat(4, @as(scalar_type, 0.0)));
+            const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.y, multi_vec.y, x_square);
+            const size_sq = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
+            const safe_to_mul = size_sq >= @splat(scalar_width, @as(scalar_type, epsilonSmall(scalar_type)));
+            const size_inv = @splat(scalar_width, @as(scalar_type, 1.0)) / @sqrt(size_sq);
+            const size_inv_safe = @select(scalar_type, safe_to_mul, size_inv, @splat(scalar_width, @as(scalar_type, 0.0)));
             multi_vec.x *= size_inv_safe;
             multi_vec.y *= size_inv_safe;
             multi_vec.z *= size_inv_safe;
         },
         4 => {
-            const cur_sum = @mulAdd(@Vector(4, scalar_type), multi_vec.y, multi_vec.y, x_square);
-            const cur_sum2 = @mulAdd(@Vector(4, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
-            const size_sq = @mulAdd(@Vector(4, scalar_type), multi_vec.w, multi_vec.w, cur_sum2);
-            const safe_to_mul = size_sq >= @splat(4, @as(scalar_type, epsilonSmall(scalar_type)));
-            const size_inv = @splat(4, @as(scalar_type, 1.0)) / @sqrt(size_sq);
-            const size_inv_safe = @select(scalar_type, safe_to_mul, size_inv, @splat(4, @as(scalar_type, 0.0)));
+            const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.y, multi_vec.y, x_square);
+            const cur_sum2 = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
+            const size_sq = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.w, multi_vec.w, cur_sum2);
+            const safe_to_mul = size_sq >= @splat(scalar_width, @as(scalar_type, epsilonSmall(scalar_type)));
+            const size_inv = @splat(scalar_width, @as(scalar_type, 1.0)) / @sqrt(size_sq);
+            const size_inv_safe = @select(scalar_type, safe_to_mul, size_inv, @splat(scalar_width, @as(scalar_type, 0.0)));
             multi_vec.x *= size_inv_safe;
             multi_vec.y *= size_inv_safe;
             multi_vec.z *= size_inv_safe;
@@ -1595,38 +1623,39 @@ pub fn multiNormalizeSafe(multi_vec: anytype) void {
 
 pub fn multiClampSize(multi_vec: anytype, scalar: @TypeOf(multi_vec.*).scalar_type) void {
     const scalar_type = @TypeOf(multi_vec.*).scalar_type;
+    const scalar_width = @TypeOf(multi_vec.*).width;
 
     const x_square = multi_vec.x * multi_vec.x;
 
-    switch (@TypeOf(multi_vec.*).width) {
+    switch (@TypeOf(multi_vec.*).height) {
         2 => {
-            const size = @sqrt(@mulAdd(@Vector(4, scalar_type), multi_vec.y, multi_vec.y, x_square));
-            const splat = @splat(4, scalar);
+            const size = @sqrt(@mulAdd(@Vector(scalar_width, scalar_type), multi_vec.y, multi_vec.y, x_square));
+            const splat = @splat(scalar_width, scalar);
             const do_scale = size > splat;
             const scales = splat / size;
-            const selected_scales = @select(scalar_type, do_scale, scales, @splat(4, @as(scalar_type, 1.0)));
+            const selected_scales = @select(scalar_type, do_scale, scales, @splat(scalar_width, @as(scalar_type, 1.0)));
             multi_vec.x *= selected_scales;
             multi_vec.y *= selected_scales;
         },
         3 => {
-            const cur_sum = @mulAdd(@Vector(4, scalar_type), multi_vec.y, multi_vec.y, x_square);
-            const size = @sqrt(@mulAdd(@Vector(4, scalar_type), multi_vec.z, multi_vec.z, cur_sum));
-            const splat = @splat(4, scalar);
+            const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.y, multi_vec.y, x_square);
+            const size = @sqrt(@mulAdd(@Vector(scalar_width, scalar_type), multi_vec.z, multi_vec.z, cur_sum));
+            const splat = @splat(scalar_width, scalar);
             const do_scale = size > splat;
             const scales = splat / size;
-            const selected_scales = @select(scalar_type, do_scale, scales, @splat(4, @as(scalar_type, 1.0)));
+            const selected_scales = @select(scalar_type, do_scale, scales, @splat(scalar_width, @as(scalar_type, 1.0)));
             multi_vec.x *= selected_scales;
             multi_vec.y *= selected_scales;
             multi_vec.z *= selected_scales;
         },
         4 => {
-            const cur_sum = @mulAdd(@Vector(4, scalar_type), multi_vec.y, multi_vec.y, x_square);
-            const cur_sum2 = @sqrt(@mulAdd(@Vector(4, scalar_type), multi_vec.z, multi_vec.z, cur_sum));
-            const size = @mulAdd(@Vector(4, scalar_type), multi_vec.w, multi_vec.w, cur_sum2);
-            const splat = @splat(4, scalar);
+            const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.y, multi_vec.y, x_square);
+            const cur_sum2 = @sqrt(@mulAdd(@Vector(scalar_width, scalar_type), multi_vec.z, multi_vec.z, cur_sum));
+            const size = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.w, multi_vec.w, cur_sum2);
+            const splat = @splat(scalar_width, scalar);
             const do_scale = size > splat;
             const scales = splat / size;
-            const selected_scales = @select(scalar_type, do_scale, scales, @splat(4, @as(scalar_type, 1.0)));
+            const selected_scales = @select(scalar_type, do_scale, scales, @splat(scalar_width, @as(scalar_type, 1.0)));
             multi_vec.x *= selected_scales;
             multi_vec.y *= selected_scales;
             multi_vec.z *= selected_scales;
@@ -1636,9 +1665,11 @@ pub fn multiClampSize(multi_vec: anytype, scalar: @TypeOf(multi_vec.*).scalar_ty
     }
 } 
 
-pub inline fn multiSizeSq(multi_vec: anytype, result: *[4]@TypeOf(multi_vec.*).scalar_type) void {
+pub inline fn multiSizeSq(multi_vec: anytype, result: *[@TypeOf(multi_vec.*).width]@TypeOf(multi_vec.*).scalar_type) void {
     const scalar_type = @TypeOf(multi_vec.*).scalar_type;
-    switch (@TypeOf(multi_vec.*).width) {
+    const scalar_width = @TypeOf(multi_vec.*).width;
+
+    switch (@TypeOf(multi_vec.*).height) {
         2 => {
             multiSizeSq2d(multi_vec, result);
         },
@@ -1647,17 +1678,19 @@ pub inline fn multiSizeSq(multi_vec: anytype, result: *[4]@TypeOf(multi_vec.*).s
         },
         4 => {
             const x_square = multi_vec.x * multi_vec.x;
-            const cur_sum = @mulAdd(@Vector(4, scalar_type), multi_vec.y, multi_vec.y, x_square);
-            const cur_sum2 = @mulAdd(@Vector(4, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
-            result.* = @mulAdd(@Vector(4, scalar_type), multi_vec.w, multi_vec.w, cur_sum2);
+            const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.y, multi_vec.y, x_square);
+            const cur_sum2 = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
+            result.* = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.w, multi_vec.w, cur_sum2);
         },
         else => unreachable,
     }
 }
 
-pub inline fn multiSize(multi_vec: anytype, result: *[4]@TypeOf(multi_vec.*).scalar_type) void {
+pub inline fn multiSize(multi_vec: anytype, result: *[@TypeOf(multi_vec.*).width]@TypeOf(multi_vec.*).scalar_type) void {
     const scalar_type = @TypeOf(multi_vec.*).scalar_type;
-    switch (@TypeOf(multi_vec.*).width) {
+    const scalar_width = @TypeOf(multi_vec.*).width;
+
+    switch (@TypeOf(multi_vec.*).height) {
         2 => {
             multiSize2d(multi_vec, result);
         },
@@ -1666,16 +1699,16 @@ pub inline fn multiSize(multi_vec: anytype, result: *[4]@TypeOf(multi_vec.*).sca
         },
         4 => {
             const x_square = multi_vec.x * multi_vec.x;
-            const cur_sum = @mulAdd(@Vector(4, scalar_type), multi_vec.y, multi_vec.y, x_square);
-            const cur_sum2 = @mulAdd(@Vector(4, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
-            result.* = @sqrt(@mulAdd(@Vector(4, scalar_type), multi_vec.w, multi_vec.w, cur_sum2));
+            const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.y, multi_vec.y, x_square);
+            const cur_sum2 = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
+            result.* = @sqrt(@mulAdd(@Vector(scalar_width, scalar_type), multi_vec.w, multi_vec.w, cur_sum2));
         },
         else => unreachable,
     }
 }
 
 pub inline fn multiAbs(multi_vec: anytype) void {
-    switch (@TypeOf(multi_vec.*).width) {
+    switch (@TypeOf(multi_vec.*).height) {
         2 => {
             multi_vec.x = @fabs(multi_vec.x);
             multi_vec.y = @fabs(multi_vec.y);
@@ -1694,7 +1727,7 @@ pub inline fn multiAbs(multi_vec: anytype) void {
 }
 
 pub inline fn multiNegate(multi_vec: anytype) void {
-    switch (@TypeOf(multi_vec.*).width) {
+    switch (@TypeOf(multi_vec.*).height) {
         2 => {
             multi_vec.x = -multi_vec.x;
             multi_vec.y = -multi_vec.y;
@@ -1712,16 +1745,17 @@ pub inline fn multiNegate(multi_vec: anytype) void {
     }
 }
 
-pub fn multiNearlyEqual(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[4]bool) void {
+pub fn multiNearlyEqual(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[@TypeOf(multi_a.*).width]bool) void {
     const scalar_type = @TypeOf(multi_a.*).scalar_type;
-    const epsilon = @splat(4, @as(scalar_type, epsilonMedium(scalar_type)));
+    const scalar_width = @TypeOf(multi_a.*).width;
+    const epsilon = @splat(scalar_width, @as(scalar_type, epsilonMedium(scalar_type)));
 
     const x_diff_abs = @fabs(multi_a.x - multi_b.x);
     const x_eq = x_diff_abs <= epsilon;
     const y_diff_abs = @fabs(multi_a.y - multi_b.y);
     const y_eq = y_diff_abs <= epsilon;
 
-    switch (@TypeOf(multi_a.*).width) {
+    switch (@TypeOf(multi_a.*).height) {
         2 => {
             result.* = x_eq and y_eq;
         },
@@ -1741,14 +1775,15 @@ pub fn multiNearlyEqual(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[4
     }
 }
 
-pub inline fn multiNearlyZero(multi_vec: anytype, result: *[4]bool) void {
+pub inline fn multiNearlyZero(multi_vec: anytype, result: *[@TypeOf(multi_vec.*).width]bool) void {
     const scalar_type = @TypeOf(multi_vec.*).scalar_type;
-    const epsilon = @splat(4, @as(scalar_type, epsilonMedium(scalar_type)));
+    const scalar_width = @TypeOf(multi_vec.*).width;
+    const epsilon = @splat(scalar_width, @as(scalar_type, epsilonMedium(scalar_type)));
 
     const x_zero = @fabs(multi_vec.x) < epsilon;
     const y_zero = @fabs(multi_vec.y) < epsilon;
 
-    switch (@TypeOf(multi_vec.*).width) {
+    switch (@TypeOf(multi_vec.*).height) {
         2 => {
             result.* = x_zero and y_zero;
         },
@@ -1765,9 +1800,11 @@ pub inline fn multiNearlyZero(multi_vec: anytype, result: *[4]bool) void {
     }
 } 
 
-pub fn multiNearlyEqual2d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[4]bool) void {
+pub fn multiNearlyEqual2d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[@TypeOf(multi_a.*).width]bool) void {
     const scalar_type = @TypeOf(multi_a.*).scalar_type;
-    const epsilon = @splat(4, @as(scalar_type, epsilonMedium(scalar_type)));
+    const scalar_width = @TypeOf(multi_a.*).width;
+    const epsilon = @splat(scalar_width, @as(scalar_type, epsilonMedium(scalar_type)));
+
     const x_diff_abs = @fabs(multi_a.x - multi_b.x);
     const x_eq = x_diff_abs <= epsilon;
     const y_diff_abs = @fabs(multi_a.y - multi_b.y);
@@ -1775,9 +1812,11 @@ pub fn multiNearlyEqual2d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *
     result.* = x_eq and y_eq;
 }
 
-pub fn multiNearlyEqual3d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[4]bool) void {
+pub fn multiNearlyEqual3d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[@TypeOf(multi_a.*).width]bool) void {
     const scalar_type = @TypeOf(multi_a.*).scalar_type;
-    const epsilon = @splat(4, @as(scalar_type, epsilonMedium(scalar_type)));
+    const scalar_width = @TypeOf(multi_a.*).width;
+    const epsilon = @splat(scalar_width, @as(scalar_type, epsilonMedium(scalar_type)));
+
     const x_diff_abs = @fabs(multi_a.x - multi_b.x);
     const x_eq = x_diff_abs <= epsilon;
     const y_diff_abs = @fabs(multi_a.y - multi_b.y);
@@ -1791,10 +1830,12 @@ pub fn multiNearlyEqual3d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *
 pub fn multiNormalizeUnsafe3d(multi_vec: anytype) void {
     @setFloatMode(std.builtin.FloatMode.Optimized);
     const scalar_type = @TypeOf(multi_vec.*).scalar_type;
+    const scalar_width = @TypeOf(multi_vec.*).width;
+
     const x_square = multi_vec.x * multi_vec.x;
-    const cur_sum = @mulAdd(@Vector(4, scalar_type), multi_vec.y, multi_vec.y, x_square);
-    const size_sq = @mulAdd(@Vector(4, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
-    const size = @splat(4, @as(scalar_type, 1.0)) / @sqrt(size_sq);
+    const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.y, multi_vec.y, x_square);
+    const size_sq = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
+    const size = @splat(scalar_width, @as(scalar_type, 1.0)) / @sqrt(size_sq);
     multi_vec.x *= size;
     multi_vec.y *= size;
     multi_vec.z *= size;
@@ -1802,11 +1843,13 @@ pub fn multiNormalizeUnsafe3d(multi_vec: anytype) void {
 
 pub fn multiNormalizeSafe3d(multi_vec: anytype) void {
     const scalar_type = @TypeOf(multi_vec.*).scalar_type;
+    const scalar_width = @TypeOf(multi_vec.*).width;
+
     const x_square = multi_vec.x * multi_vec.x;
-    const cur_sum = @mulAdd(@Vector(4, scalar_type), multi_vec.y, multi_vec.y, x_square);
-    const size_sq = @mulAdd(@Vector(4, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
-    const safe_to_mul = size_sq >= @splat(4, @as(scalar_type, epsilonSmall(scalar_type)));
-    const size = @splat(4, @as(scalar_type, 1.0)) / @sqrt(size_sq);
+    const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.y, multi_vec.y, x_square);
+    const size_sq = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
+    const safe_to_mul = size_sq >= @splat(scalar_width, @as(scalar_type, epsilonSmall(scalar_type)));
+    const size = @splat(scalar_width, @as(scalar_type, 1.0)) / @sqrt(size_sq);
     const size_safe = @select(scalar_type, safe_to_mul, size, @splat(4, @as(scalar_type, 0.0)));
     multi_vec.x *= size_safe;
     multi_vec.y *= size_safe;
@@ -1825,107 +1868,128 @@ pub inline fn multiNegate3d(multi_vec: anytype) void {
     multi_vec.z = -multi_vec.z;
 }
 
-pub inline fn multiSizeSq2d(multi_vec: anytype, result: *[4]@TypeOf(multi_vec.*).scalar_type) void {
+pub inline fn multiSizeSq2d(multi_vec: anytype, result: *[@TypeOf(multi_vec.*).width]@TypeOf(multi_vec.*).scalar_type) void {
     const scalar_type = @TypeOf(multi_vec.*).scalar_type;
+    const scalar_width = @TypeOf(multi_vec.*).width;
+
     const x_square = multi_vec.x * multi_vec.x;
-    result.* = @mulAdd(@Vector(4, scalar_type), multi_vec.y, multi_vec.y, x_square);
+    result.* = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.y, multi_vec.y, x_square);
 }
 
-pub inline fn multiSizeSq3d(multi_vec: anytype, result: *[4]@TypeOf(multi_vec.*).scalar_type) void {
+pub inline fn multiSizeSq3d(multi_vec: anytype, result: *[@TypeOf(multi_vec.*).width]@TypeOf(multi_vec.*).scalar_type) void {
     const scalar_type = @TypeOf(multi_vec.*).scalar_type;
+    const scalar_width = @TypeOf(multi_vec.*).width;
+
     const x_square = multi_vec.x * multi_vec.x;
-    const cur_sum = @mulAdd(@Vector(4, scalar_type), multi_vec.y, multi_vec.y, x_square);
-    result.* = @mulAdd(@Vector(4, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
+    const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.y, multi_vec.y, x_square);
+    result.* = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
 }
 
-pub inline fn multiSize2d(multi_vec: anytype, result: *[4]@TypeOf(multi_vec.*).scalar_type) void {
+pub inline fn multiSize2d(multi_vec: anytype, result: *[@TypeOf(multi_vec.*).width]@TypeOf(multi_vec.*).scalar_type) void {
     const scalar_type = @TypeOf(multi_vec.*).scalar_type;
+    const scalar_width = @TypeOf(multi_vec.*).width;
     const x_square = multi_vec.x * multi_vec.x;
-    result.* = @sqrt(@mulAdd(@Vector(4, scalar_type), multi_vec.y, multi_vec.y, x_square));
+    result.* = @sqrt(@mulAdd(@Vector(scalar_width, scalar_type), multi_vec.y, multi_vec.y, x_square));
 }
 
-pub inline fn multiSize3d(multi_vec: anytype, result: *[4]@TypeOf(multi_vec.*).scalar_type) void {
+pub inline fn multiSize3d(multi_vec: anytype, result: *[@TypeOf(multi_vec.*).width]@TypeOf(multi_vec.*).scalar_type) void {
     const scalar_type = @TypeOf(multi_vec.*).scalar_type;
+    const scalar_width = @TypeOf(multi_vec.*).width;
+
     const x_square = multi_vec.x * multi_vec.x;
-    const cur_sum = @mulAdd(@Vector(4, scalar_type), multi_vec.y, multi_vec.y, x_square);
-    result.* = @sqrt(@mulAdd(@Vector(4, scalar_type), multi_vec.z, multi_vec.z, cur_sum));
+    const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.y, multi_vec.y, x_square);
+    result.* = @sqrt(@mulAdd(@Vector(scalar_width, scalar_type), multi_vec.z, multi_vec.z, cur_sum));
 }
 
-pub inline fn multiIsNorm(multi_vec: anytype, result: *[4]bool) void {
+pub inline fn multiIsNorm(multi_vec: anytype, result: *[@TypeOf(multi_vec.*).width]bool) void {
     const scalar_type = @TypeOf(multi_vec.*).scalar_type;
-    switch (@TypeOf(multi_vec.*).width) {
+    const scalar_width = @TypeOf(multi_vec.*).width;
+
+    switch (@TypeOf(multi_vec.*).height) {
         2 => {
             const x_square = multi_vec.x * multi_vec.x;
-            const size_sq = @mulAdd(@Vector(4, scalar_type), multi_vec.y, multi_vec.y, x_square);
-            const epsilon = @splat(4, @as(scalar_type, epsilonSmall(scalar_type)));
-            result.* = @fabs(@splat(4, @as(scalar_type, 1.0) - size_sq)) <= epsilon;
+            const size_sq = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.y, multi_vec.y, x_square);
+            const epsilon = @splat(scalar_width, @as(scalar_type, epsilonSmall(scalar_type)));
+            result.* = @fabs(@splat(scalar_width, @as(scalar_type, 1.0) - size_sq)) <= epsilon;
         },
         3 => {
             const x_square = multi_vec.x * multi_vec.x;
-            const cur_sum = @mulAdd(@Vector(4, scalar_type), multi_vec.y, multi_vec.y, x_square);
-            const size_sq = @mulAdd(@Vector(4, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
-            const epsilon = @splat(4, @as(scalar_type, epsilonSmall(scalar_type)));
-            result.* = @fabs(@splat(4, @as(scalar_type, 1.0) - size_sq)) <= epsilon;
+            const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.y, multi_vec.y, x_square);
+            const size_sq = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
+            const epsilon = @splat(scalar_width, @as(scalar_type, epsilonSmall(scalar_type)));
+            result.* = @fabs(@splat(scalar_width, @as(scalar_type, 1.0) - size_sq)) <= epsilon;
         },
         4 => {
             const x_square = multi_vec.x * multi_vec.x;
-            const cur_sum = @mulAdd(@Vector(4, scalar_type), multi_vec.y, multi_vec.y, x_square);
-            const cur_sum2 = @mulAdd(@Vector(4, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
-            const size_sq = @mulAdd(@Vector(4, scalar_type), multi_vec.w, multi_vec.w, cur_sum2);
-            const epsilon = @splat(4, @as(scalar_type, epsilonSmall(scalar_type)));
-            result.* = @fabs(@splat(4, @as(scalar_type, 1.0) - size_sq)) <= epsilon;
+            const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.y, multi_vec.y, x_square);
+            const cur_sum2 = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
+            const size_sq = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.w, multi_vec.w, cur_sum2);
+            const epsilon = @splat(scalar_width, @as(scalar_type, epsilonSmall(scalar_type)));
+            result.* = @fabs(@splat(scalar_width, @as(scalar_type, 1.0) - size_sq)) <= epsilon;
         },
         else => unreachable,
     }
 }
 
-pub inline fn multiDot2d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[4]@TypeOf(multi_a.*).scalar_type) void {
+pub inline fn multiDot2d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type) void {
     const scalar_type = @TypeOf(multi_a.*).scalar_type;
+    const scalar_width = @TypeOf(multi_a.*).width;
+
     const x_mul = multi_a.x * multi_b.x;
-    result.* = @mulAdd(@Vector(4, scalar_type), multi_a.y, multi_b.y, x_mul);
+    result.* = @mulAdd(@Vector(scalar_width, scalar_type), multi_a.y, multi_b.y, x_mul);
 }
 
-pub inline fn multiDot3d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[4]@TypeOf(multi_a.*).scalar_type) void {
+pub inline fn multiDot3d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type) void {
     const scalar_type = @TypeOf(multi_a.*).scalar_type;
+    const scalar_width = @TypeOf(multi_a.*).width;
+
     const x_mul = multi_a.x * multi_b.x;
-    const cur_sum = @mulAdd(@Vector(4, scalar_type), multi_a.y, multi_b.y, x_mul);
-    result.* = @mulAdd(@Vector(4, scalar_type), multi_a.z, multi_b.z, cur_sum);
+    const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), multi_a.y, multi_b.y, x_mul);
+    result.* = @mulAdd(@Vector(scalar_width, scalar_type), multi_a.z, multi_b.z, cur_sum);
 }
 
-pub inline fn multiDistSq2d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[4]@TypeOf(multi_a.*).scalar_type) void {
+pub inline fn multiDistSq2d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type) void {
     const scalar_type = @TypeOf(multi_a.*).scalar_type;
+    const scalar_width = @TypeOf(multi_a.*).width;
+
     const x_sub = multi_a.x - multi_b.x;
     const x_square = x_sub * x_sub;
     const y_sub = multi_a.y - multi_b.y;
-    result.* = @mulAdd(@Vector(4, scalar_type), y_sub, y_sub, x_square);
+    result.* = @mulAdd(@Vector(scalar_width, scalar_type), y_sub, y_sub, x_square);
 }
 
-pub inline fn multiDist2d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[4]@TypeOf(multi_a.*).scalar_type) void {
+pub inline fn multiDist2d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type) void {
     const scalar_type = @TypeOf(multi_a.*).scalar_type;
+    const scalar_width = @TypeOf(multi_a.*).width;
+
     const x_sub = multi_a.x - multi_b.x;
     const x_square = x_sub * x_sub;
     const y_sub = multi_a.y - multi_b.y;
-    result.* = @sqrt(@mulAdd(@Vector(4, scalar_type), y_sub, y_sub, x_square));
+    result.* = @sqrt(@mulAdd(@Vector(scalar_width, scalar_type), y_sub, y_sub, x_square));
 }
 
-pub inline fn multiDistSq3d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[4]@TypeOf(multi_a.*).scalar_type) void {
+pub inline fn multiDistSq3d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type) void {
     const scalar_type = @TypeOf(multi_a.*).scalar_type;
+    const scalar_width = @TypeOf(multi_a.*).width;
+
     const x_sub = multi_a.x - multi_b.x;
     const x_square = x_sub * x_sub;
     const y_sub = multi_a.y - multi_b.y;
-    const cur_sum = @mulAdd(@Vector(4, scalar_type), y_sub, y_sub, x_square);
+    const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), y_sub, y_sub, x_square);
     const z_sub = multi_a.z - multi_b.z;
-    result.* = @mulAdd(@Vector(4, scalar_type), z_sub, z_sub, cur_sum);
+    result.* = @mulAdd(@Vector(scalar_width, scalar_type), z_sub, z_sub, cur_sum);
 }
 
-pub inline fn multiDist3d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[4]@TypeOf(multi_a.*).scalar_type) void {
+pub inline fn multiDist3d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type) void {
     const scalar_type = @TypeOf(multi_a.*).scalar_type;
+    const scalar_width = @TypeOf(multi_a.*).width;
+
     const x_sub = multi_a.x - multi_b.x;
     const x_square = x_sub * x_sub;
     const y_sub = multi_a.y - multi_b.y;
-    const cur_sum = @mulAdd(@Vector(4, scalar_type), y_sub, y_sub, x_square);
+    const cur_sum = @mulAdd(@Vector(scalar_width, scalar_type), y_sub, y_sub, x_square);
     const z_sub = multi_a.z - multi_b.z;
-    result.* = @sqrt(@mulAdd(@Vector(4, scalar_type), z_sub, z_sub, cur_sum));
+    result.* = @sqrt(@mulAdd(@Vector(scalar_width, scalar_type), z_sub, z_sub, cur_sum));
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1939,43 +2003,63 @@ const VARange = struct {
     vec_end: usize = undefined
 };
 
-pub const hVAScalarResult2 = VAResult(2, f16, f16);
-pub const hVAScalarResult3 = VAResult(3, f16, f16);
-pub const hVAScalarResult4 = VAResult(4, f16, f16);
+pub const hVAScalarResult2x4 = VAResult(2, 4, f16, f16);
+pub const hVAScalarResult3x4 = VAResult(3, 4, f16, f16);
+pub const hVAScalarResult4x4 = VAResult(4, 4, f16, f16);
+pub const fVAScalarResult2x4 = VAResult(2, 4, f32, f32);
+pub const fVAScalarResult3x4 = VAResult(3, 4, f32, f32);
+pub const fVAScalarResult4x4 = VAResult(4, 4, f32, f32);
+pub const dVAScalarResult2x4 = VAResult(2, 4, f64, f64);
+pub const dVAScalarResult3x4 = VAResult(3, 4, f64, f64);
+pub const dVAScalarResult4x4 = VAResult(4, 4, f64, f64);
+pub const hVABoolResult2x4 = VAResult(2, 4, f16, f16);
+pub const hVABoolResult3x4 = VAResult(3, 4, f16, f16);
+pub const hVABoolResult4x4 = VAResult(4, 4, f16, f16);
+pub const fVABoolResult2x4 = VAResult(2, 4, f32, f32);
+pub const fVABoolResult3x4 = VAResult(3, 4, f32, f32);
+pub const fVABoolResult4x4 = VAResult(4, 4, f32, f32);
+pub const dVABoolResult2x4 = VAResult(2, 4, f64, f64);
+pub const dVABoolResult3x4 = VAResult(3, 4, f64, f64);
+pub const dVABoolResult4x4 = VAResult(4, 4, f64, f64);
+pub const hVAMultiResult2x4 = VAResult(2, 4, f16, hVec2x4);
+pub const hVAMultiResult3x4 = VAResult(3, 4, f16, hVec3x4);
+pub const hVAMultiResult4x4 = VAResult(4, 4, f16, hVec4x4);
+pub const fVAMultiResult2x4 = VAResult(2, 4, f32, fVec2x4);
+pub const fVAMultiResult3x4 = VAResult(3, 4, f32, fVec3x4);
+pub const fVAMultiResult4x4 = VAResult(4, 4, f32, fVec4x4);
+pub const dVAMultiResult2x4 = VAResult(2, 4, f64, dVec2x4);
+pub const dVAMultiResult3x4 = VAResult(3, 4, f64, dVec3x4);
+pub const dVAMultiResult4x4 = VAResult(4, 4, f64, dVec4x4);
 
-pub const fVAScalarResult2 = VAResult(2, f32, f32);
-pub const fVAScalarResult3 = VAResult(3, f32, f32);
-pub const fVAScalarResult4 = VAResult(4, f32, f32);
+pub const hVAScalarResult2x8 = VAResult(2, 8, f16, f16);
+pub const hVAScalarResult3x8 = VAResult(3, 8, f16, f16);
+pub const hVAScalarResult4x8 = VAResult(4, 8, f16, f16);
+pub const fVAScalarResult2x8 = VAResult(2, 8, f32, f32);
+pub const fVAScalarResult3x8 = VAResult(3, 8, f32, f32);
+pub const fVAScalarResult4x8 = VAResult(4, 8, f32, f32);
+pub const dVAScalarResult2x8 = VAResult(2, 8, f64, f64);
+pub const dVAScalarResult3x8 = VAResult(3, 8, f64, f64);
+pub const dVAScalarResult4x8 = VAResult(4, 8, f64, f64);
+pub const hVABoolResult2x8 = VAResult(2, 8, f16, f16);
+pub const hVABoolResult3x8 = VAResult(3, 8, f16, f16);
+pub const hVABoolResult4x8 = VAResult(4, 8, f16, f16);
+pub const fVABoolResult2x8 = VAResult(2, 8, f32, f32);
+pub const fVABoolResult3x8 = VAResult(3, 8, f32, f32);
+pub const fVABoolResult4x8 = VAResult(4, 8, f32, f32);
+pub const dVABoolResult2x8 = VAResult(2, 8, f64, f64);
+pub const dVABoolResult3x8 = VAResult(3, 8, f64, f64);
+pub const dVABoolResult4x8 = VAResult(4, 8, f64, f64);
+pub const hVAMultiResult2x8 = VAResult(2, 8, f16, hVec2x8);
+pub const hVAMultiResult3x8 = VAResult(3, 8, f16, hVec3x8);
+pub const hVAMultiResult4x8 = VAResult(4, 8, f16, hVec4x8);
+pub const fVAMultiResult2x8 = VAResult(2, 8, f32, fVec2x8);
+pub const fVAMultiResult3x8 = VAResult(3, 8, f32, fVec3x8);
+pub const fVAMultiResult4x8 = VAResult(4, 8, f32, fVec4x8);
+pub const dVAMultiResult2x8 = VAResult(2, 8, f64, dVec2x8);
+pub const dVAMultiResult3x8 = VAResult(3, 8, f64, dVec3x8);
+pub const dVAMultiResult4x8 = VAResult(4, 8, f64, dVec4x8);
 
-pub const dVAScalarResult2 = VAResult(2, f64, f64);
-pub const dVAScalarResult3 = VAResult(3, f64, f64);
-pub const dVAScalarResult4 = VAResult(4, f64, f64);
-
-pub const hVABoolResult2 = VAResult(2, f16, f16);
-pub const hVABoolResult3 = VAResult(3, f16, f16);
-pub const hVABoolResult4 = VAResult(4, f16, f16);
-
-pub const fVABoolResult2 = VAResult(2, f32, f32);
-pub const fVABoolResult3 = VAResult(3, f32, f32);
-pub const fVABoolResult4 = VAResult(4, f32, f32);
-
-pub const dVABoolResult2 = VAResult(2, f64, f64);
-pub const dVABoolResult3 = VAResult(3, f64, f64);
-pub const dVABoolResult4 = VAResult(4, f64, f64);
-
-pub const hVAMultiResult2 = VAResult(2, f16, hVec2x4);
-pub const hVAMultiResult3 = VAResult(3, f16, hVec3x4);
-pub const hVAMultiResult4 = VAResult(4, f16, hVec4x4);
-
-pub const fVAMultiResult2 = VAResult(2, f32, fVec2x4);
-pub const fVAMultiResult3 = VAResult(3, f32, fVec3x4);
-pub const fVAMultiResult4 = VAResult(4, f32, fVec4x4);
-
-pub const dVAMultiResult2 = VAResult(2, f64, dVec2x4);
-pub const dVAMultiResult3 = VAResult(3, f64, dVec3x4);
-pub const dVAMultiResult4 = VAResult(4, f64, dVec4x4);
-
-pub fn VAResult(comptime vec_len: comptime_int, comptime ScalarType: type, comptime ResultType: type) type {
+pub fn VAResult(comptime vec_len: comptime_int, comptime vec_width: comptime_int, comptime ScalarType: type, comptime ResultType: type) type {
 
     return struct {
 
@@ -1991,7 +2075,7 @@ pub fn VAResult(comptime vec_len: comptime_int, comptime ScalarType: type, compt
             return SelfType{.start = 0, .end = 0, .multi_start = 0, .multi_end = 0};
         }
 
-        pub fn init(self: *SelfType, array: *VecArray(vec_len, ScalarType), allocator: *const std.mem.Allocator) !void {
+        pub fn init(self: *SelfType, array: *VecArray(vec_len, vec_width, ScalarType), allocator: *const std.mem.Allocator) !void {
             std.debug.assert(array.vector_ct > 0);
 
             self.start = 0;
@@ -2000,8 +2084,8 @@ pub fn VAResult(comptime vec_len: comptime_int, comptime ScalarType: type, compt
             self.multi_end = array.items.len;
 
             const alloc_ct: usize = switch(ResultType) {
-                ScalarType, bool => (self.multi_end - self.multi_start) * 4,
-                MultiVec(vec_len, ScalarType) => (self.multi_end - self.multi_start),
+                ScalarType, bool => (self.multi_end - self.multi_start) * vec_width,
+                MultiVec(vec_len, vec_width, ScalarType) => (self.multi_end - self.multi_start),
                 else => unreachable,
             };
 
@@ -2018,20 +2102,20 @@ pub fn VAResult(comptime vec_len: comptime_int, comptime ScalarType: type, compt
         pub fn initRange(self: *SelfType, start_idx: usize, end_idx: usize, allocator: *const std.mem.Allocator) !void {
             std.debug.assert(end_idx > start_idx);
 
-            self.start = start_idx % 4;
+            self.start = start_idx % vec_width;
             self.end = end_idx + self.start;
 
-            const start_div_4 = @divTrunc(start_idx, 4);
-            const start_is_multiple_of_4 = @intCast(usize, @boolToInt(self.start == 0));
-            self.multi_start = start_div_4 - start_is_multiple_of_4;
+            const start_div_vec_width = @divTrunc(start_idx, vec_width);
+            const start_is_multiple_of_vec_width = @intCast(usize, @boolToInt(self.start == 0));
+            self.multi_start = start_div_vec_width - start_is_multiple_of_vec_width;
 
-            const end_div_4 = @divTrunc(end_idx, 4);
-            const end_is_multiple_of_4 = @intCast(usize, @boolToInt(end_idx % 4 == 0));
-            self.multi_end = end_div_4 - end_is_multiple_of_4 + 1;
+            const end_div_vec_width = @divTrunc(end_idx, vec_width);
+            const end_is_multiple_of_vec_width = @intCast(usize, @boolToInt(end_idx % vec_width == 0));
+            self.multi_end = end_div_vec_width - end_is_multiple_of_vec_width + 1;
 
             const alloc_ct: usize = switch(ResultType) {
-                ScalarType, bool => (self.multi_end - self.multi_start) * 4,
-                MultiVec(vec_len, ScalarType) => (self.multi_end - self.multi_start),
+                ScalarType, bool => (self.multi_end - self.multi_start) * vec_width,
+                MultiVec(vec_len, vec_width, ScalarType) => (self.multi_end - self.multi_start),
                 else => unreachable,
             };
 
@@ -2061,48 +2145,58 @@ pub fn VAResult(comptime vec_len: comptime_int, comptime ScalarType: type, compt
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // ------------------------------------------------------------------------------------------------------ RULES OF THUMB
-// given "math operations" means individual vector operations like dot() and dist(), and n is the number of vectors:
-// 1. need to be doing >=4n times as many math operations as allocations for the VecArray and for results
-// 2. need to be doing >=3 times as many math operations as conversions between a vector and its VecArray representation
+// given "math operations" means individual vector operations like dot() and dist(), VecArray is valuable when...
 
-// in other words, VecArray is valuable when...
-// (m) >= 4n(a) + 3(c)
-// ... where m = math operations, a = allocations, and c = conversions
+// (m) >= 4n(a) + 3(c) for f32x4 vectors
+// (m) >= 3n(a) + 2(c) for f32x8 vectors
+
+// ... where:
+// n = number of vectors
+// m = math operations
+// a = allocations (for one VecArray or one result/output array)
+// c = individual conversions
 
 // - in general, it's a good idea to reuse results structs (and their allocations) for multiple operations and/or store
 //   them long-term when possible, where/when it doesn't disrupt cache performance.
 // - VecArrays should likely be stored long-term most of the time, since they require allocations themselves.
-// - rules of thumb are not meant to stand in for performance measurements. they are guidance for design choices.
-// - rules of thumb may change as further performance improvements are introduced.
-// - rules of thumb are based on measurements gotten from a test using 128 vectors in a tight loop on my machine.  the
-//   rate of increasing advantage to SIMD depends on host specs and the program's performance characteristics.
-// - as with many things, using a VecArray may end up slower than just doing traditional math in debug builds.
+// - rules of thumb...
+//      - are not meant to stand in for performance measurements. they are guidance for design choices.
+//      - are based on measurements gotten from tests using 128 and 1024 vectors in a tight loop on my machine.  the
+//        rate of increasing advantage to SIMD depends on host specs and the program's performance characteristics.
+//      - may change as further performance improvements are introduced.
+// - as with many things, using a VecArray may end up slower than the traditional approach in debug builds. in tests,
+//   building in debug, using an f32 4x8 with multiDot was somewhat faster than single dot products. f32 4x4 was slower.
 
 // TODO: continue work om mem6 so this can move away from using zig allocator
+// TODO: all SIMD needs a cleanup pass for user-friendliness and readability
 
 // ------------------------------------------------------------------------------------------------- convenience aliases
 
-pub const hVec2Array = VecArray(2, f16);
-pub const hVec3Array = VecArray(3, f16);
-pub const hVec4Array = VecArray(4, f16);
+pub const fVec2x4Array = VecArray(2, 4, f32);
+pub const fVec3x4Array = VecArray(3, 4, f32);
+pub const fVec4x4Array = VecArray(4, 4, f32);
 
-pub const fVec2Array = VecArray(2, f32);
-pub const fVec3Array = VecArray(3, f32);
-pub const fVec4Array = VecArray(4, f32);
+pub const dVec2x4Array = VecArray(2, 4, f64);
+pub const dVec3x4Array = VecArray(3, 4, f64);
+pub const dVec4x4Array = VecArray(4, 4, f64);
 
-pub const dVec2Array = VecArray(2, f64);
-pub const dVec3Array = VecArray(3, f64);
-pub const dVec4Array = VecArray(4, f64);
+pub const hVec2x8Array = VecArray(2, 8, f16);
+pub const hVec3x8Array = VecArray(3, 8, f16);
+pub const hVec4x8Array = VecArray(4, 8, f16);
+
+pub const fVec2x8Array = VecArray(2, 8, f32);
+pub const fVec3x8Array = VecArray(3, 8, f32);
+pub const fVec4x8Array = VecArray(4, 8, f32);
 
 // ------------------------------------------------------------------------------------------------------- type function
 
-pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type {
+pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int, comptime ScalarType: type) type {
 
     return struct {
 
         const VecArrayType = @This();
 
-        items: []MultiVec(vec_len, ScalarType) = undefined,
+        items: []MultiVec(vec_len, vec_width, ScalarType) = undefined,
         vector_ct: usize = undefined,
 
 // ---------------------------------------------------------------------------------------------------------------- init
@@ -2111,14 +2205,14 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
             std.debug.assert(vec_ct > 0);
             const array_ct = vecCtToMultiVecCt(vec_ct);
             return VecArrayType {
-                .items = try allocator.alloc(MultiVec(vec_len, ScalarType), array_ct),
+                .items = try allocator.alloc(MultiVec(vec_len, vec_width, ScalarType), array_ct),
                 .vector_ct = vec_ct,
             };
         }
 
         pub inline fn zero(self: *VecArrayType) void {
             for (0..self.items.len) |i| {
-                self.items[i] = std.mem.zeroes(MultiVec(vec_len, ScalarType));
+                self.items[i] = std.mem.zeroes(MultiVec(vec_len, vec_width, ScalarType));
             }
         }
 
@@ -2140,7 +2234,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
                     self.items = try allocator.realloc(self.items, multivec_ct);
                 }
             }
-            self.vector_ct = self.items.len * 4;
+            self.vector_ct = self.items.len * vec_width;
         }
 
 // -------------------------------------------------------------------------------------------------------------- counts
@@ -2150,7 +2244,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
         }
 
         pub inline fn allocCt(self: *const VecArrayType) usize {
-            return self.items.len * 4;
+            return self.items.len * vec_width;
         }
 
 // -------------------------------------------------------------------------------------------------- get/set/add/remove
@@ -2161,7 +2255,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
             std.debug.assert(self.dbgValidateRange(&range));
 
             if (range.start == range.end) {
-                var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[range.start];
+                var multi_vec: *MultiVec(vec_len, vec_width, ScalarType) = &self.items[range.start];
                 for (range.vec_start..range.vec_end) |i| {
                     const vector_offset: usize = i - range.vec_start;
                     vectors[vector_offset] = multi_vec.vector(i);
@@ -2170,9 +2264,9 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
             else {
                 var vec_idx: usize = 0;
                 for (range.start..range.end + 1) |i| {
-                    var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[i];
+                    var multi_vec: *MultiVec(vec_len, vec_width, ScalarType) = &self.items[i];
                     if (i == range.start) {
-                        for (range.vec_start..4) |j| {
+                        for (range.vec_start..vec_width) |j| {
                             vectors[vec_idx] = multi_vec.vector(j);
                             vec_idx += 1;
                         }
@@ -2183,7 +2277,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
                             vec_idx += 1;
                         }
                     }
-                    else for (0..4) |j| {
+                    else for (0..vec_width) |j| {
                         vectors[vec_idx] = multi_vec.vector(j);
                         vec_idx += 1;
                     }
@@ -2197,7 +2291,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
             std.debug.assert(self.dbgValidateRange(&range));
 
             if (range.start == range.end) {
-                var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[range.start];
+                var multi_vec: *MultiVec(vec_len, vec_width, ScalarType) = &self.items[range.start];
                 for (range.vec_start..range.vec_end) |i| {
                     const vector_offset: usize = i - range.vec_start;
                     multi_vec.setSingle(vectors[vector_offset], i);
@@ -2206,9 +2300,9 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
             else {
                 var vec_idx: usize = 0;
                 for (range.start..range.end + 1) |i| {
-                    var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[i];
+                    var multi_vec: *MultiVec(vec_len, vec_width, ScalarType) = &self.items[i];
                     if (i == range.start) {
-                        for (range.vec_start..4) |j| {
+                        for (range.vec_start..vec_width) |j| {
                             multi_vec.setSingle(vectors[vec_idx], j);
                             vec_idx += 1;
                         }
@@ -2219,7 +2313,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
                             vec_idx += 1;
                         }
                     }
-                    else for (0..4) |j| {
+                    else for (0..vec_width) |j| {
                         multi_vec.setSingle(vectors[vec_idx], j);
                         vec_idx += 1;
                     }
@@ -2238,7 +2332,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
             var array_idx: usize = undefined;
             var in_array_idx: usize = undefined;
             vecIdxToArrayIndices(idx, &array_idx, &in_array_idx);
-            var multi_vec: *MultiVec(vec_len, ScalarType) = &self.items[array_idx];
+            var multi_vec: *MultiVec(vec_len, vec_width, ScalarType) = &self.items[array_idx];
             multi_vec.setSingle(vec, in_array_idx);
         }
 
@@ -2258,7 +2352,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
         }
 
         pub inline fn addSingle(self: *VecArrayType, vec: Vec(vec_len, ScalarType)) void {
-            std.debug.assert(self.vector_ct < self.items.len * 4);
+            std.debug.assert(self.vector_ct < self.items.len * vec_width);
             var add_array_idx: usize = undefined;
             var add_in_array_idx: usize = undefined;
             vecIdxToArrayIndices(self.vector_ct, &add_array_idx, &add_in_array_idx);
@@ -2281,117 +2375,117 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
 // ---------------------------------------------------------------------------------------------------------------- math
 
         pub inline fn mul(self: *const VecArrayType, vec: anytype) void {
-            var vec_multi = MultiVec(vec_len, ScalarType).fromVec(vec);
+            var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (0..self.items.len) |i| {
                 multiMul(&self.items[i], &vec_multi, &self.items[i]);
             }
         }
 
         pub inline fn add(self: *const VecArrayType, vec: anytype) void {
-            var vec_multi = MultiVec(vec_len, ScalarType).fromVec(vec);
+            var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (0..self.items.len) |i| {
                 multiAdd(&self.items[i], &vec_multi, &self.items[i]);
             }
         }
 
         pub inline fn sub(self: *const VecArrayType, vec: anytype) void {
-            var vec_multi = MultiVec(vec_len, ScalarType).fromVec(vec);
+            var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (0..self.items.len) |i| {
                 multiAdd(&self.items[i], &vec_multi, &self.items[i]);
             }
         }
 
         pub inline fn subFrom(self: *const VecArrayType, vec: anytype) void {
-            var vec_multi = MultiVec(vec_len, ScalarType).fromVec(vec);
+            var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (0..self.items.len) |i| {
                 multiAdd(&vec_multi, &self.items[i], &self.items[i]);
             }
         }
 
-        pub inline fn mulc(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, ScalarType, MultiVec(vec_len, ScalarType))) void {
-            var vec_multi = MultiVec(vec_len, ScalarType).fromVec(vec);
+        pub inline fn mulc(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, vec_width, ScalarType, MultiVec(vec_len, vec_width, ScalarType))) void {
+            var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (result.multi_start..result.multi_end) |i| {
                 multiMul(&self.items[i], &vec_multi, &result.items.?[i]);
             }
         }
 
-        pub inline fn addc(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, ScalarType, MultiVec(vec_len, ScalarType))) void {
-            var vec_multi = MultiVec(vec_len, ScalarType).fromVec(vec);
+        pub inline fn addc(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, vec_width, ScalarType, MultiVec(vec_len, vec_width, ScalarType))) void {
+            var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (result.multi_start..result.multi_end) |i| {
                 multiAdd(&self.items[i], &vec_multi, &result.items.?[i]);
             }
         }
 
-        pub inline fn subc(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, ScalarType, MultiVec(vec_len, ScalarType))) void {
-            var vec_multi = MultiVec(vec_len, ScalarType).fromVec(vec);
+        pub inline fn subc(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, vec_width, ScalarType, MultiVec(vec_len, vec_width, ScalarType))) void {
+            var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (result.multi_start..result.multi_end) |i| {
                 multiAdd(&self.items[i], &vec_multi, &result.items.?[i]);
             }
         }
 
-        pub inline fn subFromc(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, ScalarType, MultiVec(vec_len, ScalarType))) void {
-            var vec_multi = MultiVec(vec_len, ScalarType).fromVec(vec);
+        pub inline fn subFromc(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, vec_width, ScalarType, MultiVec(vec_len, vec_width, ScalarType))) void {
+            var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (result.multi_start..result.multi_end) |i| {
                 multiAdd(&vec_multi, &self.items[i], &result.items.?[i]);
             }
         }
 
-        pub inline fn dot(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, ScalarType, ScalarType)) void {
-            var vec_multi = MultiVec(vec_len, ScalarType).fromVec(vec);
+        pub inline fn dot(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, vec_width, ScalarType, ScalarType)) void {
+            var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (result.multi_start..result.multi_end) |i| {
-                multiDot(&self.items[i], &vec_multi, (result.items.?[i*4..(i+1)*4])[0..4]);
+                multiDot(&self.items[i], &vec_multi, (result.items.?[i*vec_width..(i+1)*vec_width])[0..vec_width]);
             }
         }
 
-        pub inline fn cross(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, ScalarType, MultiVec(vec_len, ScalarType))) void {
-            var vec_multi = MultiVec(vec_len, ScalarType).fromVec(vec);
+        pub inline fn cross(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, ScalarType, MultiVec(vec_len, vec_width, ScalarType))) void {
+            var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (result.multi_start..result.multi_end) |i| {
                 multiCross(&self.items[i], &vec_multi, &result.items.?[i]);
             }
         }
 
-        pub inline fn sizeSq(self: *const VecArrayType, result: *VAResult(vec_len, ScalarType, ScalarType)) void {
+        pub inline fn sizeSq(self: *const VecArrayType, result: *VAResult(vec_len, vec_width, ScalarType, ScalarType)) void {
             for (result.multi_start..result.multi_end) |i| {
-                multiSizeSq(&self.items[i], (result.items.?[i*4..(i+1)*4])[0..4]);
+                multiSizeSq(&self.items[i], (result.items.?[i*vec_width..(i+1)*vec_width])[0..vec_width]);
             }
         }
 
-        pub inline fn size(self: *const VecArrayType, result: *VAResult(vec_len, ScalarType, ScalarType)) void {
+        pub inline fn size(self: *const VecArrayType, result: *VAResult(vec_len, vec_width, ScalarType, ScalarType)) void {
             for (result.multi_start..result.multi_end) |i| {
-                multiSize(&self.items[i], (result.items.?[i*4..(i+1)*4])[0..4]);
+                multiSize(&self.items[i], (result.items.?[i*vec_width..(i+1)*vec_width])[0..vec_width]);
             }
         }
 
-        pub inline fn distSq(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, ScalarType, ScalarType)) void {
-            var vec_multi = MultiVec(vec_len, ScalarType).fromVec(vec);
+        pub inline fn distSq(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, vec_width, ScalarType, ScalarType)) void {
+            var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (result.multi_start..result.multi_end) |i| {
-                multiDistSq(&self.items[i], &vec_multi, (result.items.?[i*4..(i+1)*4])[0..4]);
+                multiDistSq(&self.items[i], &vec_multi, (result.items.?[i*vec_width..(i+1)*vec_width])[0..vec_width]);
             }
         }
 
-        pub inline fn dist(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, ScalarType, ScalarType)) void {
-            var vec_multi = MultiVec(vec_len, ScalarType).fromVec(vec);
+        pub inline fn dist(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, vec_width, ScalarType, ScalarType)) void {
+            var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (result.multi_start..result.multi_end) |i| {
-                multiDist(&self.items[i], &vec_multi, (result.items.?[i*4..(i+1)*4])[0..4]);
+                multiDist(&self.items[i], &vec_multi, (result.items.?[i*vec_width..(i+1)*vec_width])[0..vec_width]);
             }
         }
 
-        pub inline fn nearlyEqual(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, ScalarType, bool)) void {
-            var vec_multi = MultiVec(vec_len, ScalarType).fromVec(vec);
+        pub inline fn nearlyEqual(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, vec_width, ScalarType, bool)) void {
+            var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (result.multi_start..result.multi_end) |i| {
-                multiNearlyEqual(&self.items[i], &vec_multi, (result.items.?[i*4..(i+1)*4])[0..4]);
+                multiNearlyEqual(&self.items[i], &vec_multi, (result.items.?[i*vec_width..(i+1)*vec_width])[0..vec_width]);
             }
         }
 
-        pub inline fn isNorm(self: *const VecArrayType, result: *VAResult(vec_len, ScalarType, bool)) void {
+        pub inline fn isNorm(self: *const VecArrayType, result: *VAResult(vec_len, vec_width, ScalarType, bool)) void {
             for (result.multi_start..result.multi_end) |i| {
-                multiIsNorm(&self.items[i], (result.items.?[i*4..(i+1)*4])[0..4]);
+                multiIsNorm(&self.items[i], (result.items.?[i*vec_width..(i+1)*vec_width])[0..vec_width]);
             }
         }
 
-        pub inline fn nearlyZero(self: *const VecArrayType, result: *VAResult(vec_len, ScalarType, bool)) void {
+        pub inline fn nearlyZero(self: *const VecArrayType, result: *VAResult(vec_len, vec_width, ScalarType, bool)) void {
             for (result.multi_start..result.multi_end) |i| {
-                multiNearlyZero(&self.items[i], (result.items.?[i*4..(i+1)*4])[0..4]);
+                multiNearlyZero(&self.items[i], (result.items.?[i*vec_width..(i+1)*vec_width])[0..vec_width]);
             }
         }
 
@@ -2428,7 +2522,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
 // ------------------------------------------------------------------------------------------------------------- helpers
 
         inline fn vecCtToMultiVecCt(vec_ct: usize) usize {
-            return (vec_ct / @as(usize, 4)) + if (vec_ct % @as(usize, 4) > @as(usize, 0)) @as(usize, 1) else @as(usize, 0);
+            return (vec_ct / @as(usize, vec_width)) + if (vec_ct % @as(usize, vec_width) > @as(usize, 0)) @as(usize, 1) else @as(usize, 0);
         }
 
         inline fn vecIdxToArrayIndices(vec_idx: usize, array_idx: *usize, in_array_idx: *usize) void {
@@ -2437,15 +2531,15 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime ScalarType: type) type 
                 in_array_idx.* = 0;
             }
             else {
-                const idx_div_4 = @divTrunc(vec_idx, 4);
-                const idx_is_multiple_of_4 = @intCast(u32, @boolToInt(vec_idx % 4 == 0));
-                array_idx.* = idx_div_4 - idx_is_multiple_of_4;
-                in_array_idx.* = vec_idx - array_idx.* * 4;
+                const idx_div_vec_width = @divTrunc(vec_idx, vec_width);
+                const idx_is_multiple_of_vec_width = @intCast(u32, @boolToInt(vec_idx % vec_width == 0));
+                array_idx.* = idx_div_vec_width - idx_is_multiple_of_vec_width;
+                in_array_idx.* = vec_idx - array_idx.* * vec_width;
             }
         }
 
         inline fn arrayIndicesToVecIdx(array_idx: usize, in_array_idx: usize, vec_idx: *usize) void {
-            vec_idx.* = array_idx * 4 + in_array_idx;
+            vec_idx.* = array_idx * vec_width + in_array_idx;
         }
 
         fn boundariesToRange(
@@ -3552,7 +3646,7 @@ test "Multi Vec" {
     for (0..8) |i| {
         vectors[i].set(.{1.0, 2.0, 3.0});
     }
-    var arr1 = try fVec3Array.new(8, &allocator);
+    var arr1 = try fVec3x4Array.new(8, &allocator);
     arr1.zero();
     arr1.setRange(&vectors, .{});
     // print("\nvec array:\n{any}\n", .{arr1});
@@ -3561,7 +3655,7 @@ test "Multi Vec" {
     for (0..9) |i| {
         vectors2[i].set(.{1.0, 2.0, 3.0, 4.0});
     }
-    var arr2 = try fVec4Array.new(10, &allocator);
+    var arr2 = try fVec4x4Array.new(10, &allocator);
     arr2.zero();
     arr2.setRange(&vectors2, .{});
     // print("\nvec array 2:\n{any}\n", .{arr2});
@@ -3577,7 +3671,7 @@ test "Multi Vec" {
         print("{any}\n", .{arr2.items[i]});
     }
 
-    var r2 = fVAScalarResult4.new();
+    var r2 = fVAScalarResult4x4.new();
     try r2.init(&arr2, &allocator);
     arr2.dot(vectors3[0], &r2);
 
@@ -3591,9 +3685,9 @@ test "Multi Vec" {
         print("{d}\n", .{r2.items.?[i]});
     }
 
-    const perf_test_ct: usize = 128;
+    const perf_test_ct: usize = 1024;
 
-    var arr3 = try fVec3Array.new(perf_test_ct, &allocator);
+    var arr3 = try fVec3x4Array.new(perf_test_ct, &allocator);
     arr3.zero();
     var vectors4: [perf_test_ct]fVec3 = undefined;
     {
@@ -3626,16 +3720,29 @@ test "Multi Vec" {
     }
     print("{d}\n", .{vtestresult1[0]});
     {
-        var result = fVAScalarResult3.new();
+        var result = fVAScalarResult3x4.new();
         for (0..2048) |i| {
             _ = i;
-            var t = ScopeTimer.start("multidot()", getScopeTimerID());
+            var t = ScopeTimer.start("multidotx4()", getScopeTimerID());
             defer t.stop();
             try result.init(&arr3, &allocator);
             arr3.dot(vtest1, &result);
         }
+        print("{d}\n", .{result.items.?[0]});
     }
-    print("{d}\n", .{vtestresult1[0]});
+    var arr4 = try fVec3x8Array.new(perf_test_ct, &allocator);
+    arr4.zero();
+    {
+        var result = fVAScalarResult3x8.new();
+        for (0..2048) |i| {
+            _ = i;
+            var t = ScopeTimer.start("multidotx8()", getScopeTimerID());
+            defer t.stop();
+            try result.init(&arr4, &allocator);
+            arr4.dot(vtest1, &result);
+        }
+        print("{d}\n", .{result.items.?[0]});
+    }
 
     benchmark.printAllScopeTimers();
 }
