@@ -1444,7 +1444,11 @@ pub inline fn multiMul(multi_a: anytype, multi_b: @TypeOf(multi_a), result: @Typ
     }
 }
 
-pub fn multiDot(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type) void {
+pub fn multiDot(
+    multi_a: anytype, 
+    multi_b: @TypeOf(multi_a), 
+    result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type
+) void {
     const scalar_type = @TypeOf(multi_a.*).scalar_type;
     const scalar_width = @TypeOf(multi_a.*).width;
 
@@ -1487,7 +1491,11 @@ pub fn multiCross(multi_a: anytype, multi_b: @TypeOf(multi_a), result: @TypeOf(m
     }
 }
 
-pub inline fn multiDistSq(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type) void {
+pub inline fn multiDistSq(
+    multi_a: anytype, 
+    multi_b: @TypeOf(multi_a), 
+    result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type
+) void {
     const scalar_type = @TypeOf(multi_a.*).scalar_type;
     const scalar_width = @TypeOf(multi_a.*).width;
 
@@ -1515,7 +1523,11 @@ pub inline fn multiDistSq(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *
     }
 }
 
-pub inline fn multiDist(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type) void {
+pub inline fn multiDist(
+    multi_a: anytype, 
+    multi_b: @TypeOf(multi_a), 
+    result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type
+) void {
     const scalar_type = @TypeOf(multi_a.*).scalar_type;
     const scalar_width = @TypeOf(multi_a.*).width;
 
@@ -1868,7 +1880,10 @@ pub inline fn multiNegate3d(multi_vec: anytype) void {
     multi_vec.z = -multi_vec.z;
 }
 
-pub inline fn multiSizeSq2d(multi_vec: anytype, result: *[@TypeOf(multi_vec.*).width]@TypeOf(multi_vec.*).scalar_type) void {
+pub inline fn multiSizeSq2d(
+    multi_vec: anytype, 
+    result: *[@TypeOf(multi_vec.*).width]@TypeOf(multi_vec.*).scalar_type
+) void {
     const scalar_type = @TypeOf(multi_vec.*).scalar_type;
     const scalar_width = @TypeOf(multi_vec.*).width;
 
@@ -1876,7 +1891,10 @@ pub inline fn multiSizeSq2d(multi_vec: anytype, result: *[@TypeOf(multi_vec.*).w
     result.* = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.y, multi_vec.y, x_square);
 }
 
-pub inline fn multiSizeSq3d(multi_vec: anytype, result: *[@TypeOf(multi_vec.*).width]@TypeOf(multi_vec.*).scalar_type) void {
+pub inline fn multiSizeSq3d(
+    multi_vec: anytype, 
+    result: *[@TypeOf(multi_vec.*).width]@TypeOf(multi_vec.*).scalar_type
+) void {
     const scalar_type = @TypeOf(multi_vec.*).scalar_type;
     const scalar_width = @TypeOf(multi_vec.*).width;
 
@@ -1885,14 +1903,20 @@ pub inline fn multiSizeSq3d(multi_vec: anytype, result: *[@TypeOf(multi_vec.*).w
     result.* = @mulAdd(@Vector(scalar_width, scalar_type), multi_vec.z, multi_vec.z, cur_sum);
 }
 
-pub inline fn multiSize2d(multi_vec: anytype, result: *[@TypeOf(multi_vec.*).width]@TypeOf(multi_vec.*).scalar_type) void {
+pub inline fn multiSize2d(
+    multi_vec: anytype, 
+    result: *[@TypeOf(multi_vec.*).width]@TypeOf(multi_vec.*).scalar_type
+) void {
     const scalar_type = @TypeOf(multi_vec.*).scalar_type;
     const scalar_width = @TypeOf(multi_vec.*).width;
     const x_square = multi_vec.x * multi_vec.x;
     result.* = @sqrt(@mulAdd(@Vector(scalar_width, scalar_type), multi_vec.y, multi_vec.y, x_square));
 }
 
-pub inline fn multiSize3d(multi_vec: anytype, result: *[@TypeOf(multi_vec.*).width]@TypeOf(multi_vec.*).scalar_type) void {
+pub inline fn multiSize3d(
+    multi_vec: anytype, 
+    result: *[@TypeOf(multi_vec.*).width]@TypeOf(multi_vec.*).scalar_type
+) void {
     const scalar_type = @TypeOf(multi_vec.*).scalar_type;
     const scalar_width = @TypeOf(multi_vec.*).width;
 
@@ -1931,7 +1955,11 @@ pub inline fn multiIsNorm(multi_vec: anytype, result: *[@TypeOf(multi_vec.*).wid
     }
 }
 
-pub inline fn multiDot2d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type) void {
+pub inline fn multiDot2d(
+    multi_a: anytype, 
+    multi_b: @TypeOf(multi_a), 
+    result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type
+) void {
     const scalar_type = @TypeOf(multi_a.*).scalar_type;
     const scalar_width = @TypeOf(multi_a.*).width;
 
@@ -1939,7 +1967,11 @@ pub inline fn multiDot2d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[
     result.* = @mulAdd(@Vector(scalar_width, scalar_type), multi_a.y, multi_b.y, x_mul);
 }
 
-pub inline fn multiDot3d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type) void {
+pub inline fn multiDot3d(
+    multi_a: anytype, 
+    multi_b: @TypeOf(multi_a), 
+    result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type
+) void {
     const scalar_type = @TypeOf(multi_a.*).scalar_type;
     const scalar_width = @TypeOf(multi_a.*).width;
 
@@ -1948,7 +1980,11 @@ pub inline fn multiDot3d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[
     result.* = @mulAdd(@Vector(scalar_width, scalar_type), multi_a.z, multi_b.z, cur_sum);
 }
 
-pub inline fn multiDistSq2d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type) void {
+pub inline fn multiDistSq2d(
+    multi_a: anytype, 
+    multi_b: @TypeOf(multi_a), 
+    result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type
+) void {
     const scalar_type = @TypeOf(multi_a.*).scalar_type;
     const scalar_width = @TypeOf(multi_a.*).width;
 
@@ -1958,7 +1994,11 @@ pub inline fn multiDistSq2d(multi_a: anytype, multi_b: @TypeOf(multi_a), result:
     result.* = @mulAdd(@Vector(scalar_width, scalar_type), y_sub, y_sub, x_square);
 }
 
-pub inline fn multiDist2d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type) void {
+pub inline fn multiDist2d(
+    multi_a: anytype, 
+    multi_b: @TypeOf(multi_a), 
+    result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type
+) void {
     const scalar_type = @TypeOf(multi_a.*).scalar_type;
     const scalar_width = @TypeOf(multi_a.*).width;
 
@@ -1968,7 +2008,11 @@ pub inline fn multiDist2d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *
     result.* = @sqrt(@mulAdd(@Vector(scalar_width, scalar_type), y_sub, y_sub, x_square));
 }
 
-pub inline fn multiDistSq3d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type) void {
+pub inline fn multiDistSq3d(
+    multi_a: anytype, 
+    multi_b: @TypeOf(multi_a), 
+    result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type
+) void {
     const scalar_type = @TypeOf(multi_a.*).scalar_type;
     const scalar_width = @TypeOf(multi_a.*).width;
 
@@ -1980,7 +2024,11 @@ pub inline fn multiDistSq3d(multi_a: anytype, multi_b: @TypeOf(multi_a), result:
     result.* = @mulAdd(@Vector(scalar_width, scalar_type), z_sub, z_sub, cur_sum);
 }
 
-pub inline fn multiDist3d(multi_a: anytype, multi_b: @TypeOf(multi_a), result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type) void {
+pub inline fn multiDist3d(
+    multi_a: anytype, 
+    multi_b: @TypeOf(multi_a), 
+    result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type
+) void {
     const scalar_type = @TypeOf(multi_a.*).scalar_type;
     const scalar_width = @TypeOf(multi_a.*).width;
 
@@ -2150,8 +2198,7 @@ pub fn VAResult(comptime vec_len: comptime_int, comptime vec_width: comptime_int
 // (m) >= 4n(a) + 3(c) for f32x4 vectors
 // (m) >= 3n(a) + 2(c) for f32x8 vectors
 
-// ... where:
-// n = number of vectors
+// n = number of vectors in VecArray
 // m = math operations
 // a = allocations (for one VecArray or one result/output array)
 // c = individual conversions
@@ -2402,75 +2449,117 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
             }
         }
 
-        pub inline fn mulc(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, vec_width, ScalarType, MultiVec(vec_len, vec_width, ScalarType))) void {
+        pub inline fn mulc(
+            self: *const VecArrayType, 
+            vec: anytype, 
+            result: *VAResult(vec_len, vec_width, ScalarType, MultiVec(vec_len, vec_width, ScalarType))
+        ) void {
             var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (result.multi_start..result.multi_end) |i| {
                 multiMul(&self.items[i], &vec_multi, &result.items.?[i]);
             }
         }
 
-        pub inline fn addc(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, vec_width, ScalarType, MultiVec(vec_len, vec_width, ScalarType))) void {
+        pub inline fn addc(
+            self: *const VecArrayType, 
+            vec: anytype, 
+            result: *VAResult(vec_len, vec_width, ScalarType, MultiVec(vec_len, vec_width, ScalarType))
+        ) void {
             var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (result.multi_start..result.multi_end) |i| {
                 multiAdd(&self.items[i], &vec_multi, &result.items.?[i]);
             }
         }
 
-        pub inline fn subc(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, vec_width, ScalarType, MultiVec(vec_len, vec_width, ScalarType))) void {
+        pub inline fn subc(
+            self: *const VecArrayType, 
+            vec: anytype, 
+            result: *VAResult(vec_len, vec_width, ScalarType, MultiVec(vec_len, vec_width, ScalarType))
+        ) void {
             var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (result.multi_start..result.multi_end) |i| {
                 multiAdd(&self.items[i], &vec_multi, &result.items.?[i]);
             }
         }
 
-        pub inline fn subFromc(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, vec_width, ScalarType, MultiVec(vec_len, vec_width, ScalarType))) void {
+        pub inline fn subFromc(
+            self: *const VecArrayType, 
+            vec: anytype, 
+            result: *VAResult(vec_len, vec_width, ScalarType, MultiVec(vec_len, vec_width, ScalarType))
+        ) void {
             var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (result.multi_start..result.multi_end) |i| {
                 multiAdd(&vec_multi, &self.items[i], &result.items.?[i]);
             }
         }
 
-        pub inline fn dot(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, vec_width, ScalarType, ScalarType)) void {
+        pub inline fn dot(
+            self: *const VecArrayType, 
+            vec: anytype, 
+            result: *VAResult(vec_len, vec_width, ScalarType, ScalarType)
+        ) void {
             var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (result.multi_start..result.multi_end) |i| {
                 multiDot(&self.items[i], &vec_multi, (result.items.?[i*vec_width..(i+1)*vec_width])[0..vec_width]);
             }
         }
 
-        pub inline fn cross(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, ScalarType, MultiVec(vec_len, vec_width, ScalarType))) void {
+        pub inline fn cross(
+            self: *const VecArrayType, 
+            vec: anytype, 
+            result: *VAResult(vec_len, ScalarType, MultiVec(vec_len, vec_width, ScalarType))
+        ) void {
             var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (result.multi_start..result.multi_end) |i| {
                 multiCross(&self.items[i], &vec_multi, &result.items.?[i]);
             }
         }
 
-        pub inline fn sizeSq(self: *const VecArrayType, result: *VAResult(vec_len, vec_width, ScalarType, ScalarType)) void {
+        pub inline fn sizeSq(
+            self: *const VecArrayType, 
+            result: *VAResult(vec_len, vec_width, ScalarType, ScalarType)
+        ) void {
             for (result.multi_start..result.multi_end) |i| {
                 multiSizeSq(&self.items[i], (result.items.?[i*vec_width..(i+1)*vec_width])[0..vec_width]);
             }
         }
 
-        pub inline fn size(self: *const VecArrayType, result: *VAResult(vec_len, vec_width, ScalarType, ScalarType)) void {
+        pub inline fn size(
+            self: *const VecArrayType, 
+            result: *VAResult(vec_len, vec_width, ScalarType, ScalarType)
+        ) void {
             for (result.multi_start..result.multi_end) |i| {
                 multiSize(&self.items[i], (result.items.?[i*vec_width..(i+1)*vec_width])[0..vec_width]);
             }
         }
 
-        pub inline fn distSq(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, vec_width, ScalarType, ScalarType)) void {
+        pub inline fn distSq(
+            self: *const VecArrayType, 
+            vec: anytype, 
+            result: *VAResult(vec_len, vec_width, ScalarType, ScalarType)
+        ) void {
             var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (result.multi_start..result.multi_end) |i| {
                 multiDistSq(&self.items[i], &vec_multi, (result.items.?[i*vec_width..(i+1)*vec_width])[0..vec_width]);
             }
         }
 
-        pub inline fn dist(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, vec_width, ScalarType, ScalarType)) void {
+        pub inline fn dist(
+            self: *const VecArrayType, 
+            vec: anytype, 
+            result: *VAResult(vec_len, vec_width, ScalarType, ScalarType)
+        ) void {
             var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (result.multi_start..result.multi_end) |i| {
                 multiDist(&self.items[i], &vec_multi, (result.items.?[i*vec_width..(i+1)*vec_width])[0..vec_width]);
             }
         }
 
-        pub inline fn nearlyEqual(self: *const VecArrayType, vec: anytype, result: *VAResult(vec_len, vec_width, ScalarType, bool)) void {
+        pub inline fn nearlyEqual(
+            self: *const VecArrayType, 
+            vec: anytype, 
+            result: *VAResult(vec_len, vec_width, ScalarType, bool)
+        ) void {
             var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (result.multi_start..result.multi_end) |i| {
                 multiNearlyEqual(&self.items[i], &vec_multi, (result.items.?[i*vec_width..(i+1)*vec_width])[0..vec_width]);
@@ -2483,7 +2572,10 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
             }
         }
 
-        pub inline fn nearlyZero(self: *const VecArrayType, result: *VAResult(vec_len, vec_width, ScalarType, bool)) void {
+        pub inline fn nearlyZero(
+            self: *const VecArrayType, 
+            result: *VAResult(vec_len, vec_width, ScalarType, bool)
+        ) void {
             for (result.multi_start..result.multi_end) |i| {
                 multiNearlyZero(&self.items[i], (result.items.?[i*vec_width..(i+1)*vec_width])[0..vec_width]);
             }
@@ -2522,7 +2614,10 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
 // ------------------------------------------------------------------------------------------------------------- helpers
 
         inline fn vecCtToMultiVecCt(vec_ct: usize) usize {
-            return (vec_ct / @as(usize, vec_width)) + if (vec_ct % @as(usize, vec_width) > @as(usize, 0)) @as(usize, 1) else @as(usize, 0);
+            return (vec_ct / @as(usize, vec_width)) 
+                + if (vec_ct % @as(usize, vec_width) > @as(usize, 0)) 
+                @as(usize, 1) 
+                else @as(usize, 0);
         }
 
         inline fn vecIdxToArrayIndices(vec_idx: usize, array_idx: *usize, in_array_idx: *usize) void {
