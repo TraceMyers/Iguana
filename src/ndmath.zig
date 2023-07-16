@@ -82,6 +82,10 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
             return VecType{ .parts = scalars };
         }
 
+        pub inline fn fromArray(scalars: *const [len]ScalarType) VecType {
+            return VecType{ .parts = scalars[0..len].* };
+        }
+
         pub inline fn fromScalar(scalar: ScalarType) VecType {
             return VecType{ .parts = @splat(len, scalar) };
         }
@@ -3504,29 +3508,46 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
         }
 
         fn vMul4x4(self: *MatrixType, other: Vec(4, ScalarType)) Vec(4, ScalarType) {
-            const row0: @Vector(4, ScalarType) = self.parts[0..4].*;
-            const temp0 = row0 * other.parts;
-            const row1: @Vector(4, ScalarType) = self.parts[4..8].*;
-            const temp1 = row1 * other.parts;
-            const row2: @Vector(4, ScalarType) = self.parts[8..12].*;
-            const temp2 = row2 * other.parts;
-            const row3: @Vector(4, ScalarType) = self.parts[12..16].*;
-            const temp3 = row3 * other.parts;
+            // if (ScalarType == f64) {
+                const row0: @Vector(4, ScalarType) = self.parts[0..4].*;
+                const temp0 = row0 * other.parts;
+                const row1: @Vector(4, ScalarType) = self.parts[4..8].*;
+                const temp1 = row1 * other.parts;
+                const row2: @Vector(4, ScalarType) = self.parts[8..12].*;
+                const temp2 = row2 * other.parts;
+                const row3: @Vector(4, ScalarType) = self.parts[12..16].*;
+                const temp3 = row3 * other.parts;
 
-            const mask1 = @Vector(4, i32){0, -1, 1, -2};
-            const mask2 = @Vector(4, i32){2, -3, 3, -4};
-            const temp4 = @shuffle(ScalarType, temp0, temp1, mask1);
-            const temp5 = @shuffle(ScalarType, temp0, temp1, mask2);
-            const temp6 = @shuffle(ScalarType, temp2, temp3, mask1);
-            const temp7 = @shuffle(ScalarType, temp2, temp3, mask2);
+                const mask1 = @Vector(4, i32){0, -1, 1, -2};
+                const mask2 = @Vector(4, i32){2, -3, 3, -4};
+                const temp4 = @shuffle(ScalarType, temp0, temp1, mask1);
+                const temp5 = @shuffle(ScalarType, temp0, temp1, mask2);
+                const temp6 = @shuffle(ScalarType, temp2, temp3, mask1);
+                const temp7 = @shuffle(ScalarType, temp2, temp3, mask2);
 
-            const mask3 = @Vector(4, i32){0, 1, -1, -2};
-            const mask4 = @Vector(4, i32){2, 3, -3, -4};
-            const add_row0 = @shuffle(ScalarType, temp4, temp6, mask3);
-            const add_row1 = @shuffle(ScalarType, temp4, temp6, mask4);
-            const add_row2 = @shuffle(ScalarType, temp5, temp7, mask3);
-            const add_row3 = @shuffle(ScalarType, temp5, temp7, mask4);
-            return Vec(4, ScalarType).init(add_row0 + add_row1 + add_row2 + add_row3);
+                const mask3 = @Vector(4, i32){0, 1, -1, -2};
+                const mask4 = @Vector(4, i32){2, 3, -3, -4};
+                const add_row0 = @shuffle(ScalarType, temp4, temp6, mask3);
+                const add_row1 = @shuffle(ScalarType, temp4, temp6, mask4);
+                const add_row2 = @shuffle(ScalarType, temp5, temp7, mask3);
+                const add_row3 = @shuffle(ScalarType, temp5, temp7, mask4);
+                return Vec(4, ScalarType).init(add_row0 + add_row1 + add_row2 + add_row3);
+            // }
+            // else {
+            //     const vecparts_mask = @Vector(8, i32){0, 1, 2, 3, 0, 1, 2, 3};
+            //     const vecparts_8 = @shuffle(ScalarType, other.parts, undefined, vecparts_mask);
+            //     const row01: @Vector(8, ScalarType) = self.parts[0..8].*;
+            //     const row23: @Vector(8, ScalarType) = self.parts[8..16].*;
+
+            //     const temp1 = vecparts_8 * row01;
+            //     const temp2 = @mulAdd(@Vector(8, ScalarType), vecparts_8, row23, temp1);
+
+            //     const mask1 = @Vector(8, i32){0, 1, 2, 3, 0, 0, 0, 0};
+            //     const mask2 = @Vector(8, i32){4, 5, 6, 7, 0, 0, 0, 0};
+            //     const temp3: @Vector(8, ScalarType) = @shuffle(ScalarType, temp2, undefined, mask1);
+            //     const temp4: @Vector(8, ScalarType) = @shuffle(ScalarType, temp2, undefined, mask2);
+            //     return Vec(4, ScalarType).fromArray(@ptrCast([*]const ScalarType, &(temp3 + temp4))[0..4]);
+            // }
         }
 
 
