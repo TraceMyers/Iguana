@@ -1524,8 +1524,8 @@ pub fn multiCross(multi_a: anytype, multi_b: @TypeOf(multi_a), result: @TypeOf(m
         3, 4 => {
             // x = a.y * b.z - a.z * b.y
             // y = a.z * b.x - a.x * b.z
-            // z = a.x * b.y - a.y * b.x
-            const x_neg_part = multi_a.z * multi_b.y;
+            // z = a.x * b.y - a.y * b.x // 6 + 12 = 18
+            const x_neg_part = multi_a.z * multi_b.y; // 6 + 6 = 12
             result.x = @mulAdd(@Vector(scalar_width, scalar_type), multi_a.y, multi_b.z, -x_neg_part);
             const y_neg_part = multi_a.x * multi_b.z;
             result.y = @mulAdd(@Vector(scalar_width, scalar_type), multi_a.z, multi_b.x, -y_neg_part);
@@ -2204,15 +2204,21 @@ pub fn VAResult(
 
             self.start = 0;
             self.end = array.vector_ct;
-            self.range.start = 0;
-            self.range.end = array.items.len;
-            self.range.vec_start = 0;
-            self.range.vec_end = array.vector_ct - array.items.len * vec_width;
 
-            const multi_ct = self.range.end - self.range.start + 1;
+            self.range.start = 0;
+            self.range.end = array.items.len - 1;
+            self.range.vec_start = 0;
+            self.range.vec_end = array.vector_ct % vec_len;
+            if (self.range.vec_end == 0) {
+                self.range.vec_end = vec_len;
+            }
+            else {
+                self.range.vec_end += 1;
+            }
+
             const alloc_ct: usize = switch(ResultType) {
-                ScalarType, bool => multi_ct * vec_width,
-                MultiVec(vec_len, vec_width, ScalarType) => multi_ct,
+                ScalarType, bool => array.items.len * vec_width,
+                MultiVec(vec_len, vec_width, ScalarType) => array.items.len,
                 else => unreachable,
             };
 
@@ -2227,12 +2233,9 @@ pub fn VAResult(
         }
 
         pub fn initRange(self: *SelfType, start_idx: usize, end_idx: usize, allocator: *const std.mem.Allocator) !void {
-            std.debug.assert(end_idx > start_idx);
-
+            VecArray(vec_len, vec_width, ScalarType).boundariesToRange(.{start_idx, end_idx}, end_idx, &self.range);
             self.start = start_idx % vec_width;
             self.end = end_idx + self.start;
-
-            VecArray(vec_len, vec_width, ScalarType).boundariesToRange(.{start_idx, end_idx}, end_idx, &self.range);
 
             const multi_ct = self.range.end - self.range.start + 1;
             const alloc_ct: usize = switch(ResultType) {
@@ -2251,13 +2254,50 @@ pub fn VAResult(
             }
         }
 
-        pub inline fn item(self: *const SelfType, idx: usize) ResultType {
+        // reset this result. not necessary, but is good practice for debugability. Requires the items array has been
+        // passed to another structure or deallocated.
+        pub inline fn reset(self: *SelfType) void {
+            std.debug.assert(self.items == null);
+            self.start = 0;
+            self.end = 0;
+            self.range = std.mem.zeroes(VARange);
+        }
+
+        pub inline fn free(self: *SelfType, allocator: *const std.mem.Allocator) void {
+            if (self.items != null) {
+                allocator.free(self.items);
+                self.items = null;
+            }
+        }
+
+        // indexing to a primitive result (scalar, bool). takes range into account. unavailable for MultiVec results,
+        // because indexing to an individual vector is costly. For MultiVec results, the results array should be
+        // handed over to a VecArray and translated to individual vectors in bulk.
+        inline fn resultPrimitiveOnly(self: *const SelfType, idx: usize) ResultType {
             return self.items.?[idx + self.start];
         }
 
-        pub inline fn length(self: *const SelfType) usize {
+        const result = switch(ResultType) {
+            bool, ScalarType => resultPrimitiveOnly,
+            else => unreachable,
+        };
+
+        // indexing to any type of result. does not take range into account!
+        pub inline fn item(self: *const SelfType, idx: usize) ResultType {
+            return self.items.?[idx];
+        }
+
+        // the number of bools, Scalars, vectors originally desired.
+        pub inline fn lengthSingleResults(self: *const SelfType) usize {
             return self.end - self.start;
         }
+
+        // the number of results gotten. may, and often will be, larger than the number of results desired.
+        // if MultiVec result, this is the number of MultiVecs, not the number of vectors.
+        pub inline fn lengthResults(self: *const SelfType) usize {
+            return self.items.?.len;
+        }
+
 
         // TODO: access logic for multivec results
         
@@ -2268,7 +2308,7 @@ pub fn VAResult(
 // ---------------------------------------------------------------------- VecArray (Array of Structs of Arrays for SIMD)
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// ------------------------------------------------------------------------------------------------------ RULES OF THUMB
+// ---------------------------------------------------------------------------------------------------------------- DOCS
 // given "math operations" means individual vector operations like dot() and dist(), VecArray is valuable when...
 
 // (m) >= 4n(a) + 3(c) for f32x4 vectors
@@ -2339,6 +2379,12 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
 
         items: []MultiVec(vec_len, vec_width, ScalarType) = undefined,
         vector_ct: usize = undefined,
+        // if set using fromResult(), this denotes the index at which the ranged results begin. so, if the result was
+        // ranged to vector indices 2-9, this will be 2 and vector_ct will be 8. this is very, very important to pay
+        // attention to when doing ranged math operations. for example, in order to preserve index-correct information
+        // when chaining multiple ranged ops, successive ops will need the same range as the first op, and in the end
+        // the desired results begin at this offset.
+        result_offset: usize = 0, 
 
 // ---------------------------------------------------------------------------------------------------------------- init
 
@@ -2349,6 +2395,25 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
                 .items = try allocator.alloc(MultiVec(vec_len, vec_width, ScalarType), array_ct),
                 .vector_ct = vec_ct,
             };
+        }
+
+        // takes ownership of a result's memory, resets it, and returns a VecArray preserving the properties of
+        // the result. !! if the result's range started on an index s.t. vec_start % vec_width != 0, result_offset
+        // will be set to a nonzero number denoting the index at which the desired results begin. vector_ct will
+        // include the first few undesired vectors (n = result_offset). doing things this way trades incredibly slow
+        // copy-backs for a slightly less convenient system (apologies).
+        pub inline fn fromResult(
+            result: *VAResult(vec_len, vec_width, ScalarType, MultiVec(vec_len, vec_width, ScalarType))
+        ) VecArrayType {
+            const multi_diff = result.range.end - result.range.start;
+            var array = VecArrayType {
+                .items = result.items[0..result.items.len],
+                .vector_ct = multi_diff * vec_width + result.range.vec_end,
+                .result_offset = result.range.vec_start,
+            };
+            result.items = null;
+            result.reset();
+            return array;
         }
 
         pub inline fn zero(self: *VecArrayType) void {
@@ -2381,7 +2446,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
 // -------------------------------------------------------------------------------------------------------------- counts
 
         pub inline fn vectorCt(self: *const VecArrayType) usize {
-            return self.vector_ct;
+            return self.vector_ct - self.result_offset;
         }
 
         pub inline fn allocCt(self: *const VecArrayType) usize {
@@ -2462,7 +2527,9 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
             }
         }
 
-        pub fn setFromResult(
+        // copies data from the provided result, using the same ranges as the result. if instead you want to make
+        // a new VecArray using the result's allocation, use fromResult()
+        pub fn copyResult(
             self: *VecArrayType, 
             result: *VAResult(vec_len, vec_width, ScalarType, MultiVec(vec_len, vec_width, ScalarType))
         ) void {
@@ -2490,24 +2557,25 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
         pub inline fn getSingle(self: *const VecArrayType, idx: usize) Vec(vec_len, ScalarType) {
             var array_idx: usize = undefined;
             var in_array_idx: usize = undefined;
-            vecIdxToArrayIndices(idx, &array_idx, &in_array_idx);
+            vecIdxToArrayIndices(idx + self.result_offset, &array_idx, &in_array_idx);
             return self.items[array_idx].vector(in_array_idx);
         }
        
         pub inline fn setSingle(self: *VecArrayType, vec: Vec(vec_len, ScalarType), idx: usize) void {
             var array_idx: usize = undefined;
             var in_array_idx: usize = undefined;
-            vecIdxToArrayIndices(idx, &array_idx, &in_array_idx);
+            vecIdxToArrayIndices(idx + self.result_offset, &array_idx, &in_array_idx);
             var multi_vec: *MultiVec(vec_len, vec_width, ScalarType) = &self.items[array_idx];
             multi_vec.setSingle(vec, in_array_idx);
         }
 
         pub fn removeSingle(self: *VecArrayType, vec_idx: usize) usize {
-            std.debug.assert(vec_idx < self.vector_ct);
+            const true_idx = vec_idx + self.result_offset;
+            std.debug.assert(true_idx < self.vector_ct);
             self.vector_ct -= 1;
             var rm_array_idx: usize = undefined;
             var rm_in_array_idx: usize = undefined;
-            vecIdxToArrayIndices(vec_idx, &rm_array_idx, &rm_in_array_idx);
+            vecIdxToArrayIndices(true_idx, &rm_array_idx, &rm_in_array_idx);
             var cb_array_idx: usize = undefined;
             var cb_in_array_idx: usize = undefined;
             vecIdxToArrayIndices(self.vector_ct, &cb_array_idx, &cb_in_array_idx);
@@ -2517,7 +2585,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
             return self.vector_ct;
         }
 
-        pub inline fn addSingle(self: *VecArrayType, vec: Vec(vec_len, ScalarType)) void {
+        pub inline fn pushSingle(self: *VecArrayType, vec: Vec(vec_len, ScalarType)) void {
             std.debug.assert(self.vector_ct < self.items.len * vec_width);
             var add_array_idx: usize = undefined;
             var add_in_array_idx: usize = undefined;
@@ -2528,13 +2596,15 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
         }
 
         pub fn swap(self: *VecArrayType, idx_a: usize, idx_b: usize) void {
-            std.debug.assert(idx_a < self.vector_ct and idx_b < self.vector_ct);
+            const true_idx_a = idx_a + self.result_offset;
+            const true_idx_b = idx_b + self.result_offset;
+            std.debug.assert(true_idx_a < self.vector_ct and true_idx_b < self.vector_ct);
             var a_array_idx: usize = undefined;
             var a_in_array_idx: usize = undefined;
-            vecIdxToArrayIndices(idx_a, &a_array_idx, &a_in_array_idx);
+            vecIdxToArrayIndices(true_idx_a, &a_array_idx, &a_in_array_idx);
             var b_array_idx: usize = undefined;
             var b_in_array_idx: usize = undefined;
-            vecIdxToArrayIndices(idx_b, &b_array_idx, &b_in_array_idx);
+            vecIdxToArrayIndices(true_idx_b, &b_array_idx, &b_in_array_idx);
             self.items[a_array_idx].swapSingle(&self.items[b_array_idx], a_in_array_idx, b_in_array_idx);
         }
 
@@ -2557,14 +2627,14 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
         pub inline fn sub(self: *const VecArrayType, vec: anytype) void {
             var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (0..self.items.len) |i| {
-                multiAdd(&self.items[i], &vec_multi, &self.items[i]);
+                multiSub(&self.items[i], &vec_multi, &self.items[i]);
             }
         }
 
         pub inline fn subFrom(self: *const VecArrayType, vec: anytype) void {
             var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (0..self.items.len) |i| {
-                multiAdd(&vec_multi, &self.items[i], &self.items[i]);
+                multiSub(&vec_multi, &self.items[i], &self.items[i]);
             }
         }
 
@@ -2597,7 +2667,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
         ) void {
             var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (result.range.start..result.range.end + 1) |i| {
-                multiAdd(&self.items[i], &vec_multi, &result.items.?[i]);
+                multiSub(&self.items[i], &vec_multi, &result.items.?[i]);
             }
         }
 
@@ -2608,7 +2678,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
         ) void {
             var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (result.range.start..result.range.end + 1) |i| {
-                multiAdd(&vec_multi, &self.items[i], &result.items.?[i]);
+                multiSub(&vec_multi, &self.items[i], &result.items.?[i]);
             }
         }
 
@@ -2626,7 +2696,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
         pub inline fn cross(
             self: *const VecArrayType, 
             vec: anytype, 
-            result: *VAResult(vec_len, ScalarType, MultiVec(vec_len, vec_width, ScalarType))
+            result: *VAResult(vec_len, vec_width, ScalarType, MultiVec(vec_len, vec_width, ScalarType))
         ) void {
             var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (result.range.start..result.range.end + 1) |i| {
@@ -3862,7 +3932,6 @@ test "Multi Vec" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-
     var vectors: [8]fVec3 = undefined;
     for (0..8) |i| {
         vectors[i].set(.{1.0, 2.0, 3.0});
@@ -3897,7 +3966,7 @@ test "Multi Vec" {
     arr2.dot(vectors3[0], &r2);
 
     print("\ndot result:\n", .{});
-    for (0..r2.length()) |i| {
+    for (0..r2.lengthSingleResults()) |i| {
         print("{d}\n", .{r2.item(i)});
     }
 
@@ -3963,6 +4032,53 @@ test "Multi Vec" {
             arr4.dot(vtest1, &result);
         }
         print("{d}\n", .{result.items.?[0]});
+    }
+
+    const cross_result_ct: usize = 1024;
+    var cross_results_single: [cross_result_ct]fVec3 = undefined;
+    // var cross_results_multi: [cross_result_ct/8]fVec3x8 = undefined;
+
+    var rand = Prng.init(0);
+    var cross_inputs: [cross_result_ct]fVec3 = undefined;
+    for (0..cross_result_ct) |i| {
+        cross_inputs[i].set(.{rand.random().float(f32) * 1000.0, rand.random().float(f32), rand.random().float(f32)});
+        if (rand.random().boolean()) {
+            cross_inputs[i].parts[0] = -cross_inputs[i].parts[0];
+        }
+        if (rand.random().boolean()) {
+            cross_inputs[i].parts[1] = -cross_inputs[i].parts[1];
+        }
+        if (rand.random().boolean()) {
+            cross_inputs[i].parts[2] = -cross_inputs[i].parts[2];
+        }
+    }
+
+    var cross_with = fVec3.init(.{rand.random().float(f32) * 1000.0, rand.random().float(f32) * 1000.0, rand.random().float(f32) * 1000.0});
+
+    var arr_cross = try fVec3x8Array.new(cross_result_ct, &allocator);
+    arr_cross.setRange(&cross_inputs, .{});
+
+    {
+        for (0..2048) |i| {
+            _ = i;
+            var t = ScopeTimer.start("cross()", getScopeTimerID());
+            defer t.stop();
+            for (0..cross_result_ct) |j| {
+                cross_results_single[j] = cross_inputs[j].cross(cross_with);
+            }
+        }
+    }
+    print("{any}\n", .{cross_results_single[0]});
+    {
+        var result = fVAMultiResult3x8.new();
+        for (0..2048) |i| {
+            _ = i;
+            var t = ScopeTimer.start("multiCrossx8()", getScopeTimerID());
+            defer t.stop();
+            try result.init(&arr_cross, &allocator);
+            arr_cross.cross(cross_with, &result);
+        }
+        print("{any}\n", .{result.items.?[0]});
     }
 
     benchmark.printAllScopeTimers();
