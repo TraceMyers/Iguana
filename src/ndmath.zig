@@ -86,6 +86,14 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
             return VecType{ .parts = @splat(len, scalar) };
         }
 
+        pub inline fn random(rand: anytype, minmax: ScalarType) VecType {
+            var vec: VecType = undefined;
+            for (0..len) |i| {
+                vec.parts[i] = rand.random().float(ScalarType) * if(rand.random().boolean()) - minmax else minmax;
+            }
+            return vec;
+        }
+
     // ------------------------------------------------------------------------------------------------------ conversion
 
         // copy vector with scalar type Ta and len Na into self (vector with scalar type Tb and len Nb), where Na
@@ -1536,7 +1544,7 @@ pub fn multiCross(multi_a: anytype, multi_b: @TypeOf(multi_a), result: @TypeOf(m
     }
 }
 
-pub inline fn multiDistSq(
+pub fn multiDistSq(
     multi_a: anytype, 
     multi_b: @TypeOf(multi_a), 
     result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type
@@ -1722,7 +1730,7 @@ pub fn multiClampSize(multi_vec: anytype, scalar: @TypeOf(multi_vec.*).scalar_ty
     }
 } 
 
-pub inline fn multiSizeSq(multi_vec: anytype, result: *[@TypeOf(multi_vec.*).width]@TypeOf(multi_vec.*).scalar_type) void {
+pub fn multiSizeSq(multi_vec: anytype, result: *[@TypeOf(multi_vec.*).width]@TypeOf(multi_vec.*).scalar_type) void {
     const scalar_type = @TypeOf(multi_vec.*).scalar_type;
     const scalar_width = @TypeOf(multi_vec.*).width;
 
@@ -1743,7 +1751,7 @@ pub inline fn multiSizeSq(multi_vec: anytype, result: *[@TypeOf(multi_vec.*).wid
     }
 }
 
-pub inline fn multiSize(multi_vec: anytype, result: *[@TypeOf(multi_vec.*).width]@TypeOf(multi_vec.*).scalar_type) void {
+pub fn multiSize(multi_vec: anytype, result: *[@TypeOf(multi_vec.*).width]@TypeOf(multi_vec.*).scalar_type) void {
     const scalar_type = @TypeOf(multi_vec.*).scalar_type;
     const scalar_width = @TypeOf(multi_vec.*).width;
 
@@ -1970,7 +1978,7 @@ pub inline fn multiSize3d(
     result.* = @sqrt(@mulAdd(@Vector(scalar_width, scalar_type), multi_vec.z, multi_vec.z, cur_sum));
 }
 
-pub inline fn multiIsNorm(multi_vec: anytype, result: *[@TypeOf(multi_vec.*).width]bool) void {
+pub fn multiIsNorm(multi_vec: anytype, result: *[@TypeOf(multi_vec.*).width]bool) void {
     const scalar_type = @TypeOf(multi_vec.*).scalar_type;
     const scalar_width = @TypeOf(multi_vec.*).width;
 
@@ -2053,7 +2061,7 @@ pub inline fn multiDist2d(
     result.* = @sqrt(@mulAdd(@Vector(scalar_width, scalar_type), y_sub, y_sub, x_square));
 }
 
-pub inline fn multiDistSq3d(
+pub fn multiDistSq3d(
     multi_a: anytype, 
     multi_b: @TypeOf(multi_a), 
     result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type
@@ -2069,7 +2077,7 @@ pub inline fn multiDistSq3d(
     result.* = @mulAdd(@Vector(scalar_width, scalar_type), z_sub, z_sub, cur_sum);
 }
 
-pub inline fn multiDist3d(
+pub fn multiDist3d(
     multi_a: anytype, 
     multi_b: @TypeOf(multi_a), 
     result: *[@TypeOf(multi_a.*).width]@TypeOf(multi_a.*).scalar_type
@@ -2174,6 +2182,7 @@ const VARange = struct {
     vec_end: usize = undefined
 };
 
+// TODO: this could get all of its type information from the ResultType
 
 pub fn VAResult(
     comptime vec_len: comptime_int, 
@@ -2401,19 +2410,20 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
         // the result. !! if the result's range started on an index s.t. vec_start % vec_width != 0, result_offset
         // will be set to a nonzero number denoting the index at which the desired results begin. vector_ct will
         // include the first few undesired vectors (n = result_offset). doing things this way trades incredibly slow
-        // copy-backs for a slightly less convenient system (apologies).
+        // copy-backs for a slightly less convenient system.
         pub inline fn fromResult(
             result: *VAResult(vec_len, vec_width, ScalarType, MultiVec(vec_len, vec_width, ScalarType))
         ) VecArrayType {
+            defer blk: {
+                result.items = null;
+                break :blk result.reset();
+            }
             const multi_diff = result.range.end - result.range.start;
-            var array = VecArrayType {
-                .items = result.items[0..result.items.len],
+            return VecArrayType {
+                .items = result.items.?[0..result.items.?.len],
                 .vector_ct = multi_diff * vec_width + result.range.vec_end,
                 .result_offset = result.range.vec_start,
             };
-            result.items = null;
-            result.reset();
-            return array;
         }
 
         pub inline fn zero(self: *VecArrayType) void {
@@ -3368,124 +3378,210 @@ pub fn Quaternion(comptime ScalarType: type) type {
 
 // ------------------------------------------------------------------------------------------------- convenience aliases
 
-pub const hMat2x2 = SquareMatrix(2, f16);
-pub const hMat3x3 = SquareMatrix(3, f16);
-pub const hMat4x4 = SquareMatrix(4, f16);
-pub const hMat5x5 = SquareMatrix(5, f16);
+pub const hMat3x3 = Matrix(3, 3, f16);
+pub const hMat3x4 = Matrix(3, 4, f16);
+pub const hMat4x4 = Matrix(4, 4, f16);
 
-pub const fMat2x2 = SquareMatrix(2, f32);
-pub const fMat3x3 = SquareMatrix(3, f32);
-pub const fMat4x4 = SquareMatrix(4, f32);
-pub const fMat5x5 = SquareMatrix(5, f32);
+pub const fMat3x3 = Matrix(3, 3, f32);
+pub const fMat3x4 = Matrix(3, 4, f32);
+pub const fMat4x4 = Matrix(4, 4, f32);
 
-pub const dMat2x2 = SquareMatrix(2, f64);
-pub const dMat3x3 = SquareMatrix(3, f64);
-pub const dMat4x4 = SquareMatrix(4, f64);
-pub const dMat5x5 = SquareMatrix(5, f64);
+pub const dMat3x3 = Matrix(3, 3, f64);
+pub const dMat3x4 = Matrix(3, 4, f64);
+pub const dMat4x4 = Matrix(4, 4, f64);
 
 // ------------------------------------------------------------------------------------------------------ type functions
 
-pub fn SquareMatrix(comptime size: u32, comptime ScalarType: type) type {
-    return Matrix(size, size, ScalarType);
-}
+pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime ScalarType: type) type {
 
-
-pub fn Matrix(comptime h: u32, comptime w: u32, comptime ScalarType: type) type {
+    std.debug.assert(ScalarType == f16 or ScalarType == f32 or ScalarType == f64);
 
     return struct {
 
         const MatrixType = @This();
 
-        parts: [h][w]ScalarType = undefined,
+        parts: [h * w]ScalarType = undefined,
 
         pub inline fn new() MatrixType {
-            return MatrixType{.parts = zero};
+            return zero;
         }
 
-        pub inline fn fromScalar(scalar: ScalarType) MatrixType {
-            var self = MatrixType{.parts = zero};
-            inline for (0..min_dimension) |i| {
-                self.parts[i][i] = scalar;
+        pub inline fn random(rand: anytype, minmax: ScalarType) MatrixType {
+            var mat: MatrixType = undefined;
+            for (0..h*w) |i| {
+                mat.parts[i] = rand.random().float(ScalarType) * if(rand.random().boolean()) -minmax else minmax;
             }
-            return self;
+            return mat;
+        }
+
+        pub fn setDiagWithScalar(self: *MatrixType, scalar: ScalarType) void {
+            inline for (0..min_dimension) |i| {
+                self.parts[i * w + i] = scalar;
+            }
         }
 
         // copy this vector into the diagonal of a new matrix. can be used to make a scaling matrix if 
-        // size == vec.len + 1. remaining diagonal entries are identity.
-        pub fn fromVecOnDiag(vec: anytype) MatrixType {
-            const vec_len = @TypeOf(vec).length;
+        // size == vec.len + 1.
+        pub fn setDiag(self: *MatrixType, vec: anytype) void {
+            const vec_len: comptime_int = @TypeOf(vec).length;
             std.debug.assert(min_dimension >= vec_len);
 
-            var self = MatrixType{.parts = zero};
-            inline for(0..vec_len) |i| {
-                self.parts[i][i] = vec.parts[i];
-            }
-            inline for(vec_len..min_dimension) |i| {
-                self.parts[i][i] = 1.0;
+            inline for (0..vec_len) |i| {
+                self.parts[i * w + i] = vec.parts[i];
             }
             return self;
         }
 
         // copy this vector into the right column of a new matrix. can be used to make a translation matrix if
         // size == vec.len + 1. diagonal entries (except potentially the bottom right if overwritten) are identity.
-        pub fn fromVecOnRightCol(vec: anytype) MatrixType {
-            const vec_len = @TypeOf(vec).length;
+        pub fn setRightCol(self: *MatrixType, vec: anytype) void {
+            const vec_len: comptime_int = @TypeOf(vec).length;
+            const w_minus_1: comptime_int = w - 1;
             std.debug.assert(min_dimension >= vec_len);
-            var self = identity;
-            inline for(0..vec_len) |i| {
-                self.parts[i][width - 1] = vec.parts[i];
+
+            inline for (0..vec_len) |i| {
+                self.parts[i * w + w_minus_1] = vec.parts[i];
             }
-            return self;
         }
 
-        pub fn fromQuaternion(quat: Quaternion(ScalarType)) fMat4x4 {
-            const y_squared = quat.parts[1] * quat.parts[1];
-            const shuf1 = @shuffle(f32, quat.parts, quat.parts, @Vector(4, i32){0, 3, 2, 0});
-            // x^2, yw, z^2, xw
-            const prod1 = quat.parts * shuf1;
+        pub inline fn vMul(self: *MatrixType, other: Vec(w, ScalarType)) Vec(h, ScalarType) {
+            if (h == 4 and w == 4) {
+                return self.vMul4x4(other);
+            }
+            else {
+                return self.vMulLoop(other);
+            }
+        }
 
-            const shuf3 = @shuffle(f32, prod1, prod1, @Vector(4, i32){0, 2, 2, 1});
-            const load1 = @Vector(4, f32){y_squared, y_squared, shuf3[0], 0};
-            const sum1 = @splat(4, @as(f32, 2.0)) * (shuf3 + load1);
+        pub fn transpose(self: *MatrixType, out: *MatrixType) void {
+            if (ScalarType == f64) {
+                const mask1 = @Vector(4, i32){0, -1, 1, -2};
+                const mask2 = @Vector(4, i32){2, -3, 3, -4};
 
-            // xz, xy, yz, zw
-            const shuf2 = @shuffle(f32, quat.parts, quat.parts, @Vector(4, i32){3, 0, 1, 2});
-            const prod2 = quat.parts * shuf2;
+                const row0: @Vector(4, ScalarType) = self.parts[0..4].*;
+                const row1: @Vector(4, ScalarType) = self.parts[4..8].*;
+                const temp0 = @shuffle(ScalarType, row0, row1, mask1);
+                const temp1 = @shuffle(ScalarType, row0, row1, mask2);
 
-            const alt_neg = @Vector(4, f32){1.0, -1.0, 1.0, -1.0};
-            const shuf4 = @shuffle(f32, prod2, prod2, @Vector(4, i32){2, 2, 1, 1});
-            const shuf5 = @shuffle(f32, prod2, prod1, @Vector(4, i32){-4, -4, 3, 3}) * alt_neg;
-            // [ yz + xw |#| yz - yw |#| xy + zw |#| xy - zw ]
-            const base_2 = @splat(4, @as(f32, 2.0)) * (shuf4 + shuf5);
+                const row2: @Vector(4, ScalarType) = self.parts[8..12].*;
+                const row3: @Vector(4, ScalarType) = self.parts[12..16].*;
+                const temp2 = @shuffle(ScalarType, row2, row3, mask1);
+                const temp3 = @shuffle(ScalarType, row2, row3, mask2);
+
+                const mask3 = @Vector(4, i32){0, 1, -1, -2};
+                const mask4 = @Vector(4, i32){2, 3, -3, -4};
+
+                out.parts[0..4].* = @shuffle(ScalarType, temp0, temp2, mask3);
+                out.parts[4..8].* = @shuffle(ScalarType, temp0, temp2, mask4);
+                out.parts[8..12].* = @shuffle(ScalarType, temp1, temp3, mask3);
+                out.parts[12..16].* = @shuffle(ScalarType, temp1, temp3, mask4);
+            }
+            else {
+                const row01: @Vector(8, ScalarType) = self.parts[0..8].*;
+                const row23: @Vector(8, ScalarType) = self.parts[8..16].*;
+
+                const mask1 = @Vector(8, i32){
+                    0, 4, -1, -5, 
+                    1, 5, -2, -6
+                };
+                const mask2 = @Vector(8, i32){
+                    2, 6, -3, -7,
+                    3, 7, -4, -8
+                };
+                out.parts[0..8].* = @shuffle(ScalarType, row01, row23, mask1);
+                out.parts[8..16].* = @shuffle(ScalarType, row01, row23, mask2);
+            }
+        }
+
+        // only temporarily public for testing
+        pub fn vMulLoop(self: *MatrixType, other: Vec(w, ScalarType)) Vec(h, ScalarType) {
+            var out_vec: Vec(h, ScalarType) = undefined;
+            inline for (0..h) |i| {
+                const row_vec : @Vector(w, ScalarType) = self.parts[i*w..][0..w].*;
+                out_vec.parts[i] = @reduce(.Add, other.parts * row_vec);
+            }
+            return out_vec;
+        }
+
+        fn vMul4x4(self: *MatrixType, other: Vec(4, ScalarType)) Vec(4, ScalarType) {
+            const row0: @Vector(4, ScalarType) = self.parts[0..4].*;
+            const temp0 = row0 * other.parts;
+            const row1: @Vector(4, ScalarType) = self.parts[4..8].*;
+            const temp1 = row1 * other.parts;
+            const row2: @Vector(4, ScalarType) = self.parts[8..12].*;
+            const temp2 = row2 * other.parts;
+            const row3: @Vector(4, ScalarType) = self.parts[12..16].*;
+            const temp3 = row3 * other.parts;
+
+            const mask1 = @Vector(4, i32){0, -1, 1, -2};
+            const mask2 = @Vector(4, i32){2, -3, 3, -4};
+            const temp4 = @shuffle(ScalarType, temp0, temp1, mask1);
+            const temp5 = @shuffle(ScalarType, temp0, temp1, mask2);
+            const temp6 = @shuffle(ScalarType, temp2, temp3, mask1);
+            const temp7 = @shuffle(ScalarType, temp2, temp3, mask2);
+
+            const mask3 = @Vector(4, i32){0, 1, -1, -2};
+            const mask4 = @Vector(4, i32){2, 3, -3, -4};
+            const add_row0 = @shuffle(ScalarType, temp4, temp6, mask3);
+            const add_row1 = @shuffle(ScalarType, temp4, temp6, mask4);
+            const add_row2 = @shuffle(ScalarType, temp5, temp7, mask3);
+            const add_row3 = @shuffle(ScalarType, temp5, temp7, mask4);
+            return Vec(4, ScalarType).init(add_row0 + add_row1 + add_row2 + add_row3);
+        }
+
+
+        // pub fn mMul(self: *MatrixType, other: *MatrixType) void {
+
+        // }
+
+        // pub fn fromQuaternion(quat: Quaternion(ScalarType)) fMat4x4 {
+        //     const y_squared = quat.parts[1] * quat.parts[1];
+        //     const shuf1 = @shuffle(f32, quat.parts, quat.parts, @Vector(4, i32){0, 3, 2, 0});
+        //     // x^2, yw, z^2, xw
+        //     const prod1 = quat.parts * shuf1;
+
+        //     const shuf3 = @shuffle(f32, prod1, prod1, @Vector(4, i32){0, 2, 2, 1});
+        //     const load1 = @Vector(4, f32){y_squared, y_squared, shuf3[0], 0};
+        //     const sum1 = @splat(4, @as(f32, 2.0)) * (shuf3 + load1);
+
+        //     // xz, xy, yz, zw
+        //     const shuf2 = @shuffle(f32, quat.parts, quat.parts, @Vector(4, i32){3, 0, 1, 2});
+        //     const prod2 = quat.parts * shuf2;
+
+        //     const alt_neg = @Vector(4, f32){1.0, -1.0, 1.0, -1.0};
+        //     const shuf4 = @shuffle(f32, prod2, prod2, @Vector(4, i32){2, 2, 1, 1});
+        //     const shuf5 = @shuffle(f32, prod2, prod1, @Vector(4, i32){-4, -4, 3, 3}) * alt_neg;
+        //     // [ yz + xw |#| yz - yw |#| xy + zw |#| xy - zw ]
+        //     const base_2 = @splat(4, @as(f32, 2.0)) * (shuf4 + shuf5);
             
-            const sub_vec = @Vector(4, f32){1.0, 1.0, 1.0, 2.0 * prod2[0]};
-            // [ 1 - 2(x^2 + y^2) |#| 1 - 2(z^2 + y^2) |#| 1 - 2(x^2 + z^2) |#| 2(xz - yw) ]
-            const base_1 = sub_vec - sum1;
+        //     const sub_vec = @Vector(4, f32){1.0, 1.0, 1.0, 2.0 * prod2[0]};
+        //     // [ 1 - 2(x^2 + y^2) |#| 1 - 2(z^2 + y^2) |#| 1 - 2(x^2 + z^2) |#| 2(xz - yw) ]
+        //     const base_1 = sub_vec - sum1;
 
-            const _2xz_plus_zw = 2.0 * (prod2[0] + prod2[3]);
+        //     const _2xz_plus_zw = 2.0 * (prod2[0] + prod2[3]);
 
-            var self: MatrixType = undefined;
-            const col1 = @Vector(4, f32){base_1[1], base_2[3], _2xz_plus_zw, 0.0};
-            self.parts[0] = col1;
-            // putting a zero in
-            const base_2b = @shuffle(f32, base_2, col1, @Vector(4, i32){0, 1, 2, -4});
-            self.parts[1] = @shuffle(f32, base_1, base_2b, @Vector(4, i32){-3, 2, -2, -4});
-            self.parts[2] = @shuffle(f32, base_1, base_2b, @Vector(4, i32){3, -1, 0, -4});
-            self.parts[3] = @Vector(4, f32){0.0, 0.0, 0.0, 1.0};
+        //     var self: MatrixType = undefined;
+        //     const col1 = @Vector(4, f32){base_1[1], base_2[3], _2xz_plus_zw, 0.0};
+        //     self.parts[0] = col1;
+        //     // putting a zero in
+        //     const base_2b = @shuffle(f32, base_2, col1, @Vector(4, i32){0, 1, 2, -4});
+        //     self.parts[1] = @shuffle(f32, base_1, base_2b, @Vector(4, i32){-3, 2, -2, -4});
+        //     self.parts[2] = @shuffle(f32, base_1, base_2b, @Vector(4, i32){3, -1, 0, -4});
+        //     self.parts[3] = @Vector(4, f32){0.0, 0.0, 0.0, 1.0};
 
-            return self; 
-        }
+        //     return self; 
+        // }
 
     // ------------------------------------------------------------------------------------------------------- constants
 
         pub const height = h;
         pub const width = w;
         pub const min_dimension = @min(w, h);
-        pub const zero = MatrixType.new();
+        pub const zero = MatrixType{.parts = std.mem.zeroes([h * w]ScalarType)};
         pub const identity = blk: {
             var mat = std.mem.zeroes(MatrixType);
             for (0..@min(w, h)) |i| {
-                mat.parts[i][i] = 1.0;
+                mat.parts[i * w + i] = 1.0;
             }
             break :blk mat;
         };
@@ -3531,9 +3627,9 @@ const epsilonAuto = flt.epsilonAuto;
 // need to add -lc arg for testing to link libc
 
 test "SquareMatrix" {
-    var q1 = fQuat.init(.{1.0, 2.0, 3.0, 4.0});
-    var m1 = fMat4x4.fromQuaternion(q1);
-    _ = m1;
+    // var q1 = fQuat.init(.{1.0, 2.0, 3.0, 4.0});
+    // var m1 = fMat4x4.fromQuaternion(q1);
+    // _ = m1;
     // print("\n{any}\n", .{m1});
 }
 
@@ -4059,6 +4155,19 @@ test "Multi Vec" {
     arr_cross.setRange(&cross_inputs, .{});
 
     {
+        var result = fVAMultiResult3x8.new();
+        for (0..2048) |i| {
+            _ = i;
+            var t = ScopeTimer.start("multiCrossx8()", getScopeTimerID());
+            defer t.stop();
+            try result.init(&arr_cross, &allocator);
+            arr_cross.cross(cross_with, &result);
+        }
+        print("{any}\n", .{result.items.?[0]});
+        const from_test = fVec3x8Array.fromResult(&result);
+        _ = from_test;
+    }
+    {
         for (0..2048) |i| {
             _ = i;
             var t = ScopeTimer.start("cross()", getScopeTimerID());
@@ -4069,17 +4178,7 @@ test "Multi Vec" {
         }
     }
     print("{any}\n", .{cross_results_single[0]});
-    {
-        var result = fVAMultiResult3x8.new();
-        for (0..2048) |i| {
-            _ = i;
-            var t = ScopeTimer.start("multiCrossx8()", getScopeTimerID());
-            defer t.stop();
-            try result.init(&arr_cross, &allocator);
-            arr_cross.cross(cross_with, &result);
-        }
-        print("{any}\n", .{result.items.?[0]});
-    }
+    
 
     benchmark.printAllScopeTimers();
 }
@@ -4099,6 +4198,90 @@ test "testQuaternion" {
 
 }
 
+test "Matrix" {
+    var rand = Prng.init(0);
+
+    const mul_vec_ct: usize = 2048;
+    const iter_ct = 2048;
+    var m1 = fMat4x4.identity;
+    var mul_vectors: [mul_vec_ct]fVec4 = undefined;
+    for (0..mul_vec_ct) |i| {
+        mul_vectors[i].set(.{
+            rand.random().float(f32) * 100.0,
+            rand.random().float(f32) * 100.0,
+            rand.random().float(f32) * 100.0,
+            rand.random().float(f32) * 100.0
+        });
+        if (rand.random().boolean()) {
+            mul_vectors[i].parts[0] = -mul_vectors[i].parts[0];
+        }
+        if (rand.random().boolean()) {
+            mul_vectors[i].parts[1] = -mul_vectors[i].parts[1];
+        }
+        if (rand.random().boolean()) {
+            mul_vectors[i].parts[2] = -mul_vectors[i].parts[2];
+        }
+        if (rand.random().boolean()) {
+            mul_vectors[i].parts[3] = -mul_vectors[i].parts[3];
+        }
+    }
+
+    var result_vectors: [mul_vec_ct]fVec4 = undefined;
+    for (0..mul_vec_ct) |i| {
+        result_vectors[i].scalarFill(1.0);
+    }
+
+    {
+        for (0..iter_ct) |i| {
+            _ = i;
+            var t = ScopeTimer.start("matrix mul 4x4", getScopeTimerID());
+            defer t.stop();
+
+            for (0..mul_vec_ct) |j| {
+                result_vectors[j] = m1.vMulLoop(mul_vectors[j]);
+            }
+        }
+        print("{any}\n", .{result_vectors[0]});
+    }
+    {
+        for (0..iter_ct) |i| {
+            _ = i;
+            var t = ScopeTimer.start("matrix mul 4x4 simd", getScopeTimerID());
+            defer t.stop();
+
+            for (0..mul_vec_ct) |j| {
+                result_vectors[j] = m1.vMul(mul_vectors[j]);
+            }
+        }
+        print("{any}\n", .{result_vectors[0]});
+    }
+
+    var randmat = fMat4x4.random(&rand, 100.0);
+    var result1 = randmat.vMul(mul_vectors[0]);
+    var result2 = randmat.vMulLoop(mul_vectors[0]);
+    try expect(result1.dist(result2) < epsilonMedium(f32));
+
+
+    var randvec = fVec3.random(&rand, 100.0);
+    var randmat2 = fMat3x3.random(&rand, 100.0);
+    var result3 = randmat2.vMul(randvec);
+    var result4 = randmat2.vMulLoop(randvec);
+    print("\n\nresult 3\n{any}\n", .{result3});
+    print("result 4\n{any}\n", .{result4});
+    try expect(result3.dist(result4) < epsilonMedium(f32));
+
+    var mul_vecs2: [mul_vec_ct]fVec3 = undefined;
+    for (0..mul_vec_ct) |i| {
+        mul_vecs2[i] = fVec3.random(&rand, 100.0);
+    }
+
+    var result_vectors2: [mul_vec_ct]fVec3 = undefined;
+    for (0..mul_vec_ct) |i| {
+        result_vectors2[i].scalarFill(1.0);
+    }
+
+    benchmark.printAllScopeTimers();
+}
 // test "epsilon auto performance" {
 //     const iterations: usize = 1_000_000;
 //     var rand = Prng.init(0);
