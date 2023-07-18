@@ -1130,6 +1130,18 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
             }
         }
 
+        pub fn format(
+            self: VecType, 
+            comptime _: []const u8, 
+            _: std.fmt.FormatOptions, 
+            writer: anytype
+        ) std.os.WriteError!void {
+            inline for(0..len) |i| {
+                try writer.print(" {d:>16.3}", .{self.parts[i]});
+            }
+        }
+
+
     };
 }
 
@@ -3242,8 +3254,23 @@ pub fn Quaternion(comptime ScalarType: type) type {
             return QuaternionType{ .parts = @splat(4, scalar) };
         }
 
-        pub inline fn fromVec(vec: anytype) QuaternionType {
+        pub inline fn fromVec(vec: Vec(4, ScalarType)) QuaternionType {
             return QuaternionType{ .parts = vec.parts };
+        }
+
+        // angle in radians. axis must be normalized.
+        pub inline fn fromAxisAngle(axis: Vec(3, ScalarType), angle: ScalarType) QuaternionType {
+            std.debug.assert(axis.isNorm());
+            const half_angle = angle * 0.5;
+            const sin_half_angle = std.math.sin(half_angle);
+            const cos_half_angle = std.math.cos(half_angle);
+
+            return QuaternionType {.parts = .{
+                axis.parts[0] * sin_half_angle,
+                axis.parts[1] * sin_half_angle,
+                axis.parts[2] * sin_half_angle,
+                cos_half_angle
+            }};
         }
 
     // --------------------------------------------------------------------------------------------------------- re-init
@@ -3329,6 +3356,14 @@ pub fn Quaternion(comptime ScalarType: type) type {
             self.parts *= inv_size_vec;
         }
 
+        pub inline fn normSafe(self: *QuaternionType) QuaternionType {
+            const size_sq = self.sizeSq();
+            if (size_sq <= epsilonSmall(ScalarType)) {
+                return zero;
+            }
+            return QuaternionType{.parts = self.parts * @splat(4, 1.0 / @sqrt(size_sq))};
+        }
+
         pub fn mul(self: *QuaternionType, other: QuaternionType) void {
             const neg_vec: @Vector(4, ScalarType) = .{1.0, 1.0, 1.0, -1.0};
             const wsplat = @splat(4, self.parts[3]) * other.parts;
@@ -3346,6 +3381,7 @@ pub fn Quaternion(comptime ScalarType: type) type {
             const result_3 = a_shuf3 * b_shuf3;
 
             self.parts = result_2 - result_3;
+            self.normalizeSafe();
         }
 
         pub fn mulc(self: *const QuaternionType, other: QuaternionType) QuaternionType {
@@ -3364,7 +3400,7 @@ pub fn Quaternion(comptime ScalarType: type) type {
             const b_shuf3 = @shuffle(ScalarType, other.parts, other.parts, @Vector(4, i32){1, 2, 0, 2});
             const result_3 = a_shuf3 * b_shuf3;
 
-            return QuaternionType.init(result_2 - result_3);
+            return QuaternionType.init(result_2 - result_3).normSafe();
         }
 
     // ------------------------------------------------------------------------------------------------------- constants
@@ -3401,7 +3437,9 @@ pub const dMat4x4 = Matrix(4, 4, f64);
 
 pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime ScalarType: type) type {
 
-    std.debug.assert(ScalarType == f16 or ScalarType == f32 or ScalarType == f64);
+    comptime {
+        std.debug.assert(ScalarType == f16 or ScalarType == f32 or ScalarType == f64);
+    }
 
     return struct {
 
@@ -3450,7 +3488,7 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             }
         }
 
-        pub inline fn vMul(self: *MatrixType, other: Vec(w, ScalarType)) Vec(h, ScalarType) {
+        pub inline fn vMul(self: *const MatrixType, other: Vec(w, ScalarType)) Vec(h, ScalarType) {
             if (h == 4 and w == 4) {
                 return self.vMul4x4(other);
             }
@@ -3460,7 +3498,7 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
         }
 
         pub fn mMul(
-            self: *MatrixType, 
+            self: *const MatrixType, 
             other: anytype, 
             out: *Matrix(MatrixType.height, @TypeOf(other.*).width, ScalarType)
         ) void {
@@ -3473,35 +3511,23 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             }
         }
 
-        pub inline fn transpose(self: *MatrixType, out: *Matrix(w, h, ScalarType)) void {
-            if (h == 3) {
-                if (w == 3) {
-                    self.transpose3x3(out);
-                }
-                else if (w == 4) {
-                    self.transpose3x4(out);
-                }
-                else {
-                    unreachable;
-                }
-            }
-            else if (h == 4) {
-                if (w == 3) {
-                    self.transpose4x3(out);
-                }
-                else if (w == 4) {
-                    self.transpose4x4(out);
-                }
-                else {
-                    unreachable;
-                }
-            }
-            else {
-                unreachable;
+        pub inline fn transpose(self: *const MatrixType, out: *Matrix(w, h, ScalarType)) void {
+            switch (h) {
+                3 => switch(w) {
+                    3 => self.transpose3x3(out),
+                    4 => self.transpose3x4(out),
+                    else => unreachable,
+                },
+                4 => switch(w) {
+                    3 => self.transpose4x3(out),
+                    4 => self.transpose4x4(out),
+                    else => unreachable,
+                },
+                else => unreachable,
             }
         }
 
-        fn transpose3x3(self: *MatrixType, out: *Matrix(3, 3, ScalarType)) void {
+        fn transpose3x3(self: *const MatrixType, out: *Matrix(3, 3, ScalarType)) void {
             if (ScalarType == f64) {
                 const row01: @Vector(4, ScalarType) = self.parts[0..4].*;
                 const row12: @Vector(4, ScalarType) = self.parts[4..8].*;
@@ -3526,7 +3552,7 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             }
         }
 
-        fn transpose3x4(self: *MatrixType, out: *Matrix(w, h, ScalarType)) void {
+        fn transpose3x4(self: *const MatrixType, out: *Matrix(w, h, ScalarType)) void {
             if (ScalarType == f64) {
                 const mask0 = @Vector(4, i32){0, -1, 2, -3};
                 const mask1 = @Vector(4, i32){1, 3, -2, -4};
@@ -3559,7 +3585,7 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             }
         }
 
-        fn transpose4x3(self: *MatrixType, out: *Matrix(w, h, ScalarType)) void {
+        fn transpose4x3(self: *const MatrixType, out: *Matrix(w, h, ScalarType)) void {
             if (ScalarType == f64) {
                 const mask0 = @Vector(4, i32){0, 3, -3, 0};
                 const mask1 = @Vector(4, i32){0, 3, -3, 0};
@@ -3592,7 +3618,7 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             }
         }
 
-        fn transpose4x4(self: *MatrixType, out: *Matrix(4, 4, ScalarType)) void {
+        fn transpose4x4(self: *const MatrixType, out: *Matrix(4, 4, ScalarType)) void {
             if (ScalarType == f64) {
                 const mask1 = @Vector(4, i32){0, -1, 1, -2};
                 const mask2 = @Vector(4, i32){2, -3, 3, -4};
@@ -3632,7 +3658,7 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             }
         }
 
-        fn vMulLoop(self: *MatrixType, other: Vec(w, ScalarType)) Vec(h, ScalarType) {
+        fn vMulLoop(self: *const MatrixType, other: Vec(w, ScalarType)) Vec(h, ScalarType) {
             var out_vec: Vec(h, ScalarType) = undefined;
             inline for (0..h) |i| {
                 const row_vec : @Vector(w, ScalarType) = self.parts[i*w..][0..w].*;
@@ -3641,7 +3667,7 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             return out_vec;
         }
 
-        fn vMul4x4(self: *MatrixType, other: Vec(4, ScalarType)) Vec(4, ScalarType) {
+        fn vMul4x4(self: *const MatrixType, other: Vec(4, ScalarType)) Vec(4, ScalarType) {
             if (ScalarType == f64) {
                 const row0: @Vector(4, ScalarType) = self.parts[0..4].*;
                 const temp0 = row0 * other.parts;
@@ -3667,7 +3693,7 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
                 const add_row3 = @shuffle(ScalarType, temp5, temp7, mask4);
                 return Vec(4, ScalarType).init(add_row0 + add_row1 + add_row2 + add_row3);
             }
-            else { // quite a bit faster than above in release
+            else { 
                 const vecparts_mask = @Vector(8, i32){0, 1, 2, 3, 0, 1, 2, 3};
                 const vecparts_8 = @shuffle(ScalarType, other.parts, other.parts, vecparts_mask);
                 const row01: @Vector(8, ScalarType) = self.parts[0..8].*;
@@ -3697,6 +3723,68 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             }
         }
 
+        // pub inline fn fromQuaternion(quat: Quaternion(ScalarType)) MatrixType {
+        //     switch (h) {
+        //         3 => switch(w) {
+        //             3 => return fromQuaternion3x3(quat),
+        //             else => unreachable,
+        //         },
+        //         4 => switch(w) {
+        //             4 => return fromQuaternion4x4(quat),
+        //             else => unreachable,
+        //         },
+        //         else => unreachable,
+        //     }
+        // }
+
+        // fn fromQuaternion3x3(quat: Quaternion(ScalarType)) MatrixType {
+
+        // }
+        pub fn fromQuaternion4x4(quat: Quaternion(ScalarType)) MatrixType {
+            // if (ScalarType == f64) {
+                const y_squared = quat.parts[1] * quat.parts[1];
+                const shuf1 = @shuffle(ScalarType, quat.parts, quat.parts, @Vector(4, i32){0, 3, 2, 0});
+                // x^2, yw, z^2, xw
+                const prod1 = quat.parts * shuf1;
+
+                const shuf3 = @shuffle(ScalarType, prod1, prod1, @Vector(4, i32){0, 2, 2, 1});
+                const load1 = @Vector(4, ScalarType){y_squared, y_squared, shuf3[0], 0};
+                const sum1 = @splat(4, @as(ScalarType, 2.0)) * (shuf3 + load1);
+
+                // xz, xy, yz, zw
+                const shuf2 = @shuffle(ScalarType, quat.parts, quat.parts, @Vector(4, i32){3, 0, 1, 2});
+                const prod2 = quat.parts * shuf2;
+
+                const alt_neg = @Vector(4, ScalarType){1.0, -1.0, 1.0, -1.0};
+                const shuf4 = @shuffle(ScalarType, prod2, prod2, @Vector(4, i32){2, 2, 1, 1});
+                const shuf5 = @shuffle(ScalarType, prod2, prod1, @Vector(4, i32){-4, -4, 3, 3}) * alt_neg;
+                // [ yz + xw |#| yz - yw |#| xy + zw |#| xy - zw ]
+                const base_2 = @splat(4, @as(ScalarType, 2.0)) * (shuf4 + shuf5);
+                
+                const sub_vec = @Vector(4, ScalarType){1.0, 1.0, 1.0, 2.0 * prod2[0]};
+                // [ 1 - 2(x^2 + y^2) |#| 1 - 2(z^2 + y^2) |#| 1 - 2(x^2 + z^2) |#| 2(xz - yw) ]
+                const base_1 = sub_vec - sum1;
+
+                const _2xz_plus_zw = 2.0 * (prod2[0] + prod2[3]);
+
+                var mat: MatrixType = undefined;
+                const col1 = @Vector(4, ScalarType){base_1[1], base_2[3], _2xz_plus_zw, 0.0};
+                mat.parts[0..4].* = col1;
+                // putting a zero in
+                const base_2b = @shuffle(ScalarType, base_2, col1, @Vector(4, i32){0, 1, 2, -4});
+                mat.parts[4..8].* = @shuffle(ScalarType, base_1, base_2b, @Vector(4, i32){-3, 2, -2, -4});
+                mat.parts[8..12].* = @shuffle(ScalarType, base_1, base_2b, @Vector(4, i32){3, -1, 0, -4});
+                mat.parts[12..16].* = @Vector(4, ScalarType){0.0, 0.0, 0.0, 1.0};
+
+                return mat; 
+            // }
+            // else {
+                // TODO: 8-len
+                // const mask0 = @Vetctor(i32, 8){0, 1, 2, 3, 0, 1, 2, 3};
+                // const temp0 = @shuffle(ScalarType, quat.parts, quat.parts, mask0);
+            // }
+        }
+
         pub fn format(
             self: MatrixType, 
             comptime _: []const u8, 
@@ -3714,43 +3802,6 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
         }
 
 
-        // pub fn fromQuaternion(quat: Quaternion(ScalarType)) fMat4x4 {
-        //     const y_squared = quat.parts[1] * quat.parts[1];
-        //     const shuf1 = @shuffle(f32, quat.parts, quat.parts, @Vector(4, i32){0, 3, 2, 0});
-        //     // x^2, yw, z^2, xw
-        //     const prod1 = quat.parts * shuf1;
-
-        //     const shuf3 = @shuffle(f32, prod1, prod1, @Vector(4, i32){0, 2, 2, 1});
-        //     const load1 = @Vector(4, f32){y_squared, y_squared, shuf3[0], 0};
-        //     const sum1 = @splat(4, @as(f32, 2.0)) * (shuf3 + load1);
-
-        //     // xz, xy, yz, zw
-        //     const shuf2 = @shuffle(f32, quat.parts, quat.parts, @Vector(4, i32){3, 0, 1, 2});
-        //     const prod2 = quat.parts * shuf2;
-
-        //     const alt_neg = @Vector(4, f32){1.0, -1.0, 1.0, -1.0};
-        //     const shuf4 = @shuffle(f32, prod2, prod2, @Vector(4, i32){2, 2, 1, 1});
-        //     const shuf5 = @shuffle(f32, prod2, prod1, @Vector(4, i32){-4, -4, 3, 3}) * alt_neg;
-        //     // [ yz + xw |#| yz - yw |#| xy + zw |#| xy - zw ]
-        //     const base_2 = @splat(4, @as(f32, 2.0)) * (shuf4 + shuf5);
-            
-        //     const sub_vec = @Vector(4, f32){1.0, 1.0, 1.0, 2.0 * prod2[0]};
-        //     // [ 1 - 2(x^2 + y^2) |#| 1 - 2(z^2 + y^2) |#| 1 - 2(x^2 + z^2) |#| 2(xz - yw) ]
-        //     const base_1 = sub_vec - sum1;
-
-        //     const _2xz_plus_zw = 2.0 * (prod2[0] + prod2[3]);
-
-        //     var self: MatrixType = undefined;
-        //     const col1 = @Vector(4, f32){base_1[1], base_2[3], _2xz_plus_zw, 0.0};
-        //     self.parts[0] = col1;
-        //     // putting a zero in
-        //     const base_2b = @shuffle(f32, base_2, col1, @Vector(4, i32){0, 1, 2, -4});
-        //     self.parts[1] = @shuffle(f32, base_1, base_2b, @Vector(4, i32){-3, 2, -2, -4});
-        //     self.parts[2] = @shuffle(f32, base_1, base_2b, @Vector(4, i32){3, -1, 0, -4});
-        //     self.parts[3] = @Vector(4, f32){0.0, 0.0, 0.0, 1.0};
-
-        //     return self; 
-        // }
 
     // ------------------------------------------------------------------------------------------------------- constants
 
@@ -4489,6 +4540,12 @@ test "Matrix" {
 
     var randmat5f = fMat3x3.new();
     randmat4f.mMul(&randmat4ft, &randmat5f);
+
+    const q1 = fQuat.fromAxisAngle(fVec3.up, math.pi * 0.5);
+    const mq1 = fMat4x4.fromQuaternion4x4(q1);
+    const vq1 = fVec4.right;
+    const vq2 = mq1.vMul(vq1);
+    print("\nvq1: {s}\nvq2: {s}\n", .{vq1, vq2});
 
     // print("\nrandmat3f\n", .{});
     // for (0..4) |i| {
