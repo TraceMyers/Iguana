@@ -3574,9 +3574,27 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
                 + self.parts[2] * @mulAdd(ScalarType, self.parts[3], self.parts[7], -self.parts[6] * self.parts[4]);
         }
 
+        // ... TODO: understand why this works for calculating the determinant
+        fn subMat4x4(self: *const MatrixType, out: *Matrix(3, 3, ScalarType), i: usize, j: usize) void {
+            for (0..3) |di| {
+                for (0..3) |dj| {
+                    const si: usize = di + if (di >= i) @as(usize, 1) else @as(usize, 0);
+                    const sj: usize = dj + if (dj >= j) @as(usize, 1) else @as(usize, 0);
+                    out.parts[di * 3 + dj] = self.parts[si * 4 + sj];
+                }
+            }
+        }
+
         fn determinant4x4(self: *const MatrixType) ScalarType {
-            _ = self;
-            return 0.0;
+            var det: ScalarType = 0.0;
+            var submat3x3: Matrix(3, 3, ScalarType) = undefined;
+            var i: ScalarType = 1.0;
+            inline for (0..4) |n| {
+                self.subMat4x4(&submat3x3, 0, n); 
+                det += self.parts[n] * submat3x3.determinant() * i;
+                i = -i;
+            }
+            return det;
         }
 
         fn inverse3x3(self: *const MatrixType, out: *MatrixType) bool {
@@ -3600,9 +3618,6 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
                 out.parts[8] = @mulAdd(ScalarType, self.parts[0], self.parts[4], -self.parts[1] * self.parts[3]) * inv_det;
             }
             else {
-                const inv_det_vec = @Vector(8, ScalarType){
-                    inv_det, -inv_det, inv_det, -inv_det, inv_det, -inv_det, inv_det, -inv_det
-                };
                 const mask0 = @Vector(8, i32){4, 1, 1, 3, 0, 0, 3, 0};
                 const mask1 = @Vector(8, i32){-8, -8, 5, -8, -8, 5, 7, 7};
                 const mask2 = @Vector(8, i32){5, 7, 4, 5, 6, 3, 6, 6};
@@ -3616,6 +3631,7 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
                 const col2 = @shuffle(ScalarType, parts0, parts0, mask2);
                 const col3 = @shuffle(ScalarType, parts0, parts0, mask3);
 
+                const inv_det_vec = @splat(8, inv_det) * @Vector(8, ScalarType){1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0};
                 out.parts[0..8].* = @mulAdd(@Vector(8, ScalarType), col0, col1, -col2 * col3) * inv_det_vec;
                 out.parts[8] = @mulAdd(ScalarType, self.parts[0], self.parts[4], -self.parts[1] * self.parts[3]) * inv_det;
             }
@@ -3623,10 +3639,24 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             return true;
         }
         
+        // TODO: ugh recalculations and single assignments
         fn inverse4x4(self: *const MatrixType, out: *MatrixType) bool {
-            _ = self;
-            _ = out;
-            return false;
+            const det = self.determinant4x4();
+            if (@fabs(det) < 5e-4) {
+                out.* = identity;
+                return false;
+            }
+            const inv_det = 1.0 / det;
+
+            var submat3x3: Matrix(3, 3, ScalarType) = undefined;
+            for (0..4) |i| {
+                for (0..4) |j| {
+                    const sign: ScalarType = 1.0 - @as(ScalarType, (i + j) % 2) * 2.0;
+                    self.submat4x4(&submat3x3, i, j);
+                    out.parts[i + j * 4] = submat3x3.determinant3x3() * sign * inv_det;
+                }
+            }
+            return true;
         }
 
         fn transpose3x3(self: *const MatrixType, out: *Matrix(3, 3, ScalarType)) void {
@@ -4676,6 +4706,17 @@ test "Matrix" {
     const vq1 = fVec4.right;
     const vq2 = mq1.vMul(vq1);
     print("\nvq1: {s}\nvq2: {s}\n", .{vq1, vq2});
+
+    var mats3: [4]fMat3x3 = undefined;
+    var mat4: fMat4x4 = undefined;
+    for (0..16) |i| {
+        mat4.parts[i] = @intToFloat(f32, i);
+    }
+
+    for (0..4) |i| {
+        mat4.subMat4x4(&mats3[i], 0, i);
+        print("mat[{d}]:\n{s}\n", .{i, mats3[i]});
+    }
 
     // print("\nrandmat3f\n", .{});
     // for (0..4) |i| {
