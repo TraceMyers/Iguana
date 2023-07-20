@@ -1,3 +1,5 @@
+// TODO: get rid of ...c funcs
+
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------------- Vec
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -3475,6 +3477,44 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             return mat;
         }
 
+        pub inline fn fromTranslation(translation: Vec(3, ScalarType)) MatrixType {
+            comptime {
+                std.debug.assert(w == 4 and h == 4);
+            }
+            var trans_mat: Matrix(4, 4, ScalarType) = identity;
+            trans_mat.setRightCol(translation);
+            return trans_mat;
+        }
+
+        // creates a model matrix, representing a transformation from local to world space.
+        pub fn model(
+            translation: Vec(3, ScalarType),
+            rotation: Quaternion(ScalarType), 
+            scale: Vec(3, ScalarType), 
+        ) Matrix(4, 4, ScalarType) {
+            comptime {
+                std.debug.assert(w == 4 and h == 4);
+            }
+            var model_mat: Matrix(4, 4, ScalarType) = identity;
+            model_mat.setDiag(scale);
+            var rot_mat = Matrix(4, 4, ScalarType).fromQuaternion(rotation);
+            model_mat = model_mat.mMul(rot_mat);
+            var trans_mat = Matrix(4, 4, ScalarType).fromTranslation(translation);
+            model_mat = model_mat.mMul(trans_mat);
+            return model_mat;
+        }
+
+        // creates a model matrix without scaling, representing a transformation from local to world space
+        pub fn modelNoScale(
+            translation: Vec(3, ScalarType), 
+            rotation: Quaternion(ScalarType)
+        ) Matrix(4, 4, ScalarType) {
+            var model_mat = Matrix(4, 4, ScalarType).fromQuaternion(rotation);
+            var trans_mat = Matrix(4, 4, ScalarType).fromTranslation(translation);
+            model_mat = model_mat.mMul(trans_mat);
+            return model_mat;
+        }
+
         pub fn setDiagWithScalar(self: *MatrixType, scalar: ScalarType) void {
             inline for (0..min_dimension) |i| {
                 self.parts[i * w + i] = scalar;
@@ -3490,7 +3530,6 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             inline for (0..vec_len) |i| {
                 self.parts[i * w + i] = vec.parts[i];
             }
-            return self;
         }
 
         // copy this vector into the right column of a new matrix. can be used to make a translation matrix if
@@ -3515,16 +3554,17 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
 
         pub fn mMul(
             self: *const MatrixType, 
-            other: anytype, 
-            out: *Matrix(MatrixType.height, @TypeOf(other.*).width, ScalarType)
-        ) void {
+            other: anytype
+        ) Matrix(MatrixType.height, @TypeOf(other.*).width, ScalarType) {
             const other_width: comptime_int = @TypeOf(other.*).width;
             var other_transposed: Matrix(other_width, @TypeOf(other.*).height, ScalarType) = undefined;
             other.transpose(&other_transposed);
+            var out: Matrix(MatrixType.height, @TypeOf(other.*).width, ScalarType) = undefined;
             inline for (0..h) |i| {
                 const selfrow = Vec(w, ScalarType).init(self.parts[i*w..(i+1)*w].*);
                 out.parts[i*other_width..(i+1)*other_width].* = other_transposed.vMul(selfrow).parts;
             }
+            return out;
         }
 
         pub inline fn transpose(self: *const MatrixType, out: *Matrix(w, h, ScalarType)) void {
@@ -3555,7 +3595,7 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             };
         }
 
-        pub inline fn inverse(self: *const MatrixType, out: *MatrixType) void {
+        pub inline fn inverse(self: *const MatrixType, out: *MatrixType) bool {
             comptime {
                 std.debug.assert(h == w);
             }
@@ -3659,7 +3699,7 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             return true;
         }
 
-        fn transpose3x3(self: *const MatrixType, out: *Matrix(3, 3, ScalarType)) void {
+        fn transpose3x3(self: *const MatrixType) Matrix(3, 3, ScalarType) {
             if (ScalarType == f64) {
                 const row01: @Vector(4, ScalarType) = self.parts[0..4].*;
                 const row12: @Vector(4, ScalarType) = self.parts[4..8].*;
@@ -3667,9 +3707,11 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
                 const mask0 = @Vector(4, i32){0, 3, -3, 1};
                 const mask1 = @Vector(4, i32){-1, -4, 2, -2};
 
+                var out: Matrix(3, 3, ScalarType) = undefined;
                 out.parts[0..4].* = @shuffle(ScalarType, row01, row12, mask0);
                 out.parts[4..8].* = @shuffle(ScalarType, row01, row12, mask1);
                 out.parts[8] = self.parts[8];
+                return out;
             }
             else {
                 const row012: @Vector(8, ScalarType) = self.parts[0..8].*;
@@ -3679,12 +3721,15 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
                     1, 4, 7, 
                     2, 5
                 };
+
+                var out: Matrix(3, 3, ScalarType) = undefined;
                 out.parts[0..8].* = @shuffle(ScalarType, row012, row012, mask0);
                 out.parts[8] = self.parts[8];
+                return out;
             }
         }
 
-        fn transpose3x4(self: *const MatrixType, out: *Matrix(w, h, ScalarType)) void {
+        fn transpose3x4(self: *const MatrixType) Matrix(w, h, ScalarType) {
             if (ScalarType == f64) {
                 const mask0 = @Vector(4, i32){0, -1, 2, -3};
                 const mask1 = @Vector(4, i32){1, 3, -2, -4};
@@ -3701,9 +3746,12 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
                 const mask3 = @Vector(4, i32){0, 1, -1, -2};
                 const mask4 = @Vector(4, i32){0, 1, -3, -4};
                 const mask5 = @Vector(4, i32){2, 3, -3, -4};
+
+                var out: Matrix(w, h, ScalarType) = undefined;
                 out.parts[0..4].* = @shuffle(ScalarType, temp0, temp2, mask3);
                 out.parts[4..8].* = @shuffle(ScalarType, temp1, temp0, mask4);
                 out.parts[8..12].* = @shuffle(ScalarType, temp2, temp1, mask5);
+                return out;
             }
             else {
                 const row01: @Vector(8, ScalarType) = self.parts[0..8].*;
@@ -3712,12 +3760,14 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
                 const mask0 = @Vector(8, i32){0, 4, -5, 1, 5, -6, 2, 6};
                 const mask1 = @Vector(4, i32){-7, 3, 7, -8};
 
+                var out: Matrix(w, h, ScalarType) = undefined;
                 out.parts[0..8].* = @shuffle(ScalarType, row01, row12, mask0);
                 out.parts[8..12].* = @shuffle(ScalarType, row01, row12, mask1);
+                return out;
             }
         }
 
-        fn transpose4x3(self: *const MatrixType, out: *Matrix(w, h, ScalarType)) void {
+        fn transpose4x3(self: *const MatrixType) Matrix(w, h, ScalarType) {
             if (ScalarType == f64) {
                 const mask0 = @Vector(4, i32){0, 3, -3, 0};
                 const mask1 = @Vector(4, i32){0, 3, -3, 0};
@@ -3734,9 +3784,12 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
                 const mask3 = @Vector(4, i32){0, 1, 2, -2};
                 const mask4 = @Vector(4, i32){1, -1, -2, -3};
                 const mask5 = @Vector(4, i32){2, -1, -2, -3};
+                
+                var out: Matrix(w, h, ScalarType) = undefined;
                 out.parts[0..4].* = @shuffle(ScalarType, temp0, row23, mask3);
                 out.parts[4..8].* = @shuffle(ScalarType, row01, temp1, mask4);
                 out.parts[8..12].* = @shuffle(ScalarType, row01, temp2, mask5);
+                return out;
             }
             else {
                 const mask0 = @Vector(8, i32){0, 3, 6, -6, 1, 4, 7, -7};
@@ -3745,12 +3798,14 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
                 const row012: @Vector(8, ScalarType) = self.parts[0..8].*;
                 const row23: @Vector(8, ScalarType) = self.parts[4..12].*;
 
+                var out: Matrix(w, h, ScalarType) = undefined;
                 out.parts[0..8].* = @shuffle(ScalarType, row012, row23, mask0);
                 out.parts[8..12].* = @shuffle(ScalarType, row012, row23, mask1);
+                return out;
             }
         }
 
-        fn transpose4x4(self: *const MatrixType, out: *Matrix(4, 4, ScalarType)) void {
+        fn transpose4x4(self: *const MatrixType) Matrix(4, 4, ScalarType) {
             if (ScalarType == f64) {
                 const mask1 = @Vector(4, i32){0, -1, 1, -2};
                 const mask2 = @Vector(4, i32){2, -3, 3, -4};
@@ -3768,10 +3823,12 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
                 const mask3 = @Vector(4, i32){0, 1, -1, -2};
                 const mask4 = @Vector(4, i32){2, 3, -3, -4};
 
+                var out: Matrix(4, 4, ScalarType) = undefined;
                 out.parts[0..4].* = @shuffle(ScalarType, temp0, temp2, mask3);
                 out.parts[4..8].* = @shuffle(ScalarType, temp0, temp2, mask4);
                 out.parts[8..12].* = @shuffle(ScalarType, temp1, temp3, mask3);
                 out.parts[12..16].* = @shuffle(ScalarType, temp1, temp3, mask4);
+                return out;
             }
             else {
                 const row01: @Vector(8, ScalarType) = self.parts[0..8].*;
@@ -3785,8 +3842,10 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
                     2, 6, -3, -7,
                     3, 7, -4, -8
                 };
+                var out: Matrix(4, 4, ScalarType) = undefined;
                 out.parts[0..8].* = @shuffle(ScalarType, row01, row23, mask1);
                 out.parts[8..16].* = @shuffle(ScalarType, row01, row23, mask2);
+                return out;
             }
         }
 
