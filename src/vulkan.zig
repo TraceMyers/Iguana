@@ -23,6 +23,8 @@ pub fn init(method: RenderMethod) !void {
 
     if (method == RenderMethod.Direct) {
         try createDirectImage();
+        try createDirectImageView();
+        try createDirectImageSampler();
     }
 }
 
@@ -40,6 +42,8 @@ pub fn cleanup() void {
         c.vkDestroySemaphore(vk_logical, sem_render_finished[i], null);
         c.vkDestroyFence(vk_logical, in_flight_fences[i], null);
     }
+    c.vkDestroySampler(vk_logical, direct_image_host_sampler, null);
+    c.vkDestroyImageView(vk_logical, direct_image_host_view, null);
     c.vkDestroyImage(vk_logical, direct_image_host, null);
     c.vkFreeMemory(vk_logical, direct_image_host_memory, null);
     c.vkDestroyCommandPool(vk_logical, transient_command_pool, null);
@@ -573,6 +577,7 @@ fn createImageViews() !void {
             .layerCount = 1
         },
     };
+
     for (0..swapchain.image_views.count()) |i| {
         create_info.image = swapchain.images.items[i];
         const result = c.vkCreateImageView(vk_logical, &create_info, null, &swapchain.image_views.items[i]);
@@ -963,6 +968,73 @@ fn createDirectImage() !void {
     c.vkFreeMemory(vk_logical, staging_buffer_memory, null);
 }
 
+fn createImageView(image: VkImage, format: c.VkFormat) c.VkImageView {
+    const view_info = c.VkImageViewCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .image = image,
+        .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
+        .format = format,
+        .components = c.VkComponentMapping{
+            .r = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+            .g = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+            .b = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+            .a = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        },
+        .subresourceRange = c.VkImageSubresourceRange{
+            .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+        },
+    };
+
+    var image_view: c.VkImageView = undefined;
+    var result = c.vkCreateImageView(vk_logical, &view_info, null, &image_view);
+    if (result != VK_SUCCESS) {
+        return VkError.CreateDirectImageView;
+    }
+
+    return image_view;
+}
+
+fn createDirectImageView() !void {
+    direct_image_host_view = try createImageView(direct_image_host, c.VK_FORMAT_R8G8B8A8_SRGB);
+}
+
+fn createDirectImageSampler() !void {
+    var phys_props: c.VkPhysicalDeviceProperties = undefined;
+    c.vkGetPhysicalDeviceProperties(physical.vk_physical, &phys_props);
+
+    const sampler_info = c.VkSamplerCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .magFilter = c.VK_FILTER_LINEAR,
+        .minFilter = c.VK_FILTER_LINEAR,
+        .mipmapMode = c.VK_SAMPLER_MIPMAP_MODE_LINEAR,
+        .addressModeU = c.VK_SAMPLER_ADDRESS_MODE_REPEAT,
+        .addressModeV = c.VK_SAMPLER_ADDRESS_MODE_REPEAT,
+        .addressModeW = c.VK_SAMPLER_ADDRESS_MODE_REPEAT,
+        .mipLodBias = 0.0,
+        .anisotropyEnable = c.VK_TRUE,
+        .maxAnisotropy = phys_props.limits.maxSamplerAnisotropy,
+        .compareEnable = c.VK_FALSE,
+        .compareOp = c.VK_COMPARE_OP_ALWAYS,
+        .minLod = 0.0,
+        .maxLod = 0.0,
+        .borderColor = c.VK_BORDER_COLOR_INT_OPAQUE_BLACK,
+        .unnormalizedCoordinates = c.VK_FALSE,
+    };
+
+    var result = c.vkCreateSampler(vk_logical, &sampler_info, null, &direct_image_host_sampler);
+    if (result != VK_SUCCESS) {
+        return VkError.CreateTextureSampler;
+    }
+}
+
 fn createVertexBuffer() !void {
     const buffer_size = @sizeOf(@TypeOf(vertices[0])) * vertices.len;
     const staging_buffer_property_flags: c.VkMemoryPropertyFlags = 
@@ -1034,7 +1106,6 @@ fn createIndexBuffer() !void {
 }
 
 fn createCommandBuffers() !void {
-
     var buffer_allocate_info = c.VkCommandBufferAllocateInfo{
         .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .pNext = null,
@@ -1129,7 +1200,11 @@ fn getPhysicalDeviceCapabilities(device: VkPhysicalDevice, swapc_details: *Swapc
     if (!getPhysicalDeviceQueueFamilyCapabilities(device, phys_interface)) {
         return false;
     }
-    return true;
+
+    var supported_features: c.VkPhysicalDeviceFeatures = undefined;
+    c.vkGetPhysicalDeviceFeatures(device, &supported_features);
+
+    return supported_features.samplerAnisotropy > 0;
 }
 
 fn physicalDeviceHasAdequateExtensionProperties(device: VkPhysicalDevice) bool {
@@ -1871,6 +1946,8 @@ var vk_allocation_callbacks = c.VkAllocationCallbacks{
 var direct_image: ?std.ArrayList(RGBA32) = null;
 var direct_image_host: VkImage = null;
 var direct_image_host_memory: VkDeviceMemory = null;
+var direct_image_host_view: VkImageView = null;
+var direct_image_host_sampler: VkSampler = null;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------- constants
@@ -1926,6 +2003,8 @@ const VkError = error {
     AllocateBufferMemory,
     CreateDirectImage,
     TransitionImageLayout,
+    CreateDirectImageView,
+    CreateTextureSampler,
 };
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
