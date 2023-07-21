@@ -40,6 +40,8 @@ pub fn cleanup() void {
         c.vkDestroySemaphore(vk_logical, sem_render_finished[i], null);
         c.vkDestroyFence(vk_logical, in_flight_fences[i], null);
     }
+    c.vkDestroyImage(vk_logical, direct_image_host, null);
+    c.vkFreeMemory(vk_logical, direct_image_host_memory, null);
     c.vkDestroyCommandPool(vk_logical, transient_command_pool, null);
     c.vkDestroyCommandPool(vk_logical, graphics_command_pool, null);
     c.vkDestroyCommandPool(vk_logical, compute_command_pool, null);
@@ -184,7 +186,7 @@ fn recordCommandBuffer(command_buffer: VkCommandBuffer, image_idx: u32) !void {
     c.vkCmdSetViewport(command_buffer, 0, 1, &viewport);
 
     const scissor = c.VkRect2D{
-        .offset = c.VkOffset2D{ .x = 0, .y = 0},
+        .offset = c.VkOffset2D{.x = 0, .y = 0},
         .extent = swapchain.extent
     };
 
@@ -286,49 +288,14 @@ fn createBuffer(
 }
 
 fn copyBuffer(src_buffer: c.VkBuffer, dst_buffer: c.VkBuffer, size: c.VkDeviceSize) !void {
-    const command_buffer_info = c.VkCommandBufferAllocateInfo{
-        .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .pNext = null,
-        .commandPool = transient_command_pool,
-        .level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = 1,
-    };
-
-    var copy_command_buffer: c.VkCommandBuffer = undefined;
-    _ = c.vkAllocateCommandBuffers(vk_logical, &command_buffer_info, &copy_command_buffer);
-
-    const begin_info = c.VkCommandBufferBeginInfo{
-        .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-        .pNext = null,
-        .flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-        .pInheritanceInfo = null,
-    };
-    _ = c.vkBeginCommandBuffer(copy_command_buffer, &begin_info);
-
+    var command_buffer = beginTransientCommands();
     const copy_region = c.VkBufferCopy{
         .srcOffset = 0,
         .dstOffset = 0,
         .size = size,
     };
-
-    c.vkCmdCopyBuffer(copy_command_buffer, src_buffer, dst_buffer, 1, &copy_region);
-    _ = c.vkEndCommandBuffer(copy_command_buffer);
-
-    const submit_info = c.VkSubmitInfo{
-        .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .pNext = null,
-        .waitSemaphoreCount = 0,
-        .pWaitSemaphores = null,
-        .pWaitDstStageMask = 0,
-        .commandBufferCount = 1,
-        .pCommandBuffers = &copy_command_buffer,
-        .signalSemaphoreCount = 0,
-        .pSignalSemaphores = null,
-    };
-
-    _ = c.vkQueueSubmit(graphics_queue, 1, &submit_info, null);
-    // using a fence instead would allow scheduling multiple transfers at once
-    _ = c.vkQueueWaitIdle(graphics_queue);
+    c.vkCmdCopyBuffer(command_buffer, src_buffer, dst_buffer, 1, &copy_region);
+    endTransientCommands(command_buffer);
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -942,8 +909,8 @@ fn createCommandPools() !void {
 }
 
 fn createDirectImage() !void {
-    direct_image.?.init(allocator);
-    direct_image.?.appendNTimes(RGBA32{}, swapchain.extent.width * swapchain.exent.height); 
+    direct_image = std.ArrayList(RGBA32).init(allocator);
+    try direct_image.?.appendNTimes(RGBA32{}, swapchain.extent.width * swapchain.extent.height); 
     for (0..direct_image.?.items.len) |i| {
         if (i % 2 == 0) {
             direct_image.?.items[i].r = 255;
@@ -958,15 +925,42 @@ fn createDirectImage() !void {
     var staging_buffer: VkBuffer = undefined;
     var staging_buffer_memory: c.VkDeviceMemory = undefined;
 
-    const usage_flags: c.VkBufferUsageFlags = c.VK_BUFFER_USAGE_TRANSFER_BIT;
+    const usage_flags: c.VkBufferUsageFlags = c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     const memory_flags: c.VkMemoryPropertyFlags = c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    createBuffer(image_sz, usage_flags, usage_flags, memory_flags, &staging_buffer, &staging_buffer_memory);
+    try createBuffer(image_sz, usage_flags, memory_flags, &staging_buffer, &staging_buffer_memory);
 
     var image_data: ?[*]RGBA32 = null;
     _ = c.vkMapMemory(vk_logical, staging_buffer_memory, 0, image_sz, 0, @ptrCast([*c]?*anyopaque, &image_data));
-    @memcpy(image_data.?[0..direct_image.?.items.len], &direct_image.items);
+    @memcpy(image_data.?[0..direct_image.?.items.len], direct_image.?.items[0..direct_image.?.items.len]);
     c.vkUnmapMemory(vk_logical, staging_buffer_memory);
 
+    try createImage(
+        swapchain.extent.width, 
+        swapchain.extent.height, 
+        c.VK_FORMAT_R8G8B8A8_SRGB,
+        c.VK_IMAGE_TILING_OPTIMAL,
+        c.VK_IMAGE_USAGE_TRANSFER_DST_BIT | c.VK_IMAGE_USAGE_SAMPLED_BIT,
+        c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        &direct_image_host,
+        &direct_image_host_memory
+    );
+
+    try transitionImageLayout(
+        direct_image_host, 
+        c.VK_FORMAT_R8G8B8A8_SRGB, 
+        c.VK_IMAGE_LAYOUT_UNDEFINED, 
+        c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+    );
+    copyBufferToImage(staging_buffer, direct_image_host, swapchain.extent.width, swapchain.extent.height);
+    try transitionImageLayout(
+        direct_image_host, 
+        c.VK_FORMAT_R8G8B8A8_SRGB,
+        c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+    );
+
+    c.vkDestroyBuffer(vk_logical, staging_buffer, null);
+    c.vkFreeMemory(vk_logical, staging_buffer_memory, null);
 }
 
 fn createVertexBuffer() !void {
@@ -1428,6 +1422,203 @@ fn createShaderModule(file_name: []const u8) !c.VkShaderModule {
     return shader_module;
 }
 
+fn beginTransientCommands() c.VkCommandBuffer {
+    const command_buffer_info = c.VkCommandBufferAllocateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .pNext = null,
+        .commandPool = transient_command_pool,
+        .level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1,
+    };
+
+    var command_buffer: c.VkCommandBuffer = undefined;
+    _ = c.vkAllocateCommandBuffers(vk_logical, &command_buffer_info, &command_buffer);
+
+    const begin_info = c.VkCommandBufferBeginInfo{
+        .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .pNext = null,
+        .flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        .pInheritanceInfo = null,
+    };
+    _ = c.vkBeginCommandBuffer(command_buffer, &begin_info);
+
+    return command_buffer;
+}
+
+fn endTransientCommands(command_buffer: c.VkCommandBuffer) void {
+    _ = c.vkEndCommandBuffer(command_buffer);
+
+    const submit_info = c.VkSubmitInfo{
+        .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .pNext = null,
+        .waitSemaphoreCount = 0,
+        .pWaitSemaphores = null,
+        .pWaitDstStageMask = 0,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &command_buffer,
+        .signalSemaphoreCount = 0,
+        .pSignalSemaphores = null,
+    };
+
+    _ = c.vkQueueSubmit(graphics_queue, 1, &submit_info, null);
+    // using a fence instead would allow scheduling multiple transfers at once
+    _ = c.vkQueueWaitIdle(graphics_queue);
+}
+
+fn transitionImageLayout(
+    image: c.VkImage, 
+    format: c.VkFormat, 
+    old_layout: c.VkImageLayout, 
+    new_layout: c.VkImageLayout
+) !void {
+    _ = format;
+
+    var command_buffer = beginTransientCommands();
+
+    var src_access: c.VkAccessFlags = undefined;
+    var dst_access: c.VkAccessFlags = undefined;
+    var src_stage: c.VkPipelineStageFlags = undefined;
+    var dst_stage: c.VkPipelineStageFlags = undefined;
+
+    if (old_layout == c.VK_IMAGE_LAYOUT_UNDEFINED and new_layout == c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+        src_access = 0;
+        dst_access = c.VK_ACCESS_TRANSFER_WRITE_BIT;
+        src_stage = c.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        dst_stage = c.VK_PIPELINE_STAGE_TRANSFER_BIT;
+    }
+    else if (
+        old_layout == c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL 
+        and new_layout == c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+    ) {
+        src_access = c.VK_ACCESS_TRANSFER_WRITE_BIT;
+        dst_access = c.VK_ACCESS_SHADER_READ_BIT;
+        src_stage = c.VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dst_stage = c.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    }
+    else {
+        return VkError.TransitionImageLayout;
+    }
+
+    const mem_barrier = c.VkImageMemoryBarrier{
+        .sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .pNext = null,
+        .srcAccessMask = src_access,
+        .dstAccessMask = dst_access,
+        .oldLayout = old_layout,
+        .newLayout = new_layout,
+        .srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
+        .image = image,
+        .subresourceRange = c.VkImageSubresourceRange{
+            .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+        },
+    };
+
+    c.vkCmdPipelineBarrier(
+        command_buffer, 
+        src_stage,
+        dst_stage,
+        0, 
+        0, 
+        null, 
+        0, 
+        null, 
+        1, 
+        &mem_barrier
+    );
+
+    endTransientCommands(command_buffer);
+}
+
+fn copyBufferToImage(buffer: c.VkBuffer, image: c.VkImage, width: u32, height: u32) void {
+    var command_buffer = beginTransientCommands();
+
+    const copy_region = c.VkBufferImageCopy{
+        .bufferOffset = 0,
+        .bufferRowLength = 0,
+        .bufferImageHeight = 0,
+        .imageSubresource = c.VkImageSubresourceLayers{
+            .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+            .mipLevel = 0,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+        },
+        .imageOffset = c.VkOffset3D{.x=0, .y=0, .z=0},
+        .imageExtent = c.VkExtent3D{
+            .width = width,
+            .height = height,
+            .depth = 1,
+        },
+    };
+
+    c.vkCmdCopyBufferToImage(command_buffer, buffer, image, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
+
+    endTransientCommands(command_buffer);
+}
+
+fn createImage(
+    width: u32, 
+    height: u32, 
+    format: c.VkFormat, 
+    tiling: c.VkImageTiling, 
+    usage: c.VkImageUsageFlags,
+    properties: c.VkMemoryPropertyFlags,
+    image: [*c]c.VkImage,
+    image_memory: [*c]c.VkDeviceMemory
+) !void {
+    var qfam_indices_gt = LocalArray(u32, 2).new();
+    if (physical.transfer_idx == null or physical.transfer_idx.? == physical.graphics_idx.?) {
+        qfam_indices_gt.push(physical.graphics_idx.?);
+    }
+    else {
+        qfam_indices_gt.push(physical.graphics_idx.?);
+        qfam_indices_gt.push(physical.transfer_idx.?);
+    }
+
+    const image_info = c.VkImageCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .imageType = c.VK_IMAGE_TYPE_2D,
+        .format = format,
+        .extent = c.VkExtent3D{.width=width, .height=height, .depth=1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = c.VK_SAMPLE_COUNT_1_BIT,
+        .tiling = tiling,
+        .usage = usage,
+        .sharingMode = c.VK_SHARING_MODE_CONCURRENT,
+        .queueFamilyIndexCount = @intCast(u32, qfam_indices_gt.count()),
+        .pQueueFamilyIndices = qfam_indices_gt.cptr(),
+        .initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+
+    var result = c.vkCreateImage(vk_logical, &image_info, null, image);
+    if (result != VK_SUCCESS) {
+        return VkError.CreateDirectImage;
+    }
+
+    var mem_requirements: c.VkMemoryRequirements = undefined;
+    c.vkGetImageMemoryRequirements(vk_logical, image.*, &mem_requirements);
+
+    const alloc_info = c.VkMemoryAllocateInfo {
+        .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .pNext = null,
+        .allocationSize = mem_requirements.size,
+        .memoryTypeIndex = try findMemoryType(mem_requirements.memoryTypeBits, properties),
+    };
+
+    result = c.vkAllocateMemory(vk_logical, &alloc_info, null, image_memory);
+    if (result != VK_SUCCESS) {
+        return VkError.CreateDirectImage;
+    }
+
+    _ = c.vkBindImageMemory(vk_logical, image.*, image_memory.*, 0);
+}
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ------------------------------------------------------------------------------------------------ allocation callbacks
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1733,6 +1924,8 @@ const VkError = error {
     AllocatevertexBufferMemory,
     CreateBuffer,
     AllocateBufferMemory,
+    CreateDirectImage,
+    TransitionImageLayout,
 };
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

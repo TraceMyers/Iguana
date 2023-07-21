@@ -1,5 +1,5 @@
 
-const RGBA32 = packed struct {
+pub const RGBA32 = packed struct {
     r: u8 = 0,
     g: u8 = 0,
     b: u8 = 0,
