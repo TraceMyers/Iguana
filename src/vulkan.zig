@@ -5,7 +5,7 @@
 // -------------------------------------------------------------------------------------------------------------- public
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub fn init() !void {
+pub fn init(method: RenderMethod) !void {
     try createInstance();
     try createSurface();
     try getPhysicalDevice();
@@ -20,6 +20,10 @@ pub fn init() !void {
     try createIndexBuffer();
     try createCommandBuffers();
     try createSyncObjects();
+
+    if (method == RenderMethod.Direct) {
+        try createDirectImage();
+    }
 }
 
 pub fn cleanup() void {
@@ -48,6 +52,10 @@ pub fn cleanup() void {
     c.vkDestroyDevice(vk_logical, null);
     c.vkDestroySurfaceKHR(vk_instance, vk_surface, null);
     c.vkDestroyInstance(vk_instance, null);
+
+    if (direct_image != null) {
+        direct_image.?.deinit();
+    }
 }
 
 pub fn drawFrame() !void {
@@ -933,6 +941,34 @@ fn createCommandPools() !void {
     }
 }
 
+fn createDirectImage() !void {
+    direct_image.?.init(allocator);
+    direct_image.?.appendNTimes(RGBA32{}, swapchain.extent.width * swapchain.exent.height); 
+    for (0..direct_image.?.items.len) |i| {
+        if (i % 2 == 0) {
+            direct_image.?.items[i].r = 255;
+        }
+        else {
+            direct_image.?.items[i].b = 255;
+        }
+    }
+
+    const image_sz: c.VkDeviceSize = direct_image.?.items.len * 4;
+
+    var staging_buffer: VkBuffer = undefined;
+    var staging_buffer_memory: c.VkDeviceMemory = undefined;
+
+    const usage_flags: c.VkBufferUsageFlags = c.VK_BUFFER_USAGE_TRANSFER_BIT;
+    const memory_flags: c.VkMemoryPropertyFlags = c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    createBuffer(image_sz, usage_flags, usage_flags, memory_flags, &staging_buffer, &staging_buffer_memory);
+
+    var image_data: ?[*]RGBA32 = null;
+    _ = c.vkMapMemory(vk_logical, staging_buffer_memory, 0, image_sz, 0, @ptrCast([*c]?*anyopaque, &image_data));
+    @memcpy(image_data.?[0..direct_image.?.items.len], &direct_image.items);
+    c.vkUnmapMemory(vk_logical, staging_buffer_memory);
+
+}
+
 fn createVertexBuffer() !void {
     const buffer_size = @sizeOf(@TypeOf(vertices[0])) * vertices.len;
     const staging_buffer_property_flags: c.VkMemoryPropertyFlags = 
@@ -1469,6 +1505,11 @@ pub fn vkInterfaceInternalFreeNotification(
 // --------------------------------------------------------------------------------------------------------------- types
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+pub const RenderMethod = enum(u8) {
+    Geometry,
+    Direct
+};
+
 const QFamCapabilities = enum(u32) { 
     None        = 0x00,
     Present     = 0x01,
@@ -1619,10 +1660,10 @@ var current_frame: u32 = 0;
 var framebuffer_resized: bool = false;
 
 const vertices: [4]Vertex = .{
-    Vertex{.position = fVec2.init(.{-0.5, -0.5}), .color = fVec3.init(.{1.0, 1.0, 0.8})},
-    Vertex{.position = fVec2.init(.{0.5, -0.5}),  .color = fVec3.init(.{0.0, 1.0, 0.0})},
-    Vertex{.position = fVec2.init(.{0.5, 0.5}),  .color = fVec3.init(.{0.0, 0.0, 1.0})},
-    Vertex{.position = fVec2.init(.{-0.5, 0.5}),  .color = fVec3.init(.{1.0, 0.0, 1.0})}
+    Vertex{.position = fVec2.init(.{-1.0, -1.0}), .color = fVec3.init(.{1.0, 1.0, 0.8})},
+    Vertex{.position = fVec2.init(.{1.0, -1.0}),  .color = fVec3.init(.{0.0, 1.0, 0.0})},
+    Vertex{.position = fVec2.init(.{1.0, 1.0}),  .color = fVec3.init(.{0.0, 0.0, 1.0})},
+    Vertex{.position = fVec2.init(.{-1.0, 1.0}),  .color = fVec3.init(.{1.0, 0.0, 1.0})}
 };
 
 const indices: [6]u16 = .{0, 1, 2, 2, 3, 0};
@@ -1636,6 +1677,10 @@ var vk_allocation_callbacks = c.VkAllocationCallbacks{
     .pfnInternalFree = vkInterfaceInternalFreeNotification,
 };
 
+var direct_image: ?std.ArrayList(RGBA32) = null;
+var direct_image_host: VkImage = null;
+var direct_image_host_memory: VkDeviceMemory = null;
+
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------- constants
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1646,6 +1691,12 @@ const MAX_FRAMES_IN_FLIGHT: u32 = 2;
 const OP_TYPE = enum {Present, Graphics, Compute, Transfer};
 
 const LAYER_CT: u32 = 0;
+
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// -------------------------------------------------------------------------------------------------------------- config
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+var render_method = RenderMethod.Direct;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- errors
@@ -1693,6 +1744,24 @@ pub const c = @cImport({
     @cInclude("vk_mem_alloc.h");
 });
 
+const std = @import("std");
+const print = std.debug.print;
+const array = @import("array.zig");
+const window = @import("window.zig");
+const benchmark = @import("benchmark.zig");
+const gfxmath = @import("gfxmath.zig");
+const nd = @import("ndmath.zig");
+const gfxtypes = @import("gfxtypes.zig");
+
+const LocalArray = array.LocalArray;
+const ScopeTimer = benchmark.ScopeTimer;
+const getScopeTimerID = benchmark.getScopeTimerID;
+const Vertex = gfxmath.Vertex;
+const fVec2 = nd.fVec2;
+const fVec3 = nd.fVec3;
+const RGBA32 = gfxtypes.RGBA32;
+const allocator = std.heap.page_allocator;
+
 const VkResult = c.VkResult;
 const VK_SUCCESS = c.VK_SUCCESS;
 const VkInstance = c.VkInstance;
@@ -1710,17 +1779,5 @@ const VkSemaphore = c.VkSemaphore;
 const VkFence = c.VkFence;
 const VkBuffer = c.VkBuffer;
 const VkDeviceMemory = c.VkDeviceMemory;
+const VkImage = c.VkImage;
 
-const std = @import("std");
-const print = std.debug.print;
-const array = @import("array.zig");
-const window = @import("window.zig");
-const LocalArray = array.LocalArray;
-const benchmark = @import("benchmark.zig");
-const ScopeTimer = benchmark.ScopeTimer;
-const getScopeTimerID = benchmark.getScopeTimerID;
-const gfxmath = @import("gfxmath.zig");
-const Vertex = gfxmath.Vertex;
-const nd = @import("ndmath.zig");
-const fVec2 = nd.fVec2;
-const fVec3 = nd.fVec3;

@@ -1,5 +1,3 @@
-// TODO: get rid of ...c funcs
-
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------------- Vec
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -3486,6 +3484,15 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             return trans_mat;
         }
 
+        pub inline fn fromScale(scale: Vec(3, ScalarType)) MatrixType {
+            comptime {
+                std.debug.assert(w == 4 and h == 4);
+            }
+            var scale_mat: Matrix(4, 4, ScalarType) = identity;
+            scale_mat.setDiag(scale);
+            return scale_mat;
+        }
+
         // creates a model matrix, representing a transformation from local to world space.
         pub fn model(
             translation: Vec(3, ScalarType),
@@ -3495,12 +3502,12 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             comptime {
                 std.debug.assert(w == 4 and h == 4);
             }
-            var model_mat: Matrix(4, 4, ScalarType) = identity;
-            model_mat.setDiag(scale);
+            var model_mat: Matrix(4, 4, ScalarType) = undefined;
+            model_mat.setRightCol(translation);
             var rot_mat = Matrix(4, 4, ScalarType).fromQuaternion(rotation);
             model_mat = model_mat.mMul(rot_mat);
-            var trans_mat = Matrix(4, 4, ScalarType).fromTranslation(translation);
-            model_mat = model_mat.mMul(trans_mat);
+            var scale_mat = Matrix(4, 4, ScalarType).fromScale(scale);
+            model_mat = model_mat.mMul(scale_mat);
             return model_mat;
         }
 
@@ -3509,11 +3516,42 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             translation: Vec(3, ScalarType), 
             rotation: Quaternion(ScalarType)
         ) Matrix(4, 4, ScalarType) {
-            var model_mat = Matrix(4, 4, ScalarType).fromQuaternion(rotation);
-            var trans_mat = Matrix(4, 4, ScalarType).fromTranslation(translation);
-            model_mat = model_mat.mMul(trans_mat);
+            var model_mat: Matrix(4, 4, ScalarType) = undefined;
+            model_mat.setRightCol(translation);
+            var rot_mat = Matrix(4, 4, ScalarType).fromQuaternion(rotation);
+            model_mat = model_mat.mMul(rot_mat);
             return model_mat;
         }
+
+        // TODO: could build the inverse (?) rather than inverting at the end
+        pub fn view(
+            translation: Vec(3, ScalarType),
+            rotation: Quaternion(ScalarType),
+            scale: Vec(3, ScalarType)
+        ) Matrix(4, 4, ScalarType) {
+            var view_mat: Matrix(4, 4, ScalarType) = undefined;
+            view_mat.setRightCol(translation);
+            var rot_mat = Matrix(4, 4, ScalarType).fromQuaternion(rotation);
+            view_mat = view_mat.mMul(rot_mat);
+            var scale_mat = Matrix(4, 4, ScalarType).fromScale(scale);
+            view_mat = view_mat.mMul(scale_mat);
+            view_mat.inverse4x4(&view_mat);
+            return view_mat;
+        }
+
+        pub fn viewNoScale(
+            translation: Vec(3, ScalarType),
+            rotation: Quaternion(ScalarType),
+        ) Matrix(4, 4, ScalarType) {
+            var view_mat: Matrix(4, 4, ScalarType) = undefined;
+            view_mat.setRightCol(translation);
+            var rot_mat = Matrix(4, 4, ScalarType).fromQuaternion(rotation);
+            view_mat = view_mat.mMul(rot_mat);
+            view_mat.inverse4x4(&view_mat);
+            return view_mat;
+        }
+
+        // pub fn projectionPerspective()
 
         pub fn setDiagWithScalar(self: *MatrixType, scalar: ScalarType) void {
             inline for (0..min_dimension) |i| {
@@ -3533,7 +3571,7 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
         }
 
         // copy this vector into the right column of a new matrix. can be used to make a translation matrix if
-        // size == vec.len + 1. diagonal entries (except potentially the bottom right if overwritten) are identity.
+        // size == vec.len + 1. 
         pub fn setRightCol(self: *MatrixType, vec: anytype) void {
             const vec_len: comptime_int = @TypeOf(vec).length;
             std.debug.assert(min_dimension >= vec_len);
@@ -3557,8 +3595,7 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             other: anytype
         ) Matrix(MatrixType.height, @TypeOf(other.*).width, ScalarType) {
             const other_width: comptime_int = @TypeOf(other.*).width;
-            var other_transposed: Matrix(other_width, @TypeOf(other.*).height, ScalarType) = undefined;
-            other.transpose(&other_transposed);
+            var other_transposed = other.transpose();
             var out: Matrix(MatrixType.height, @TypeOf(other.*).width, ScalarType) = undefined;
             inline for (0..h) |i| {
                 const selfrow = Vec(w, ScalarType).init(self.parts[i*w..(i+1)*w].*);
@@ -3567,20 +3604,33 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             return out;
         }
 
-        pub inline fn transpose(self: *const MatrixType, out: *Matrix(w, h, ScalarType)) void {
-            switch (h) {
-                3 => switch(w) {
-                    3 => self.transpose3x3(out),
-                    4 => self.transpose3x4(out),
+        pub inline fn transpose(self: *const MatrixType) Matrix(w, h, ScalarType) {
+            var temp_mat: Matrix(w, h, ScalarType) = undefined;
+            return switch (h) {
+                3 => return switch(w) {
+                    3 => blk: {
+                        self.transpose3x3(&temp_mat);
+                        break :blk temp_mat;
+                    },
+                    4 => blk: {
+                        self.transpose3x4(&temp_mat);
+                        break :blk temp_mat;
+                    },
                     else => unreachable,
                 },
-                4 => switch(w) {
-                    3 => self.transpose4x3(out),
-                    4 => self.transpose4x4(out),
+                4 => return switch(w) {
+                    3 => blk: {
+                        self.transpose4x3(&temp_mat);
+                        break :blk temp_mat;
+                    },
+                    4 => blk: {
+                        self.transpose4x4(&temp_mat);
+                        break :blk temp_mat;
+                    },
                     else => unreachable,
                 },
                 else => unreachable,
-            }
+            };
         }
 
         pub inline fn determinant(self: *const MatrixType) ScalarType {
@@ -3699,7 +3749,7 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             return true;
         }
 
-        fn transpose3x3(self: *const MatrixType) Matrix(3, 3, ScalarType) {
+        fn transpose3x3(self: *const MatrixType, out: *Matrix(3, 3, ScalarType)) void {
             if (ScalarType == f64) {
                 const row01: @Vector(4, ScalarType) = self.parts[0..4].*;
                 const row12: @Vector(4, ScalarType) = self.parts[4..8].*;
@@ -3707,11 +3757,9 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
                 const mask0 = @Vector(4, i32){0, 3, -3, 1};
                 const mask1 = @Vector(4, i32){-1, -4, 2, -2};
 
-                var out: Matrix(3, 3, ScalarType) = undefined;
                 out.parts[0..4].* = @shuffle(ScalarType, row01, row12, mask0);
                 out.parts[4..8].* = @shuffle(ScalarType, row01, row12, mask1);
                 out.parts[8] = self.parts[8];
-                return out;
             }
             else {
                 const row012: @Vector(8, ScalarType) = self.parts[0..8].*;
@@ -3722,14 +3770,12 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
                     2, 5
                 };
 
-                var out: Matrix(3, 3, ScalarType) = undefined;
                 out.parts[0..8].* = @shuffle(ScalarType, row012, row012, mask0);
                 out.parts[8] = self.parts[8];
-                return out;
             }
         }
 
-        fn transpose3x4(self: *const MatrixType) Matrix(w, h, ScalarType) {
+        fn transpose3x4(self: *const MatrixType, out: *Matrix(w, h, ScalarType)) void {
             if (ScalarType == f64) {
                 const mask0 = @Vector(4, i32){0, -1, 2, -3};
                 const mask1 = @Vector(4, i32){1, 3, -2, -4};
@@ -3747,11 +3793,9 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
                 const mask4 = @Vector(4, i32){0, 1, -3, -4};
                 const mask5 = @Vector(4, i32){2, 3, -3, -4};
 
-                var out: Matrix(w, h, ScalarType) = undefined;
                 out.parts[0..4].* = @shuffle(ScalarType, temp0, temp2, mask3);
                 out.parts[4..8].* = @shuffle(ScalarType, temp1, temp0, mask4);
                 out.parts[8..12].* = @shuffle(ScalarType, temp2, temp1, mask5);
-                return out;
             }
             else {
                 const row01: @Vector(8, ScalarType) = self.parts[0..8].*;
@@ -3760,14 +3804,12 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
                 const mask0 = @Vector(8, i32){0, 4, -5, 1, 5, -6, 2, 6};
                 const mask1 = @Vector(4, i32){-7, 3, 7, -8};
 
-                var out: Matrix(w, h, ScalarType) = undefined;
                 out.parts[0..8].* = @shuffle(ScalarType, row01, row12, mask0);
                 out.parts[8..12].* = @shuffle(ScalarType, row01, row12, mask1);
-                return out;
             }
         }
 
-        fn transpose4x3(self: *const MatrixType) Matrix(w, h, ScalarType) {
+        fn transpose4x3(self: *const MatrixType, out: *Matrix(w, h, ScalarType)) void {
             if (ScalarType == f64) {
                 const mask0 = @Vector(4, i32){0, 3, -3, 0};
                 const mask1 = @Vector(4, i32){0, 3, -3, 0};
@@ -3785,11 +3827,9 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
                 const mask4 = @Vector(4, i32){1, -1, -2, -3};
                 const mask5 = @Vector(4, i32){2, -1, -2, -3};
                 
-                var out: Matrix(w, h, ScalarType) = undefined;
                 out.parts[0..4].* = @shuffle(ScalarType, temp0, row23, mask3);
                 out.parts[4..8].* = @shuffle(ScalarType, row01, temp1, mask4);
                 out.parts[8..12].* = @shuffle(ScalarType, row01, temp2, mask5);
-                return out;
             }
             else {
                 const mask0 = @Vector(8, i32){0, 3, 6, -6, 1, 4, 7, -7};
@@ -3798,14 +3838,12 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
                 const row012: @Vector(8, ScalarType) = self.parts[0..8].*;
                 const row23: @Vector(8, ScalarType) = self.parts[4..12].*;
 
-                var out: Matrix(w, h, ScalarType) = undefined;
                 out.parts[0..8].* = @shuffle(ScalarType, row012, row23, mask0);
                 out.parts[8..12].* = @shuffle(ScalarType, row012, row23, mask1);
-                return out;
             }
         }
 
-        fn transpose4x4(self: *const MatrixType) Matrix(4, 4, ScalarType) {
+        fn transpose4x4(self: *const MatrixType, out: *Matrix(4, 4, ScalarType)) void {
             if (ScalarType == f64) {
                 const mask1 = @Vector(4, i32){0, -1, 1, -2};
                 const mask2 = @Vector(4, i32){2, -3, 3, -4};
@@ -3823,12 +3861,10 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
                 const mask3 = @Vector(4, i32){0, 1, -1, -2};
                 const mask4 = @Vector(4, i32){2, 3, -3, -4};
 
-                var out: Matrix(4, 4, ScalarType) = undefined;
                 out.parts[0..4].* = @shuffle(ScalarType, temp0, temp2, mask3);
                 out.parts[4..8].* = @shuffle(ScalarType, temp0, temp2, mask4);
                 out.parts[8..12].* = @shuffle(ScalarType, temp1, temp3, mask3);
                 out.parts[12..16].* = @shuffle(ScalarType, temp1, temp3, mask4);
-                return out;
             }
             else {
                 const row01: @Vector(8, ScalarType) = self.parts[0..8].*;
@@ -3842,10 +3878,8 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
                     2, 6, -3, -7,
                     3, 7, -4, -8
                 };
-                var out: Matrix(4, 4, ScalarType) = undefined;
                 out.parts[0..8].* = @shuffle(ScalarType, row01, row23, mask1);
                 out.parts[8..16].* = @shuffle(ScalarType, row01, row23, mask2);
-                return out;
             }
         }
 
@@ -4733,11 +4767,10 @@ test "Matrix" {
     }
 
     var randmat3f = fMat4x4.random(&rand, 1.0);
-    var randmat3ft: fMat4x4 = undefined;
-    randmat3f.transpose(&randmat3ft);
+    var randmat3ft = randmat3f.transpose();
     var randmat3d = dMat4x4.random(&rand, 1.0);
-    var randmat3dt: dMat4x4 = undefined;
-    randmat3d.transpose(&randmat3dt);
+    var randmat3dt = randmat3d.transpose();
+    _ = randmat3dt;
 
 
     // const test_allocator = std.heap.testAllocator;
@@ -4746,19 +4779,17 @@ test "Matrix" {
     print("\n 4x4 t:\n{s}\n", .{randmat3ft});
 
     var randmat4f = fMat3x4.random(&rand, 1.0);
-    var randmat4ft: fMat4x3 = undefined;
-    randmat4f.transpose(&randmat4ft);
-    var randmat4ftt: fMat3x4 = undefined;
-    randmat4ft.transpose(&randmat4ftt);
+    var randmat4ft = randmat4f.transpose();
+    var randmat4ftt = randmat4ft.transpose();
 
     print("\n 3x4:\n{s}\n", .{randmat4f});
     print("\n3x4 t:\n{s}\n", .{randmat4ft});
     print("\n3x4 tt:\n{s}\n", .{randmat4ftt});
 
-    randmat3f.mMul(&randmat3ft, &randmat3f);
+    randmat3f = randmat3f.mMul(&randmat3ft);
 
-    var randmat5f = fMat3x3.new();
-    randmat4f.mMul(&randmat4ft, &randmat5f);
+    var randmat5f = randmat4f.mMul(&randmat4ft);
+    _ = randmat5f;
 
     const q1 = fQuat.fromAxisAngle(fVec3.up, math.pi * 0.25);
     const mq1 = fMat4x4.fromQuaternion(q1);

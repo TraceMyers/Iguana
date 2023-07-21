@@ -1,23 +1,20 @@
 pub fn main() !void {
+    defer window.cleanup();
+    try window.init(1024, 768, "yay");
 
-    // defer window.cleanup();
-    // try window.init(1024, 768, "yay");
+    defer vk.cleanup();
+    try vk.init(vk.RenderMethod.Direct);
 
-    // defer vk.cleanup();
-    // try vk.init();
+    var should_run: bool = true;
+    while (should_run) {
+        window.pollEvents();
+        if (window.shouldClose()) {
+            should_run = false;
+        }
+        try vk.drawFrame();
+    }
 
-    // var should_run: bool = true;
-    // while (should_run) {
-    //     window.pollEvents();
-    //     if (window.shouldClose()) {
-    //         should_run = false;
-    //     }
-    //     try vk.drawFrame();
-    // }
-
-    // benchmark.printAllScopeTimers();
-    // nd.testQuaternion();
-    nd.quatMulPerformance();
+    benchmark.printAllScopeTimers();
 }
 
 const std = @import("std");

@@ -20,6 +20,7 @@ pub fn init(width: i32, height: i32, name_opt: ?[*c]const u8) !void {
     }
     _ = c.glfwSetFramebufferSizeCallback(window, resizeCallback);
 
+    // c.glfwSwapBuffers(window: ?*GLFWwindow)
     if (window == null) {
         return GLFWError.WindowCreateFail;
     }
