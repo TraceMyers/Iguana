@@ -2,7 +2,7 @@
 // ----------------------------------------------------------------------------------------------------- float precision
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// determine precision given the scalar type. for checking equality between floats when the floats involved
+// get a small number given the scalar type. for checking equality between floats when the floats involved
 // are very large numbers (for f32: -2^20 to 2^20 exclusive). not useful for differences between very small numbers.
 pub inline fn epsilonLarge(comptime ScalarType: anytype) comptime_float {
     switch(ScalarType) {
@@ -13,7 +13,7 @@ pub inline fn epsilonLarge(comptime ScalarType: anytype) comptime_float {
     }
 }
 
-// determine precision given the scalar type. for checking equality between floats when the floats involved
+// get a small number given the scalar type. for checking equality between floats when the floats involved
 // are mediumish numbers (for f32: -2^16 to 2^16 exclusive). not useful for differences between very small numbers.
 pub inline fn epsilonMedium(comptime ScalarType: anytype) comptime_float {
     switch(ScalarType) {
@@ -24,7 +24,7 @@ pub inline fn epsilonMedium(comptime ScalarType: anytype) comptime_float {
     }
 }
 
-// determine precision given the scalar type. for checking equality between floats when the floats involved
+// get a small number given the scalar type. for checking equality between floats when the floats involved
 // are small numbers (-2 to 2 exclusive). not useful for differences between very small numbers.
 pub inline fn epsilonSmall(comptime ScalarType: anytype) comptime_float {
     switch(ScalarType) {

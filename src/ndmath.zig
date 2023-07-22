@@ -2342,29 +2342,28 @@ pub fn VAResult(
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // ---------------------------------------------------------------------------------------------------------------- DOCS
-// given "math operations" means individual vector operations like dot() and dist(), VecArray is valuable when...
+// VecArray is valuable when...
 
-// (m) >= 4n(a) + 3(c) for f32x4 vectors
-// (m) >= 3n(a) + 2(c) for f32x8 vectors
+// m >= 4na + 3c for f32x4 vectors
+// m >= 3na + 2c for f32x8 vectors
 
-// n = number of vectors in VecArray
-// m = math operations
-// a = allocations (for one VecArray or one result/output array)
-// c = individual conversions
+// m := number of individual operations on one vector or between two vectors, like size() and dist()
+// n := number of vectors in VecArray
+// a := allocations (for one VecArray or one result/output array)
+// c := individual vector conversions
 
 // - in general, it's a good idea to reuse results structs (and their allocations) for multiple operations and/or store
 //   them long-term when possible, where/when it doesn't disrupt cache performance.
 // - VecArrays should likely be stored long-term most of the time, since they require allocations themselves.
-// - rules of thumb...
+// - as with many things, using a VecArray may end up slower than the traditional approach in debug builds. in tests,
+//   building in debug, using an f32 4x8 with multiDot was somewhat faster than single dot products. f32 4x4 was slower.
+//   (in ReleaseFast, 4x4 is much faster and 4x8 is an order of magnitude faster)
+// - these points...
 //      - are not meant to stand in for performance measurements. they are guidance for design choices.
 //      - are based on measurements gotten from tests using 128 and 1024 vectors in a tight loop on my machine.  the
 //        rate of increasing advantage to SIMD depends on host specs and the program's performance characteristics.
-//      - may change as further performance improvements are introduced.
-// - as with many things, using a VecArray may end up slower than the traditional approach in debug builds. in tests,
-//   building in debug, using an f32 4x8 with multiDot was somewhat faster than single dot products. f32 4x4 was slower.
 
 // TODO: continue work om mem6 so this can move away from using zig allocator
-// TODO: all SIMD needs a cleanup pass for user-friendliness and readability
 
 // ------------------------------------------------------------------------------------------------- convenience aliases
 

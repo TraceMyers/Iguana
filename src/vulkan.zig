@@ -13,6 +13,7 @@ pub fn init(method: RenderMethod) !void {
     try createSwapchain();
     try createImageViews();
     try createRenderPass();
+    try createDescriptorSetLayout();
     try createGraphicsPipeline();
     try createFramebuffers();
     try createCommandPools();
@@ -33,6 +34,7 @@ pub fn cleanup() void {
         _ = c.vkWaitForFences(vk_logical, MAX_FRAMES_IN_FLIGHT, &in_flight_fences[0], c.VK_TRUE, ONE_SECOND_IN_NANOSECONDS);
     }
     cleanupSwapchain();
+    c.vkDestroyDescriptorSetLayout(vk_logical, vk_descriptor_set_layout, null);
     c.vkDestroyBuffer(vk_logical, vertex_buffer, null);
     c.vkFreeMemory(vk_logical, vertex_buffer_memory, null);
     c.vkDestroyBuffer(vk_logical, index_buffer, null);
@@ -790,8 +792,8 @@ fn createGraphicsPipeline() !void {
         .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .pNext = null,
         .flags = 0,
-        .setLayoutCount = 0,
-        .pSetLayouts = null,
+        .setLayoutCount = 1,
+        .pSetLayouts = &vk_descriptor_set_layout,
         .pushConstantRangeCount = 0,
         .pPushConstantRanges = null,
     };
@@ -968,7 +970,7 @@ fn createDirectImage() !void {
     c.vkFreeMemory(vk_logical, staging_buffer_memory, null);
 }
 
-fn createImageView(image: VkImage, format: c.VkFormat) c.VkImageView {
+fn createImageView(image: VkImage, format: c.VkFormat) !c.VkImageView {
     const view_info = c.VkImageViewCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .pNext = null,
@@ -1183,6 +1185,29 @@ fn createSyncObjects() !void {
                 return VkError.CreateSyncObjects;
             }
         }
+    }
+}
+
+fn createDescriptorSetLayout() !void {
+    const ubo_layout_binding = c.VkDescriptorSetLayoutBinding{
+        .binding = 0,
+        .descriptorType = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = 1,
+        .stageFlags = c.VK_SHADER_STAGE_VERTEX_BIT,
+        .pImmutableSamplers = null,
+    };
+
+    const layout_info = c.VkDescriptorSetLayoutCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .bindingCount = 1,
+        .pBindings = &ubo_layout_binding,
+    };
+
+    var result = c.vkCreateDescriptorSetLayout(vk_logical, &layout_info, null, &vk_descriptor_set_layout);
+    if (result != VK_SUCCESS) {
+        return VkError.CreateDescriptorSetLayout;
     }
 }
 
@@ -1890,6 +1915,7 @@ var vk_instance: VkInstance = null;
 var vk_surface: VkSurfaceKHR = null;
 var vk_logical: VkDevice = null;
 var vk_render_pass: VkRenderPass = null;
+var vk_descriptor_set_layout: VkDescriptorSetLayout = null;
 var vk_pipeline_layout: VkPipelineLayout = null;
 var vk_pipeline: VkPipeline = null;
 var sem_image_available: [MAX_FRAMES_IN_FLIGHT]VkSemaphore = .{null, null};
@@ -1946,8 +1972,12 @@ var vk_allocation_callbacks = c.VkAllocationCallbacks{
 var direct_image: ?std.ArrayList(RGBA32) = null;
 var direct_image_host: VkImage = null;
 var direct_image_host_memory: VkDeviceMemory = null;
-var direct_image_host_view: VkImageView = null;
-var direct_image_host_sampler: VkSampler = null;
+var direct_image_host_view: c.VkImageView = null;
+var direct_image_host_sampler: c.VkSampler = null;
+
+var uniform_buffers = std.ArrayList(VkBuffer).init(allocator);
+var uniform_buffers_memory = std.ArrayList(c.VkDeviceMemory).init(allocator);
+var uniform_buffers_mapped = std.ArrayList(*anyopaque).init(allocator);
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------- constants
@@ -2005,6 +2035,7 @@ const VkError = error {
     TransitionImageLayout,
     CreateDirectImageView,
     CreateTextureSampler,
+    CreateDescriptorSetLayout,
 };
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2052,4 +2083,4 @@ const VkFence = c.VkFence;
 const VkBuffer = c.VkBuffer;
 const VkDeviceMemory = c.VkDeviceMemory;
 const VkImage = c.VkImage;
-
+const VkDescriptorSetLayout = c.VkDescriptorSetLayout;
