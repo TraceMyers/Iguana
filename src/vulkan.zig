@@ -1,5 +1,6 @@
 // TODO: better error handling
 // TODO: implement vulkan memory allocator so this isn't both very slow and limited in usage
+// TODO: VK_CULL_MODE_NONE to VK_CULL_MODE_BACK_BIT once drawing is confirmed
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- public
@@ -19,13 +20,16 @@ pub fn init(method: RenderMethod) !void {
     try createCommandPools();
     try createVertexBuffer();
     try createIndexBuffer();
+    try createUniformBuffers();
+    try createDescriptorPool();
+    try createDescriptorSets();
     try createCommandBuffers();
     try createSyncObjects();
 
     if (method == RenderMethod.Direct) {
-        try createDirectImage();
-        try createDirectImageView();
-        try createDirectImageSampler();
+        // try createDirectImage();
+        // try createDirectImageView();
+        // try createDirectImageSampler();
     }
 }
 
@@ -34,10 +38,15 @@ pub fn cleanup() void {
         _ = c.vkWaitForFences(vk_logical, MAX_FRAMES_IN_FLIGHT, &in_flight_fences[0], c.VK_TRUE, ONE_SECOND_IN_NANOSECONDS);
     }
     cleanupSwapchain();
-    c.vkDestroyDescriptorSetLayout(vk_logical, vk_descriptor_set_layout, null);
     c.vkDestroyBuffer(vk_logical, vertex_buffer, null);
     c.vkFreeMemory(vk_logical, vertex_buffer_memory, null);
+    c.vkDestroyDescriptorPool(vk_logical, vk_descriptor_pool, null);
+    c.vkDestroyDescriptorSetLayout(vk_logical, vk_descriptor_set_layout, null);
     c.vkDestroyBuffer(vk_logical, index_buffer, null);
+    for (0..MAX_FRAMES_IN_FLIGHT) |i| {
+        c.vkDestroyBuffer(vk_logical, uniform_buffers.items[i], null);
+        c.vkFreeMemory(vk_logical, uniform_buffers_memory.items[i], null);
+    }
     c.vkFreeMemory(vk_logical, index_buffer_memory, null);
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
         c.vkDestroySemaphore(vk_logical, sem_image_available[i], null);
@@ -70,6 +79,7 @@ pub fn drawFrame() !void {
     var t1 = ScopeTimer.start("vkinterface.drawFrame", getScopeTimerID());
     defer t1.stop();
 
+
     _ = c.vkWaitForFences(vk_logical, 1, &in_flight_fences[current_frame], c.VK_TRUE, std.math.maxInt(u64));
     var image_idx: u32 = undefined;
 
@@ -91,8 +101,9 @@ pub fn drawFrame() !void {
     _ = c.vkResetCommandBuffer(graphics_command_buffers[current_frame], 0);
     try recordCommandBuffer(graphics_command_buffers[current_frame], image_idx);
 
-    const wait_stage: c.VkPipelineStageFlags = c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    updateUniformBuffer(current_frame);
 
+    const wait_stage: c.VkPipelineStageFlags = c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     const submit_info = c.VkSubmitInfo{
         .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .pNext = null,
@@ -135,6 +146,22 @@ pub fn drawFrame() !void {
 
 pub fn setFramebufferResized() void {
     framebuffer_resized = true;
+}
+
+fn updateUniformBuffer(current_image: u32) void {
+    var mvp: fMVP = undefined;
+    // const rotation = nd.fQuat.fromAxisAngle(fVec3.up, 1e-2);
+    mvp.model = nd.fMat4x4.model(fVec3.init(.{0.0, 0.0, 1.0}), nd.fQuat.fromAxisAngle(fVec3.up, 0.5), fVec3.fromScalar(500.0));
+    mvp.view = nd.fMat4x4.lookAt(fVec3.fromScalar(2.0), fVec3.fromScalar(0.0), fVec3.init(.{0.0, 0.0, 1.0}));
+    mvp.projection = nd.fMat4x4.projectionPerspective(
+        std.math.degreesToRadians(f32, 45.0), 
+        @intToFloat(f32, swapchain.extent.width) / @intToFloat(f32, swapchain.extent.height), 
+        0.1, 
+        10.0, 
+        true
+    );
+    @memcpy(@ptrCast([*]fMVP, @alignCast(16, (uniform_buffers_mapped.items[current_image].?)))[0..1], @ptrCast([*]fMVP, &mvp)[0..1]);
+    // _ = current_image;
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -197,7 +224,18 @@ fn recordCommandBuffer(command_buffer: VkCommandBuffer, image_idx: u32) !void {
     };
 
     c.vkCmdSetScissor(command_buffer, 0, 1, &scissor);
-    // c.vkCmdDraw(command_buffer, @intCast(u32, vertices.len), 1, 0, 0);
+
+    c.vkCmdBindDescriptorSets(
+        command_buffer, 
+        c.VK_PIPELINE_BIND_POINT_GRAPHICS, 
+        vk_pipeline_layout, 
+        0, 
+        1, 
+        &descriptor_sets[current_frame], 
+        0, 
+        null
+    );
+
     c.vkCmdDrawIndexed(command_buffer, @intCast(u32, indices.len), 1, 0, 0, 0); // instancing optional here
     c.vkCmdEndRenderPass(command_buffer);
 
@@ -650,10 +688,12 @@ fn createRenderPass() !void {
 
 fn createGraphicsPipeline() !void {
     // var vert_module: c.VkShaderModule = try createShaderModule("../../test/shaders/trivert.spv");
-    var vert_module: c.VkShaderModule = try createShaderModule("test/shaders/trivert.spv");
+    // var vert_module: c.VkShaderModule = try createShaderModule("test/shaders/trivert.spv");
+    var vert_module: c.VkShaderModule = try createShaderModule("D:/projects/zig/core/test/shaders/trivert.spv");
     defer c.vkDestroyShaderModule(vk_logical, vert_module, null);
     // var frag_module: c.VkShaderModule = try createShaderModule("../../test/shaders/trifrag.spv");
-    var frag_module: c.VkShaderModule = try createShaderModule("test/shaders/trifrag.spv");
+    // var frag_module: c.VkShaderModule = try createShaderModule("test/shaders/trifrag.spv");
+    var frag_module: c.VkShaderModule = try createShaderModule("D:/projects/zig/core/test/shaders/trifrag.spv");
     defer c.vkDestroyShaderModule(vk_logical, frag_module, null);
 
     const vert_shader_info = c.VkPipelineShaderStageCreateInfo{
@@ -741,8 +781,8 @@ fn createGraphicsPipeline() !void {
         .depthClampEnable = c.VK_FALSE,
         .rasterizerDiscardEnable = c.VK_FALSE,
         .polygonMode = c.VK_POLYGON_MODE_FILL,
-        .cullMode = c.VK_CULL_MODE_BACK_BIT,
-        .frontFace = c.VK_FRONT_FACE_CLOCKWISE,
+        .cullMode = c.VK_CULL_MODE_NONE,
+        .frontFace = c.VK_FRONT_FACE_COUNTER_CLOCKWISE,
         .depthBiasEnable = c.VK_FALSE,
         .depthBiasConstantFactor = 0.0,
         .depthBiasClamp = 0.0,
@@ -1021,7 +1061,7 @@ fn createDirectImageSampler() !void {
         .addressModeV = c.VK_SAMPLER_ADDRESS_MODE_REPEAT,
         .addressModeW = c.VK_SAMPLER_ADDRESS_MODE_REPEAT,
         .mipLodBias = 0.0,
-        .anisotropyEnable = c.VK_TRUE,
+        .anisotropyEnable = c.VK_FALSE,
         .maxAnisotropy = phys_props.limits.maxSamplerAnisotropy,
         .compareEnable = c.VK_FALSE,
         .compareOp = c.VK_COMPARE_OP_ALWAYS,
@@ -1105,6 +1145,90 @@ fn createIndexBuffer() !void {
     try copyBuffer(staging_buffer, index_buffer, buffer_size);
     c.vkDestroyBuffer(vk_logical, staging_buffer, null);
     c.vkFreeMemory(vk_logical, staging_buffer_memory, null);
+}
+
+fn createUniformBuffers() !void {
+    const buffer_size: u32 = @sizeOf(fMVP);
+
+    // uniform_buffers.sZero();
+    // uniform_buffers_memory.sZero();
+    // uniform_buffers_mapped.sZero();
+
+    for (0..MAX_FRAMES_IN_FLIGHT) |i| {
+        try createBuffer(
+            buffer_size, 
+            c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
+            c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            &uniform_buffers.items[i],
+            &uniform_buffers_memory.items[i]
+        );
+
+        const result = c.vkMapMemory(vk_logical, uniform_buffers_memory.items[i], 0, buffer_size, 0, &uniform_buffers_mapped.items[i]);
+        if (result != VK_SUCCESS) {
+            return VkError.CreateUniformBuffers;
+        }
+    }
+}
+
+fn createDescriptorPool() !void {
+    const pool_size = c.VkDescriptorPoolSize{
+        .type = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = MAX_FRAMES_IN_FLIGHT,
+    };
+
+    const pool_info = c.VkDescriptorPoolCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .maxSets = MAX_FRAMES_IN_FLIGHT,
+        .poolSizeCount = 1,
+        .pPoolSizes = &pool_size,
+    };
+
+    var result = c.vkCreateDescriptorPool(vk_logical, &pool_info, null, &vk_descriptor_pool);
+    if (result != VK_SUCCESS) {
+        return VkError.CreateDescriptorPool;
+    }
+}
+
+fn createDescriptorSets() !void {
+    var layouts = LocalArray(c.VkDescriptorSetLayout, MAX_FRAMES_IN_FLIGHT).new();
+    layouts.fill(vk_descriptor_set_layout);
+    const alloc_info = c.VkDescriptorSetAllocateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .pNext = null,
+        .descriptorPool = vk_descriptor_pool,
+        .descriptorSetCount = MAX_FRAMES_IN_FLIGHT,
+        .pSetLayouts = layouts.cptr(),
+    };
+
+    var result = c.vkAllocateDescriptorSets(vk_logical, &alloc_info, &descriptor_sets[0]);
+    if (result != VK_SUCCESS) {
+        return VkError.CreateDescriptorSets;
+    }
+
+    for (0..MAX_FRAMES_IN_FLIGHT) |i| {
+        const buffer_info = c.VkDescriptorBufferInfo{
+            .buffer = uniform_buffers.items[i],
+            .offset = 0,
+            .range = @sizeOf(fMVP),
+        };
+
+        const descriptor_write = c.VkWriteDescriptorSet{
+            .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .pNext = null,
+            .dstSet = descriptor_sets[i],
+            .dstBinding = 0,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .pImageInfo = null,
+            .pBufferInfo = &buffer_info,
+            .pTexelBufferView = null,
+        };
+
+        c.vkUpdateDescriptorSets(vk_logical, 1, &descriptor_write, 0, null);
+    }
 }
 
 fn createCommandBuffers() !void {
@@ -1918,6 +2042,7 @@ var vk_render_pass: VkRenderPass = null;
 var vk_descriptor_set_layout: VkDescriptorSetLayout = null;
 var vk_pipeline_layout: VkPipelineLayout = null;
 var vk_pipeline: VkPipeline = null;
+var vk_descriptor_pool: VkDescriptorPool = null;
 var sem_image_available: [MAX_FRAMES_IN_FLIGHT]VkSemaphore = .{null, null};
 var sem_render_finished: [MAX_FRAMES_IN_FLIGHT]VkSemaphore = .{null, null};
 var in_flight_fences: [MAX_FRAMES_IN_FLIGHT]VkFence = .{null, null};
@@ -1952,10 +2077,10 @@ var current_frame: u32 = 0;
 var framebuffer_resized: bool = false;
 
 const vertices: [4]Vertex = .{
-    Vertex{.position = fVec2.init(.{-1.0, -1.0}), .color = fVec3.init(.{1.0, 1.0, 0.8})},
-    Vertex{.position = fVec2.init(.{1.0, -1.0}),  .color = fVec3.init(.{0.0, 1.0, 0.0})},
-    Vertex{.position = fVec2.init(.{1.0, 1.0}),  .color = fVec3.init(.{0.0, 0.0, 1.0})},
-    Vertex{.position = fVec2.init(.{-1.0, 1.0}),  .color = fVec3.init(.{1.0, 0.0, 1.0})}
+    Vertex{.position = fVec2.init(.{-0.5, -0.5}), .color = fVec3.init(.{1.0, 1.0, 0.8})},
+    Vertex{.position = fVec2.init(.{0.5, -0.5}),  .color = fVec3.init(.{0.0, 1.0, 0.0})},
+    Vertex{.position = fVec2.init(.{0.5, 0.5}),  .color = fVec3.init(.{0.0, 0.0, 1.0})},
+    Vertex{.position = fVec2.init(.{-0.5, 0.5}),  .color = fVec3.init(.{1.0, 0.0, 1.0})}
 };
 
 const indices: [6]u16 = .{0, 1, 2, 2, 3, 0};
@@ -1975,9 +2100,11 @@ var direct_image_host_memory: VkDeviceMemory = null;
 var direct_image_host_view: c.VkImageView = null;
 var direct_image_host_sampler: c.VkSampler = null;
 
-var uniform_buffers = std.ArrayList(VkBuffer).init(allocator);
-var uniform_buffers_memory = std.ArrayList(c.VkDeviceMemory).init(allocator);
-var uniform_buffers_mapped = std.ArrayList(*anyopaque).init(allocator);
+var uniform_buffers = LocalArray(VkBuffer, MAX_FRAMES_IN_FLIGHT).new();
+var uniform_buffers_memory = LocalArray(c.VkDeviceMemory, MAX_FRAMES_IN_FLIGHT).new();
+var uniform_buffers_mapped = LocalArray(?*anyopaque, MAX_FRAMES_IN_FLIGHT).new();
+
+var descriptor_sets: [MAX_FRAMES_IN_FLIGHT]c.VkDescriptorSet = undefined;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------- constants
@@ -1988,7 +2115,7 @@ const MAX_FRAMES_IN_FLIGHT: u32 = 2;
 
 const OP_TYPE = enum {Present, Graphics, Compute, Transfer};
 
-const LAYER_CT: u32 = 0;
+const LAYER_CT: u32 = 1;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- config
@@ -2036,6 +2163,9 @@ const VkError = error {
     CreateDirectImageView,
     CreateTextureSampler,
     CreateDescriptorSetLayout,
+    CreateUniformBuffers,
+    CreateDescriptorPool,
+    CreateDescriptorSets,
 };
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2064,6 +2194,7 @@ const fVec2 = nd.fVec2;
 const fVec3 = nd.fVec3;
 const RGBA32 = gfxtypes.RGBA32;
 const allocator = std.heap.page_allocator;
+const fMVP = gfxtypes.fMVP;
 
 const VkResult = c.VkResult;
 const VK_SUCCESS = c.VK_SUCCESS;
@@ -2084,3 +2215,4 @@ const VkBuffer = c.VkBuffer;
 const VkDeviceMemory = c.VkDeviceMemory;
 const VkImage = c.VkImage;
 const VkDescriptorSetLayout = c.VkDescriptorSetLayout;
+const VkDescriptorPool = c.VkDescriptorPool;

@@ -3504,9 +3504,9 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             var model_mat: Matrix(4, 4, ScalarType) = undefined;
             model_mat.setRightCol(translation);
             var rot_mat = Matrix(4, 4, ScalarType).fromQuaternion(rotation);
-            model_mat = model_mat.mMul(rot_mat);
+            model_mat = model_mat.mMul(&rot_mat);
             var scale_mat = Matrix(4, 4, ScalarType).fromScale(scale);
-            model_mat = model_mat.mMul(scale_mat);
+            model_mat = model_mat.mMul(&scale_mat);
             return model_mat;
         }
 
@@ -3518,7 +3518,7 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             var model_mat: Matrix(4, 4, ScalarType) = undefined;
             model_mat.setRightCol(translation);
             var rot_mat = Matrix(4, 4, ScalarType).fromQuaternion(rotation);
-            model_mat = model_mat.mMul(rot_mat);
+            model_mat = model_mat.mMul(&rot_mat);
             return model_mat;
         }
 
@@ -3531,10 +3531,10 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             var view_mat: Matrix(4, 4, ScalarType) = undefined;
             view_mat.setRightCol(translation);
             var rot_mat = Matrix(4, 4, ScalarType).fromQuaternion(rotation);
-            view_mat = view_mat.mMul(rot_mat);
+            view_mat = view_mat.mMul(&rot_mat);
             var scale_mat = Matrix(4, 4, ScalarType).fromScale(scale);
-            view_mat = view_mat.mMul(scale_mat);
-            view_mat.inverse4x4(&view_mat);
+            view_mat = view_mat.mMul(&scale_mat);
+            _ = view_mat.inverse4x4(&view_mat);
             return view_mat;
         }
 
@@ -3545,12 +3545,54 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             var view_mat: Matrix(4, 4, ScalarType) = undefined;
             view_mat.setRightCol(translation);
             var rot_mat = Matrix(4, 4, ScalarType).fromQuaternion(rotation);
-            view_mat = view_mat.mMul(rot_mat);
-            view_mat.inverse4x4(&view_mat);
+            view_mat = view_mat.mMul(&rot_mat);
+            _ = view_mat.inverse4x4(&view_mat);
             return view_mat;
         }
 
-        // pub fn projectionPerspective()
+        pub fn lookAt(eye: Vec(3, f32), center: Vec(3, f32), up: Vec(3, f32)) fMat4x4 {
+            const f = center.subc(eye);
+            var u = up.normalSafe();
+            const s = f.cross(u).normalSafe();
+            u = s.cross(f);
+
+            var mat: Matrix(4, 4, ScalarType) = identity;
+            mat.parts[0] = s.parts[0];
+            mat.parts[w] = s.parts[1];
+            mat.parts[2*w] = s.parts[2];
+            mat.parts[1] = u.parts[0];
+            mat.parts[w + 1] = u.parts[1];
+            mat.parts[2 * w + 1] = u.parts[2];
+            mat.parts[2] = -f.parts[0];
+            mat.parts[w + 2] = -f.parts[1];
+            mat.parts[2*w + 2] = -f.parts[2];
+            mat.parts[3*w] = -s.dot(eye);
+            mat.parts[3*w + 1] = -u.dot(eye);
+            mat.parts[3*w + 2] = f.dot(eye);
+            return mat;
+        }
+
+        pub fn projectionPerspective(
+            FOV: f32,
+            aspect: f32,
+            near_dist: f32,
+            far_dist: f32,
+            left_handed: bool
+        ) Matrix(4, 4, f32) {
+            std.debug.assert(FOV > epsilonSmall(f32) and aspect != 0.0);
+            var mat: Matrix(4, 4, ScalarType) = identity;
+
+            const frustum_depth: f32 = far_dist - near_dist;
+            const one_over_depth: f32 = 1.0 / frustum_depth;
+
+            mat.parts[w + 1] = 1.0 / std.math.tan(0.5 * FOV);
+            mat.parts[0] = (mat.parts[w + 1] / aspect) * (if(left_handed) @as(f32, 1.0) else @as(f32, -1.0));
+            mat.parts[2 * w + 2] = far_dist * one_over_depth;
+            mat.parts[3 * w + 2] = (-far_dist * near_dist) * one_over_depth;
+            mat.parts[2 * w + 3] = 1.0;
+            mat.parts[3 * w + 3] = 0.0;
+            return mat;
+        }
 
         pub fn setDiagWithScalar(self: *MatrixType, scalar: ScalarType) void {
             inline for (0..min_dimension) |i| {
@@ -3740,8 +3782,8 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             var submat3x3: Matrix(3, 3, ScalarType) = undefined;
             for (0..4) |i| {
                 for (0..4) |j| {
-                    const sign: ScalarType = 1.0 - @as(ScalarType, (i + j) % 2) * 2.0;
-                    self.submat4x4(&submat3x3, i, j);
+                    const sign: ScalarType = 1.0 - @intToFloat(ScalarType, (i + j) % 2) * 2.0;
+                    self.subMat4x4(&submat3x3, i, j);
                     out.parts[i + j * 4] = submat3x3.determinant3x3() * sign * inv_det;
                 }
             }
@@ -3956,6 +3998,7 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
         };
 
         pub fn fromQuaternion4x4(quat: Quaternion(ScalarType)) MatrixType {
+            const last_row = @Vector(4, ScalarType){0.0, 0.0, 0.0, 1.0};
             if (ScalarType == f64) {
                 const y_squared = quat.parts[1] * quat.parts[1];
                 const mask0 = @Vector(4, i32){0, 3, 2, 0};
@@ -3990,14 +4033,14 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
                 const mask7 = @Vector(4, i32){-3, 2, -2, -4};
                 const mask8 = @Vector(4, i32){3, -1, 0, -4};
 
-                var mat: MatrixType = undefined;
+                var mat: Matrix(4, 4, ScalarType) = undefined;
                 const col1 = @Vector(4, ScalarType){base_1[1], base_2[3], _2xz_plus_zw, 0.0};
                 mat.parts[0..4].* = col1;
                 // putting a zero in
                 const base_2b = @shuffle(ScalarType, base_2, col1, mask6);
                 mat.parts[4..8].* = @shuffle(ScalarType, base_1, base_2b, mask7);
                 mat.parts[8..12].* = @shuffle(ScalarType, base_1, base_2b, mask8);
-                mat.parts[12..16].* = @Vector(4, ScalarType){0.0, 0.0, 0.0, 1.0};
+                mat.parts[12..16].* = last_row;
                 return mat; 
             }
             else {
@@ -4028,10 +4071,10 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
                 const select_0 = @Vector(8, bool){true, true, true, false, true, true, true, false};
                 const mask4 = @Vector(4, i32){3, 7, -1, -1};
 
-                var mat: MatrixType = undefined;
+                var mat: Matrix(4, 4, ScalarType) = undefined;
                 mat.parts[0..8].* = @select(ScalarType, select_0, temp8, zero_vec);
                 mat.parts[8..12].* = @shuffle(ScalarType, temp8, zero_vec, mask4);
-                mat.parts[12..16].* = @Vector(4, ScalarType){0.0, 0.0, 0.0, 1.0};
+                mat.parts[12..].* = last_row;
                 mat.parts[10] = 1.0 - (temp3[0] + temp3[5]);
                 return mat;
             }
