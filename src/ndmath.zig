@@ -3501,7 +3501,7 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             comptime {
                 std.debug.assert(w == 4 and h == 4);
             }
-            var model_mat: Matrix(4, 4, ScalarType) = undefined;
+            var model_mat: Matrix(4, 4, ScalarType) = identity;
             model_mat.setRightCol(translation);
             var rot_mat = Matrix(4, 4, ScalarType).fromQuaternion(rotation);
             model_mat = model_mat.mMul(&rot_mat);
@@ -3515,7 +3515,7 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             translation: Vec(3, ScalarType), 
             rotation: Quaternion(ScalarType)
         ) Matrix(4, 4, ScalarType) {
-            var model_mat: Matrix(4, 4, ScalarType) = undefined;
+            var model_mat: Matrix(4, 4, ScalarType) = identity;
             model_mat.setRightCol(translation);
             var rot_mat = Matrix(4, 4, ScalarType).fromQuaternion(rotation);
             model_mat = model_mat.mMul(&rot_mat);
@@ -3528,7 +3528,7 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             rotation: Quaternion(ScalarType),
             scale: Vec(3, ScalarType)
         ) Matrix(4, 4, ScalarType) {
-            var view_mat: Matrix(4, 4, ScalarType) = undefined;
+            var view_mat: Matrix(4, 4, ScalarType) = identity;
             view_mat.setRightCol(translation);
             var rot_mat = Matrix(4, 4, ScalarType).fromQuaternion(rotation);
             view_mat = view_mat.mMul(&rot_mat);
@@ -3542,7 +3542,7 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             translation: Vec(3, ScalarType),
             rotation: Quaternion(ScalarType),
         ) Matrix(4, 4, ScalarType) {
-            var view_mat: Matrix(4, 4, ScalarType) = undefined;
+            var view_mat: Matrix(4, 4, ScalarType) = identity;
             view_mat.setRightCol(translation);
             var rot_mat = Matrix(4, 4, ScalarType).fromQuaternion(rotation);
             view_mat = view_mat.mMul(&rot_mat);

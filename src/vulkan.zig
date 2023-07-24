@@ -101,7 +101,7 @@ pub fn drawFrame() !void {
     _ = c.vkResetCommandBuffer(graphics_command_buffers[current_frame], 0);
     try recordCommandBuffer(graphics_command_buffers[current_frame], image_idx);
 
-    updateUniformBuffer(current_frame);
+    try updateUniformBuffer(current_frame);
 
     const wait_stage: c.VkPipelineStageFlags = c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     const submit_info = c.VkSubmitInfo{
@@ -148,18 +148,77 @@ pub fn setFramebufferResized() void {
     framebuffer_resized = true;
 }
 
-fn updateUniformBuffer(current_image: u32) void {
+// model
+// -0.00  1.00  0.00  0.00
+// -1.00  -0.00  0.00  0.00
+// 0.00  0.00  1.00  0.00
+// 0.00  0.00  0.00  1.00
+
+// view
+// -0.71  -0.41  0.58  0.00
+// 0.71  -0.41  0.58  0.00
+// 0.00  0.82  0.58  0.00
+// -0.00  -0.00  -3.46  1.00
+
+// proj
+// 1.51  0.00  0.00  0.00
+// 0.00  -2.41  0.00  0.00
+// 0.00  0.00  -1.02  -1.00
+// 0.00  0.00  -0.20  0.00
+
+// product
+// 1.07  0.99  -0.59  -0.58
+// 1.07  -0.99  0.59  0.58
+// 0.00  -1.97  -0.59  -0.58
+// 0.00  0.00  3.33  3.46
+
+fn updateUniformBuffer(current_image: u32) !void {
     var mvp: fMVP = undefined;
     // const rotation = nd.fQuat.fromAxisAngle(fVec3.up, 1e-2);
-    mvp.model = nd.fMat4x4.model(fVec3.init(.{0.0, 0.0, 1.0}), nd.fQuat.fromAxisAngle(fVec3.up, 0.5), fVec3.fromScalar(500.0));
-    mvp.view = nd.fMat4x4.lookAt(fVec3.fromScalar(2.0), fVec3.fromScalar(0.0), fVec3.init(.{0.0, 0.0, 1.0}));
-    mvp.projection = nd.fMat4x4.projectionPerspective(
-        std.math.degreesToRadians(f32, 45.0), 
-        @intToFloat(f32, swapchain.extent.width) / @intToFloat(f32, swapchain.extent.height), 
-        0.1, 
-        10.0, 
-        true
-    );
+    const instant = std.time.Instant;
+    const now = try instant.now();
+    const timestamp_f: f32 = @intToFloat(f32, now.timestamp);
+    mvp.model = nd.fMat4x4.modelNoScale(fVec3.init(.{0.0, 0.0, 1.0}), nd.fQuat.fromAxisAngle(fVec3.up, timestamp_f * 0.0000001));
+    // mvp.model = nd.fMat4x4.identity;
+    // mvp.model.parts[0] = 0.0;
+    // mvp.model.parts[1] = -1.0;
+    // mvp.model.parts[4] = 1.0;
+    // mvp.model.parts[5] = 0.0;
+    // mvp.view = nd.fMat4x4.lookAt(fVec3.fromScalar(2.0), fVec3.fromScalar(0.0), fVec3.init(.{0.0, 0.0, 1.0}));
+    mvp.view.parts = .{
+        -0.71,  -0.41,  0.58,  0.00,
+        0.71,  -0.41,  0.58,  0.00,
+        0.00,  0.82,  0.58,  0.00,
+        -0.00,  -0.00,  -3.46,  1.00
+    };
+    // mvp.view = mvp.view.transpose();
+    // mvp.projection = nd.fMat4x4.projectionPerspective(
+    //     std.math.degreesToRadians(f32, 45.0), 
+    //     // @intToFloat(f32, swapchain.extent.width) / @intToFloat(f32, swapchain.extent.height), 
+    //     1.6,
+    //     0.1, 
+    //     10.0, 
+    //     true
+    // );
+    mvp.projection.parts = .{
+        1.51,  0.00,  0.00,  0.00,
+        0.00,  -2.41,  0.00,  0.00,
+        0.00,  0.00,  -1.02,  -1.00,
+        0.00,  0.00,  -0.20,  0.00
+    };
+    // mvp.projection = mvp.projection.transpose();
+    // mvp.projection.parts[5] *= -1.0;
+
+    if (!dbg_switch) {
+        var product = mvp.projection.mMul(&mvp.view);
+        product = product.mMul(&mvp.model);
+
+        dbg_switch = true;
+        print("model\n{s}\n", .{mvp.model});
+        print("\nview\n{s}\n", .{mvp.view});
+        print("\nproj\n{s}\n", .{mvp.projection});
+        print("\nproduct\n{s}\n", .{product});
+    }
     @memcpy(@ptrCast([*]fMVP, @alignCast(16, (uniform_buffers_mapped.items[current_image].?)))[0..1], @ptrCast([*]fMVP, &mvp)[0..1]);
     // _ = current_image;
 }
@@ -781,7 +840,7 @@ fn createGraphicsPipeline() !void {
         .depthClampEnable = c.VK_FALSE,
         .rasterizerDiscardEnable = c.VK_FALSE,
         .polygonMode = c.VK_POLYGON_MODE_FILL,
-        .cullMode = c.VK_CULL_MODE_NONE,
+        .cullMode = c.VK_CULL_MODE_BACK_BIT,
         .frontFace = c.VK_FRONT_FACE_COUNTER_CLOCKWISE,
         .depthBiasEnable = c.VK_FALSE,
         .depthBiasConstantFactor = 0.0,
@@ -1061,7 +1120,7 @@ fn createDirectImageSampler() !void {
         .addressModeV = c.VK_SAMPLER_ADDRESS_MODE_REPEAT,
         .addressModeW = c.VK_SAMPLER_ADDRESS_MODE_REPEAT,
         .mipLodBias = 0.0,
-        .anisotropyEnable = c.VK_FALSE,
+        .anisotropyEnable = c.VK_TRUE,
         .maxAnisotropy = phys_props.limits.maxSamplerAnisotropy,
         .compareEnable = c.VK_FALSE,
         .compareOp = c.VK_COMPARE_OP_ALWAYS,
@@ -2105,6 +2164,8 @@ var uniform_buffers_memory = LocalArray(c.VkDeviceMemory, MAX_FRAMES_IN_FLIGHT).
 var uniform_buffers_mapped = LocalArray(?*anyopaque, MAX_FRAMES_IN_FLIGHT).new();
 
 var descriptor_sets: [MAX_FRAMES_IN_FLIGHT]c.VkDescriptorSet = undefined;
+
+var dbg_switch: bool = false;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------- constants

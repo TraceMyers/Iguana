@@ -17,6 +17,6 @@ out gl_PerVertex {
 };
 
 void main() {
-    gl_Position = /*mvp.projection * mvp.view */ mvp.model * vec4(in_position, 0.0, 1.0);
+    gl_Position = mvp.projection * mvp.view * mvp.model * vec4(in_position, 0.0, 1.0);
     frag_color = in_color;
 }
