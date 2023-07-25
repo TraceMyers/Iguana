@@ -3550,11 +3550,11 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             return view_mat;
         }
 
+        // from glm
         pub fn lookAt(eye: Vec(3, f32), center: Vec(3, f32), up: Vec(3, f32)) fMat4x4 {
-            const f = center.subc(eye);
-            var u = up.normalSafe();
-            const s = f.cross(u).normalSafe();
-            u = s.cross(f);
+            const f = center.subc(eye).normalSafe();
+            const s = f.cross(up).normalSafe();
+            var u = s.cross(f);
 
             var mat: Matrix(4, 4, ScalarType) = identity;
             mat.parts[0] = s.parts[0];
@@ -3572,25 +3572,25 @@ pub fn Matrix(comptime h: comptime_int, comptime w: comptime_int, comptime Scala
             return mat;
         }
 
+        // from glm
         pub fn projectionPerspective(
             FOV: f32,
             aspect: f32,
             near_dist: f32,
-            far_dist: f32,
-            left_handed: bool
+            far_dist: f32
         ) Matrix(4, 4, f32) {
-            std.debug.assert(FOV > epsilonSmall(f32) and aspect != 0.0);
-            var mat: Matrix(4, 4, ScalarType) = identity;
+            std.debug.assert(@fabs(aspect) > epsilonSmall(f32));
+            var mat: Matrix(4, 4, ScalarType) = zero;
 
             const frustum_depth: f32 = far_dist - near_dist;
             const one_over_depth: f32 = 1.0 / frustum_depth;
+            const one_over_tan_half_FOV = 1.0 / std.math.tan(0.5 * FOV);
 
-            mat.parts[w + 1] = 1.0 / std.math.tan(0.5 * FOV);
-            mat.parts[0] = (mat.parts[w + 1] / aspect) * (if(left_handed) @as(f32, 1.0) else @as(f32, -1.0));
-            mat.parts[2 * w + 2] = far_dist * one_over_depth;
+            mat.parts[0] = (one_over_tan_half_FOV / aspect);
+            mat.parts[w + 1] = -one_over_tan_half_FOV;
+            mat.parts[2 * w + 2] = -far_dist * one_over_depth;
+            mat.parts[2 * w + 3] = -1.0;
             mat.parts[3 * w + 2] = (-far_dist * near_dist) * one_over_depth;
-            mat.parts[2 * w + 3] = 1.0;
-            mat.parts[3 * w + 3] = 0.0;
             return mat;
         }
 
