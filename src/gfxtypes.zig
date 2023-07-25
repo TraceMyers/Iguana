@@ -11,25 +11,27 @@ pub const Vertex = struct {
         };
     }
 
-    pub inline fn getAttributeDesriptions(desc: *LocalArray(c.VkVertexInputAttributeDescription, 3)) void {
-        desc.items[0] = c.VkVertexInputAttributeDescription{
+    pub inline fn getAttributeDesriptions() [3]c.VkVertexInputAttributeDescription {
+        var desc: [3]c.VkVertexInputAttributeDescription = undefined;
+        desc[0] = c.VkVertexInputAttributeDescription{
             .location = 0,
             .binding = 0,
             .format = c.VK_FORMAT_R32G32_SFLOAT,
             .offset = @offsetOf(Vertex, "position")
         };
-        desc.items[1] = c.VkVertexInputAttributeDescription{
+        desc[1] = c.VkVertexInputAttributeDescription{
             .location = 1,
             .binding = 0,
             .format = c.VK_FORMAT_R32G32B32_SFLOAT,
             .offset = @offsetOf(Vertex, "color")
         };
-        desc.items[2] = c.VkVertexInputAttributeDescription{
-            .location = 0,
-            .binding = 2,
+        desc[2] = c.VkVertexInputAttributeDescription{
+            .location = 2,
+            .binding = 0,
             .format = c.VK_FORMAT_R32G32_SFLOAT,
             .offset = @offsetOf(Vertex, "tex_coords")
         };
+        return desc;
     }
 };
 

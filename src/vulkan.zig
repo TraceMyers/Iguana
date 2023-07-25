@@ -18,6 +18,9 @@ pub fn init(method: RenderMethod) !void {
     try createGraphicsPipeline();
     try createFramebuffers();
     try createCommandPools();
+    try createTextureImage();
+    try createTextureImageView();
+    try createTextureImageSampler();
     try createVertexBuffer();
     try createIndexBuffer();
     try createUniformBuffers();
@@ -26,9 +29,6 @@ pub fn init(method: RenderMethod) !void {
     try createCommandBuffers();
     try createSyncObjects();
 
-    try createDirectImage();
-    try createDirectImageView();
-    try createDirectImageSampler();
     // if (method == RenderMethod.Direct) {
     // }
     _ = method;
@@ -54,10 +54,10 @@ pub fn cleanup() void {
         c.vkDestroySemaphore(vk_logical, sem_render_finished[i], null);
         c.vkDestroyFence(vk_logical, in_flight_fences[i], null);
     }
-    c.vkDestroySampler(vk_logical, direct_image_host_sampler, null);
-    c.vkDestroyImageView(vk_logical, direct_image_host_view, null);
-    c.vkDestroyImage(vk_logical, direct_image_host, null);
-    c.vkFreeMemory(vk_logical, direct_image_host_memory, null);
+    c.vkDestroySampler(vk_logical, texture_image_host_sampler, null);
+    c.vkDestroyImageView(vk_logical, texture_image_host_view, null);
+    c.vkDestroyImage(vk_logical, texture_image_host, null);
+    c.vkFreeMemory(vk_logical, texture_image_host_memory, null);
     c.vkDestroyCommandPool(vk_logical, transient_command_pool, null);
     c.vkDestroyCommandPool(vk_logical, graphics_command_pool, null);
     c.vkDestroyCommandPool(vk_logical, compute_command_pool, null);
@@ -738,9 +738,8 @@ fn createGraphicsPipeline() !void {
 
     var shader_stages: [2]c.VkPipelineShaderStageCreateInfo = .{vert_shader_info, frag_shader_info};
 
-    const binding_description: c.VkVertexInputBindingDescription = gfxmath.getVertexInputBindingDescription();
-    var attribute_descriptions = LocalArray(c.VkVertexInputAttributeDescription, 2).new();
-    gfxmath.getAttributeDescriptions(&attribute_descriptions);
+    const binding_description: c.VkVertexInputBindingDescription = Vertex.getBindingDescription();
+    var attribute_descriptions = Vertex.getAttributeDesriptions();
 
     const vertex_input_info = c.VkPipelineVertexInputStateCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
@@ -748,8 +747,8 @@ fn createGraphicsPipeline() !void {
         .flags = 0,
         .vertexBindingDescriptionCount = 1,
         .pVertexBindingDescriptions = &binding_description,
-        .vertexAttributeDescriptionCount = @intCast(u32, attribute_descriptions.count()),
-        .pVertexAttributeDescriptions = attribute_descriptions.cptr(),
+        .vertexAttributeDescriptionCount = @intCast(u32, 3),
+        .pVertexAttributeDescriptions = @ptrCast([*c]c.VkVertexInputAttributeDescription, &attribute_descriptions[0]),
     };
 
     const pipeline_assembly_info = c.VkPipelineInputAssemblyStateCreateInfo{
@@ -975,9 +974,9 @@ fn createCommandPools() !void {
     }
 }
 
-fn createDirectImage() !void {
+fn createTextureImage() !void {
     direct_image = std.ArrayList(RGBA32).init(allocator);
-    try direct_image.?.appendNTimes(RGBA32{}, swapchain.extent.width * swapchain.extent.height); 
+    try direct_image.?.appendNTimes(RGBA32{}, 16); 
     for (0..direct_image.?.items.len) |i| {
         if (i % 2 == 0) {
             direct_image.?.items[i].r = 255;
@@ -1002,25 +1001,25 @@ fn createDirectImage() !void {
     c.vkUnmapMemory(vk_logical, staging_buffer_memory);
 
     try createImage(
-        swapchain.extent.width, 
-        swapchain.extent.height, 
+        4, 
+        4, 
         c.VK_FORMAT_R8G8B8A8_SRGB,
         c.VK_IMAGE_TILING_OPTIMAL,
         c.VK_IMAGE_USAGE_TRANSFER_DST_BIT | c.VK_IMAGE_USAGE_SAMPLED_BIT,
         c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-        &direct_image_host,
-        &direct_image_host_memory
+        &texture_image_host,
+        &texture_image_host_memory
     );
 
     try transitionImageLayout(
-        direct_image_host, 
+        texture_image_host, 
         c.VK_FORMAT_R8G8B8A8_SRGB, 
         c.VK_IMAGE_LAYOUT_UNDEFINED, 
         c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
     );
-    copyBufferToImage(staging_buffer, direct_image_host, swapchain.extent.width, swapchain.extent.height);
+    copyBufferToImage(staging_buffer, texture_image_host, 4, 4);
     try transitionImageLayout(
-        direct_image_host, 
+        texture_image_host, 
         c.VK_FORMAT_R8G8B8A8_SRGB,
         c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
@@ -1062,11 +1061,11 @@ fn createImageView(image: VkImage, format: c.VkFormat) !c.VkImageView {
     return image_view;
 }
 
-fn createDirectImageView() !void {
-    direct_image_host_view = try createImageView(direct_image_host, c.VK_FORMAT_R8G8B8A8_SRGB);
+fn createTextureImageView() !void {
+    texture_image_host_view = try createImageView(texture_image_host, c.VK_FORMAT_R8G8B8A8_SRGB);
 }
 
-fn createDirectImageSampler() !void {
+fn createTextureImageSampler() !void {
     var phys_props: c.VkPhysicalDeviceProperties = undefined;
     c.vkGetPhysicalDeviceProperties(physical.vk_physical, &phys_props);
 
@@ -1081,7 +1080,7 @@ fn createDirectImageSampler() !void {
         .addressModeV = c.VK_SAMPLER_ADDRESS_MODE_REPEAT,
         .addressModeW = c.VK_SAMPLER_ADDRESS_MODE_REPEAT,
         .mipLodBias = 0.0,
-        .anisotropyEnable = c.VK_TRUE,
+        .anisotropyEnable = c.VK_FALSE,
         .maxAnisotropy = phys_props.limits.maxSamplerAnisotropy,
         .compareEnable = c.VK_FALSE,
         .compareOp = c.VK_COMPARE_OP_ALWAYS,
@@ -1091,7 +1090,7 @@ fn createDirectImageSampler() !void {
         .unnormalizedCoordinates = c.VK_FALSE,
     };
 
-    var result = c.vkCreateSampler(vk_logical, &sampler_info, null, &direct_image_host_sampler);
+    var result = c.vkCreateSampler(vk_logical, &sampler_info, null, &texture_image_host_sampler);
     if (result != VK_SUCCESS) {
         return VkError.CreateTextureSampler;
     }
@@ -1191,18 +1190,25 @@ fn createUniformBuffers() !void {
 }
 
 fn createDescriptorPool() !void {
-    const pool_size = c.VkDescriptorPoolSize{
+    const pool_size_ubo = c.VkDescriptorPoolSize{
         .type = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
         .descriptorCount = MAX_FRAMES_IN_FLIGHT,
     };
+
+    const pool_size_sampler = c.VkDescriptorPoolSize{
+        .type = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .descriptorCount = MAX_FRAMES_IN_FLIGHT,
+    };
+
+    var pool_sizes: [2]c.VkDescriptorPoolSize = .{pool_size_ubo, pool_size_sampler};
 
     const pool_info = c.VkDescriptorPoolCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .pNext = null,
         .flags = 0,
         .maxSets = MAX_FRAMES_IN_FLIGHT,
-        .poolSizeCount = 1,
-        .pPoolSizes = &pool_size,
+        .poolSizeCount = 2,
+        .pPoolSizes = @ptrCast([*c]c.VkDescriptorPoolSize, &pool_sizes[0]),
     };
 
     var result = c.vkCreateDescriptorPool(vk_logical, &pool_info, null, &vk_descriptor_pool);
@@ -1234,7 +1240,15 @@ fn createDescriptorSets() !void {
             .range = @sizeOf(fMVP),
         };
 
-        const descriptor_write = c.VkWriteDescriptorSet{
+        const image_info = c.VkDescriptorImageInfo{
+            .sampler = texture_image_host_sampler,
+            .imageView = texture_image_host_view,
+            .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        };
+
+        // TODO: several unnecessary copies related to descriptors (not just here)
+        
+        const descriptor_write_ubo = c.VkWriteDescriptorSet{
             .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
             .pNext = null,
             .dstSet = descriptor_sets[i],
@@ -1247,7 +1261,22 @@ fn createDescriptorSets() !void {
             .pTexelBufferView = null,
         };
 
-        c.vkUpdateDescriptorSets(vk_logical, 1, &descriptor_write, 0, null);
+        const descriptor_write_image = c.VkWriteDescriptorSet{
+            .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .pNext = null,
+            .dstSet = descriptor_sets[i],
+            .dstBinding = 1,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .pImageInfo = &image_info,
+            .pBufferInfo = null,
+            .pTexelBufferView = null,
+        };
+
+        var descriptor_writes: [2]c.VkWriteDescriptorSet = .{descriptor_write_ubo, descriptor_write_image};
+
+        c.vkUpdateDescriptorSets(vk_logical, 2, @ptrCast([*c]c.VkWriteDescriptorSet, &descriptor_writes[0]), 0, null);
     }
 }
 
@@ -1341,18 +1370,29 @@ fn createDescriptorSetLayout() !void {
         .pImmutableSamplers = null,
     };
 
+    const sampler_layout_binding = c.VkDescriptorSetLayoutBinding{
+        .binding = 1,
+        .descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .descriptorCount = 1,
+        .stageFlags = c.VK_SHADER_STAGE_FRAGMENT_BIT,
+        .pImmutableSamplers = null,
+    };
+
+    var bindings: [2]c.VkDescriptorSetLayoutBinding = .{ubo_layout_binding, sampler_layout_binding};
+
     const layout_info = c.VkDescriptorSetLayoutCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
         .pNext = null,
         .flags = 0,
-        .bindingCount = 1,
-        .pBindings = &ubo_layout_binding,
+        .bindingCount = 2,
+        .pBindings = @ptrCast([*c]c.VkDescriptorSetLayoutBinding, &bindings[0]),
     };
 
     var result = c.vkCreateDescriptorSetLayout(vk_logical, &layout_info, null, &vk_descriptor_set_layout);
     if (result != VK_SUCCESS) {
         return VkError.CreateDescriptorSetLayout;
     }
+
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2115,10 +2155,10 @@ var vk_allocation_callbacks = c.VkAllocationCallbacks{
 };
 
 var direct_image: ?std.ArrayList(RGBA32) = null;
-var direct_image_host: VkImage = null;
-var direct_image_host_memory: VkDeviceMemory = null;
-var direct_image_host_view: c.VkImageView = null;
-var direct_image_host_sampler: c.VkSampler = null;
+var texture_image_host: VkImage = null;
+var texture_image_host_memory: VkDeviceMemory = null;
+var texture_image_host_view: c.VkImageView = null;
+var texture_image_host_sampler: c.VkSampler = null;
 
 var uniform_buffers = LocalArray(VkBuffer, MAX_FRAMES_IN_FLIGHT).new();
 var uniform_buffers_memory = LocalArray(c.VkDeviceMemory, MAX_FRAMES_IN_FLIGHT).new();
