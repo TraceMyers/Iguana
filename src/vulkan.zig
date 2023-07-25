@@ -26,11 +26,12 @@ pub fn init(method: RenderMethod) !void {
     try createCommandBuffers();
     try createSyncObjects();
 
-    if (method == RenderMethod.Direct) {
-        // try createDirectImage();
-        // try createDirectImageView();
-        // try createDirectImageSampler();
-    }
+    try createDirectImage();
+    try createDirectImageView();
+    try createDirectImageSampler();
+    // if (method == RenderMethod.Direct) {
+    // }
+    _ = method;
 }
 
 pub fn cleanup() void {
@@ -2096,10 +2097,10 @@ var current_frame: u32 = 0;
 var framebuffer_resized: bool = false;
 
 const vertices: [4]Vertex = .{
-    Vertex{.position = fVec2.init(.{-0.5, -0.5}), .color = fVec3.init(.{1.0, 1.0, 0.8})},
-    Vertex{.position = fVec2.init(.{0.5, -0.5}),  .color = fVec3.init(.{0.0, 1.0, 0.0})},
-    Vertex{.position = fVec2.init(.{0.5, 0.5}),  .color = fVec3.init(.{0.0, 0.0, 1.0})},
-    Vertex{.position = fVec2.init(.{-0.5, 0.5}),  .color = fVec3.init(.{1.0, 0.0, 1.0})}
+    Vertex{.position = fVec2.init(.{-0.5, -0.5}), .color = fVec3.init(.{1.0, 1.0, 0.8}), .tex_coords = fVec2.init(.{1.0, 0.0})},
+    Vertex{.position = fVec2.init(.{0.5, -0.5}),  .color = fVec3.init(.{0.0, 1.0, 0.0}), .tex_coords = fVec2.init(.{0.0, 0.0})},
+    Vertex{.position = fVec2.init(.{0.5, 0.5}),  .color = fVec3.init(.{0.0, 0.0, 1.0}), .tex_coords = fVec2.init(.{0.0, 1.0})},
+    Vertex{.position = fVec2.init(.{-0.5, 0.5}),  .color = fVec3.init(.{1.0, 0.0, 1.0}), .tex_coords = fVec2.init(.{1.0, 1.0})}
 };
 
 const indices: [6]u16 = .{0, 1, 2, 2, 3, 0};
@@ -2193,10 +2194,6 @@ const VkError = error {
 // -------------------------------------------------------------------------------------------------------------- import
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub const c = @cImport({
-    @cInclude("glfwvulk.h");
-    @cInclude("vk_mem_alloc.h");
-});
 
 const std = @import("std");
 const print = std.debug.print;
@@ -2206,11 +2203,12 @@ const benchmark = @import("benchmark.zig");
 const gfxmath = @import("gfxmath.zig");
 const nd = @import("ndmath.zig");
 const gfxtypes = @import("gfxtypes.zig");
+const c = gfxtypes.c;
 
 const LocalArray = array.LocalArray;
 const ScopeTimer = benchmark.ScopeTimer;
 const getScopeTimerID = benchmark.getScopeTimerID;
-const Vertex = gfxmath.Vertex;
+const Vertex = gfxtypes.Vertex;
 const fVec2 = nd.fVec2;
 const fVec3 = nd.fVec3;
 const RGBA32 = gfxtypes.RGBA32;

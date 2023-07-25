@@ -1,9 +1,4 @@
 
-pub const Vertex = struct {
-    position: fVec2 = undefined,
-    color: fVec3 = undefined
-};
-
 pub inline fn getVertexInputBindingDescription() c.VkVertexInputBindingDescription {
     return c.VkVertexInputBindingDescription{
         .binding = 0,
@@ -31,6 +26,8 @@ pub inline fn getAttributeDescriptions(descriptions: *LocalArray(c.VkVertexInput
 const nd = @import("ndmath.zig");
 const fVec2 = nd.fVec2;
 const fVec3 = nd.fVec3;
-const c = @import("vulkan.zig").c;
 const array = @import("array.zig");
 const LocalArray = array.LocalArray;
+const gfxtypes = @import("gfxtypes.zig");
+const Vertex = gfxtypes.Vertex;
+const c = gfxtypes.c;
