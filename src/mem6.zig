@@ -6,11 +6,12 @@
 // -------------------------------------------------------------------------------------------------------------- public
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub fn startup() !void {
-    
-    // const nullptr : *allowzero @TypeOf(null) = @intToPtr(*allowzero @TypeOf(null), 0);
+pub fn startup(in_enclave_ct: usize) !void {
+    std.debug.assert(in_enclave_ct <= MAX_ENCLAVE_CT);
+    enclave_ct = in_enclave_ct;
+
     address_space = try windows.VirtualAlloc(
-        null, 0xffffffffff, windows.MEM_RESERVE, windows.PAGE_READWRITE
+        null, 0xfffffffffff, windows.MEM_RESERVE, windows.PAGE_READWRITE
     );
     var address_bytes = @ptrCast([*]u8, address_space);
 
@@ -22,9 +23,10 @@ pub fn startup() !void {
     free_lists.bytes = address_bytes[FREE_LISTS_BEGIN..FREE_LISTS_END];
 
     try initSmallAllocator();
+
 }
 
-pub fn shutdown() void {
+pub inline fn shutdown() void {
     windows.VirtualFree(address_space, 0, windows.MEM_RELEASE);
 }
 
@@ -40,18 +42,12 @@ pub fn alloc(comptime Type: type, ct: usize) Mem6Error![]Type {
     return Mem6Error.OutOfMemory;
 }
 
-pub fn free(data_in: anytype) !void {
-    const alloc_sz: usize = data_in.*.len * @sizeOf(@TypeOf(data_in.*[0]));
+pub fn free(data_in: anytype) void {
+    const slice = @typeInfo(@TypeOf(data_in)).Pointer;
+    const bytes = mem.sliceAsBytes(data_in);
+    const alloc_sz = bytes.len + if (slice.sentinel != null) @sizeOf(slice.child) else 0;
     assert(alloc_sz > 0);
-
-    if (alloc_sz <= SMALL_ALLOC_MAX_SZ) {
-        try freeSmall(@ptrCast(*u8, data_in.*), @intCast(u32, alloc_sz));
-    }
-    else {
-        return Mem6Error.BadSizeAtFree;
-    }
-
-    data_in.* = data_in.*[0..0];
+    freeSmall(@ptrCast(*u8, bytes), @intCast(u32, alloc_sz));
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -69,7 +65,6 @@ fn initPages(pages: []PageRecord, ct: usize) void {
 }
 
 fn initSmallAllocator() !void {
-
     // virtualloc committed memory is automatically zeroed
     _ = try windows.VirtualAlloc(
         records.bytes, SMALL_PAGE_RECORDS_SZ, windows.MEM_COMMIT, windows.PAGE_READWRITE
@@ -148,8 +143,6 @@ fn expandSmallPageList(page_list: *PageList, sm_idx: u32) !void {
     
     page_list.free_page = free_page.next_free;
 
-    // const page_bytes_address = @ptrToInt(page_list.bytes) + free_page_idx * SMALL_PAGE_SZ;
-    // const page_bytes = @intToPtr(*u8, page_bytes_address);
     const page_bytes = &page_list.bytes[free_page_idx * SMALL_PAGE_SZ]; 
     _ = try windows.VirtualAlloc(
         page_bytes, SMALL_PAGE_SZ, windows.MEM_COMMIT, windows.PAGE_READWRITE
@@ -167,8 +160,6 @@ fn expandSmallPageList(page_list: *PageList, sm_idx: u32) !void {
         }
     } else {
         const node_page_idx = page_check_start / SMALL_NODE_SETS_PER_PAGE[sm_idx];
-        // const nodes_address = @ptrToInt(@ptrCast(*u8, page_list.blocks)) + node_page_idx * SMALL_PAGE_SZ;
-        // const nodes_bytes = @intToPtr(*u8, nodes_address);
         const nodes_bytes = &page_list.blocks[node_page_idx * SMALL_NODES_PER_PAGE];
         _ = try windows.VirtualAlloc(
             nodes_bytes, SMALL_PAGE_SZ, windows.MEM_COMMIT, windows.PAGE_READWRITE
@@ -188,7 +179,7 @@ fn expandSmallPageList(page_list: *PageList, sm_idx: u32) !void {
     page_list.page_ct += 1;
 }
 
-fn freeSmall(data: *u8, alloc_sz: u32) !void {
+fn freeSmall(data: *u8, alloc_sz: u32) void {
     const sz_div_8 = @divTrunc(alloc_sz, 8);
     const sz_is_multiple_of_8 = @intCast(u32, @boolToInt(alloc_sz % 8 == 0));
     const sm_idx = sz_div_8 - sz_is_multiple_of_8; 
@@ -237,6 +228,14 @@ var free_lists = FreeLists {
     .bytes = undefined,
 };
 
+var small_pools: [MAX_ENCLAVE_CT]SmallPool = undefined;
+var medium_pools: [MAX_ENCLAVE_CT]MediumPool = undefined;
+var large_pools: [MAX_ENCLAVE_CT]LargePool = undefined;
+var giant_pools: [MAX_ENCLAVE_CT]GiantPool = undefined;
+var enclave_records: [MAX_ENCLAVE_CT]Records = undefined;
+var enclave_free_lists: [MAX_ENCLAVE_CT]FreeLists = undefined;
+var enclave_ct: usize = 0;
+
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // --------------------------------------------------------------------------------------------------------------- types
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -246,54 +245,54 @@ const SmallPage = struct {
 };
 
 const PageRecord = struct {
-    free_block_ct: u32,
-    next_free: u32,
+    free_block_ct: u32 = undefined,
+    next_free: u32 = undefined,
 };
 
 const BlockNode = struct { 
-    next_free: u32,
+    next_free: u32 = undefined,
 };
 
 const FreeLists = struct {
-    bytes: [*]u8,
+    bytes: [*]u8 = undefined,
 };
 
 const Records = struct {
-    bytes: [*]u8,
+    bytes: [*]u8 = undefined,
 };
 
 const PageList = struct { 
-    bytes: [*]u8, 
-    pages: []PageRecord, 
-    free_page: ?u32, 
-    blocks: []BlockNode, 
-    free_block: ?u32, 
-    page_ct: u32, 
-    free_page_ct: u32,
+    bytes: [*]u8 = undefined,
+    pages: []PageRecord = undefined, 
+    free_page: ?u32 = undefined, 
+    blocks: []BlockNode = undefined, 
+    free_block: ?u32 = undefined, 
+    page_ct: u32 = undefined, 
+    free_page_ct: u32 = undefined,
 };
 
 const SmallPool = struct {
-    bytes: [*]u8,
-    page_lists: [SMALL_DIVISION_CT]PageList,
+    bytes: [*]u8 = undefined,
+    page_lists: [SMALL_DIVISION_CT]PageList = undefined,
 };
 
 const MediumPool = struct {
-    bytes: [*]u8,
+    bytes: [*]u8 = undefined,
 };
 
 const LargePool = struct {
-    bytes: [*]u8,
+    bytes: [*]u8 = undefined,
 };
 
 const GiantPool = struct {
-    bytes: [*]u8,
+    bytes: [*]u8 = undefined,
 };
 
 const AllocatorData = struct {
-    address_space: windows.LPVOID,
-    small_pool: SmallPool,
-    records: Records,
-    free_lists: FreeLists,
+    address_space: windows.LPVOID = undefined,
+    small_pool: SmallPool = undefined,
+    records: Records = undefined,
+    free_lists: FreeLists = undefined,
 };
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -310,16 +309,19 @@ const Mem6Error = error {
 // ----------------------------------------------------------------------------------------------------------- constants
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// TODO: change sizes; each enclave gets 512 GB
+
 pub const MAX_ENCLAVE_CT: usize = 32;
 
 const SMALL_PAGE_SZ: usize  = 16    * 1024; // 16KB
 const LARGE_PAGE_SZ: usize  = 64    * 1024; // 64KB
 
-// address space sizes per pool
+// address space sizes per enclave
 const SMALL_POOL_SZ: usize  = 512   * 1024 * 1024; // 512 MB
 const MEDIUM_POOL_SZ: usize = 8     * 1024 * 1024 * 1024; // 8 GB
 const LARGE_POOL_SZ: usize  = 160   * 1024 * 1024 * 1024; // 160 GB
 const GIANT_POOL_SZ: usize  = 256   * 1024 * 1024 * 1024; // 256 GB
+// SMALL_PAGE_RECORDS_SZ: 32 KB
 
 const SMALL_ALLOC_MIN_SZ: usize = 8;
 const SMALL_ALLOC_MAX_SZ: usize = 64;
@@ -330,8 +332,6 @@ const SMALL_PAGE_RECORDS_SZ: usize              = SMALL_POOL_SZ / SMALL_PAGE_SZ;
 const SMALL_PAGE_RECORDS_SZ_PER_DIVISION: usize = SMALL_PAGE_RECORDS_SZ / SMALL_DIVISION_CT;
 const SMALL_DIVISION_PAGE_CT: usize             = SMALL_PAGE_RECORDS_SZ_PER_DIVISION / @sizeOf(PageRecord);
 const SMALL_NODES_PER_PAGE: usize               = SMALL_PAGE_SZ / @sizeOf(BlockNode); 
-
-const SMALL_ENCLAVE_DIVISION_SZ: usize          = SMALL_DIVISION_SZ / MAX_ENCLAVE_CT;
 
 const SMALL_BLOCK_SIZES: [8]usize = .{8, 16, 24, 32, 40, 48, 56, 64};
 
@@ -420,7 +420,7 @@ const getScopeTimerID = benchmark.getScopeTimerID;
 
 test "Single Allocation" {
 
-    try startup();
+    try startup(1);
 
     var sm1: []u8 = try alloc(u8, 54);
     for (0..sm1.len) |i| {
@@ -431,30 +431,30 @@ test "Single Allocation" {
         try expect(sm1[i] == i);
     }
 
-    try free(&sm1);
+    free(sm1);
 
     shutdown();
 }
 
 test "Small Allocation Aliasing" {
-    try startup();
+    try startup(1);
 
     var small_1: []u8 = try alloc(u8, 4);
-    try free(&small_1);
+    free(small_1);
     small_1 = try alloc(u8, 4);
-    try free(&small_1);
+    free(small_1);
     small_1 = try alloc(u8, 4);
-    try free(&small_1);
+    free(small_1);
     small_1 = try alloc(u8, 4);
-    try free(&small_1);
+    free(small_1);
     small_1 = try alloc(u8, 4);
-    try free(&small_1);
+    free(small_1);
     small_1 = try alloc(u8, 8);
-    try free(&small_1);
+    free(small_1);
     small_1 = try alloc(u8, 8);
-    try free(&small_1);
+    free(small_1);
     small_1 = try alloc(u8, 8);
-    try free(&small_1);
+    free(small_1);
     small_1 = try alloc(u8, 8);
 
     var small_1_address = @ptrToInt(@ptrCast(*u8, small_1));
@@ -477,7 +477,7 @@ test "Small Allocation Aliasing" {
     try expect(diff_2_1 >= 8);
     try expect(diff_1_3 >= 8);
 
-    try free(&small_3);
+    free(small_3);
 
     var small_4: []u8 = try alloc(u8, 16);
     var small_5: []u8 = try alloc(u8, 32);
@@ -521,19 +521,19 @@ test "Small Allocation Aliasing" {
     try expect(diff_4_8 >= 16);
     try expect(diff_7_8 >= 16);
 
-    try free(&small_1);
-    try free(&small_2);
-    try free(&small_4);
-    try free(&small_5);
-    try free(&small_6);
-    try free(&small_7);
-    try free(&small_8);
+    free(small_1);
+    free(small_2);
+    free(small_4);
+    free(small_5);
+    free(small_6);
+    free(small_7);
+    free(small_8);
 
     shutdown();
 }
 
 test "Small Allocation Multi-Page" {
-    try startup();
+    try startup(1);
 
     const alloc_ct: usize = 4097;
     var allocations: [alloc_ct][]u8 = undefined;
@@ -545,7 +545,7 @@ test "Small Allocation Multi-Page" {
     try expect(small_pool.page_lists[1].page_ct == 5);
 
     for (0..alloc_ct)  |i| {
-        try free(&allocations[i]);
+        free(allocations[i]);
     }
 
     for (0..small_pool.page_lists[1].page_ct) |i| {
@@ -556,21 +556,21 @@ test "Small Allocation Multi-Page" {
 }
 
 pub fn perfMicroRun () !void {
-    try startup();
+    try startup(1);
     for (0..100_000) |i| {
         var t = ScopeTimer.start("m6 small alloc/free x5", getScopeTimerID());
         defer t.stop();
         _ = i;
         var testalloc = try alloc(u8, 4);
-        try free(&testalloc);
+        free(testalloc);
         testalloc = try alloc(u8, 8);
-        try free(&testalloc);
+        free(testalloc);
         testalloc = try alloc(u8, 16);
-        try free(&testalloc);
+        free(testalloc);
         testalloc = try alloc(u8, 32);
-        try free(&testalloc);
+        free(testalloc);
         testalloc = try alloc(u8, 64);
-        try free(&testalloc);
+        free(testalloc);
     }
 
     var allocations: [100_000][]u8 = undefined;
@@ -586,7 +586,7 @@ pub fn perfMicroRun () !void {
         var t = ScopeTimer.start("m6 small free 100k", getScopeTimerID());
         defer t.stop();
         for (0..100_000) |i| {
-            try free(&allocations[i]);
+            free(allocations[i]);
         }
     }
     shutdown(); 

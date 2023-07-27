@@ -33,3 +33,4 @@ const Vec3 = nd.Vec3;
 const Plane = nd.Plane;
 const window = @import("window.zig");
 const vk = @import("vulkan.zig");
+const str = @import("string.zig");
