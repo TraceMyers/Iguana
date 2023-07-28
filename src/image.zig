@@ -1,12 +1,10 @@
 pub fn init() !void {
 
-
 }
 
-pub fn loadImage(file_path: []const u8, img_type: ImageType, img: *Image, allocator: *const std.mem.Allocator) !void {
+pub fn loadImage(file_path: []const u8, img_type: ImageType, img: *Image, allocator: *mem6.Allocator) !void {
     var file = try std.fs.cwd().openFile(file_path, .{});
     defer file.close();
-    // var file: std.fs.File = undefined;
 
     if (img_type == ImageType.Infer) {
         var extension_idx: ?usize = str.findR(file_path, '.');
@@ -14,8 +12,8 @@ pub fn loadImage(file_path: []const u8, img_type: ImageType, img: *Image, alloca
             return ImageError.NoFileExtension;
         }
         const extension: []const u8 = str.substrR(file_path, extension_idx.? + 1);
-        var extension_lower = try str.copySmallLower(extension);
-        defer str.freeSmall(extension_lower);
+        var extension_lower = try str.copyLower(extension, allocator);
+        defer str.freeSmall(extension_lower, allocator);
 
         if (str.equal(extension_lower, "bmp") or str.equal(extension_lower, "dib")) {
             try loadBmp(file, img, allocator);
@@ -40,21 +38,21 @@ pub fn loadImage(file_path: []const u8, img_type: ImageType, img: *Image, alloca
     }
 }
 
-pub fn loadBmp(file: std.fs.File, img: *Image, allocator: *const std.mem.Allocator) !void {
+pub fn loadBmp(file: std.fs.File, img: *Image, allocator: *mem6.Allocator) !void {
     _ = file;
     _ = img;
     _ = allocator;
     print("loading bmp\n", .{});
 }
 
-pub fn loadJpg(file: std.fs.File, img: *Image, allocator: *const std.mem.Allocator) !void {
+pub fn loadJpg(file: std.fs.File, img: *Image, allocator: *mem6.Allocator) !void {
     _ = file;
     _ = img;
     _ = allocator;
     print("loading jpg\n", .{});
 }
 
-pub fn loadPng(file: std.fs.File, img: *Image, allocator: *const std.mem.Allocator) !void {
+pub fn loadPng(file: std.fs.File, img: *Image, allocator: *mem6.Allocator) !void {
     _ = file;
     _ = img;
     _ = allocator;

@@ -77,9 +77,12 @@ pub fn cleanup() void {
 }
 
 pub fn drawFrame() !void {
+    gfx_frame_timer.start();
+
+    try updateUniformBuffer(current_frame);
+
     var t1 = ScopeTimer.start("vkinterface.drawFrame", getScopeTimerID());
     defer t1.stop();
-
 
     _ = c.vkWaitForFences(vk_logical, 1, &in_flight_fences[current_frame], c.VK_TRUE, std.math.maxInt(u64));
     var image_idx: u32 = undefined;
@@ -101,8 +104,6 @@ pub fn drawFrame() !void {
 
     _ = c.vkResetCommandBuffer(graphics_command_buffers[current_frame], 0);
     try recordCommandBuffer(graphics_command_buffers[current_frame], image_idx);
-
-    try updateUniformBuffer(current_frame);
 
     const wait_stage: c.VkPipelineStageFlags = c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     const submit_info = c.VkSubmitInfo{
@@ -143,6 +144,15 @@ pub fn drawFrame() !void {
     }
 
     current_frame = @mod((current_frame + 1), MAX_FRAMES_IN_FLIGHT);
+
+    gfx_frame_timer.stop();
+    // if (gfx_frame_timer_print_ctr >= gfx_frame_timer_print_rate) {
+    //     print("avg frame time: {d}\n", .{gfx_frame_timer.runningAvgMs()});
+    //     gfx_frame_timer_print_ctr = 0;
+    // }
+    // else {
+    //     gfx_frame_timer_print_ctr += 1;
+    // }
 }
 
 pub fn setFramebufferResized() void {
@@ -151,13 +161,14 @@ pub fn setFramebufferResized() void {
 
 fn updateUniformBuffer(current_image: u32) !void {
     var mvp: fMVP = undefined;
-    const instant = std.time.Instant;
-    const now = try instant.now();
-    const timestamp_f: f32 = @intToFloat(f32, now.timestamp);
+    // const instant = std.time.Instant;
+    // const now = try instant.now();
+    // const timestamp_seconds: f64 = convert.nano100ToBase(@intToFloat(f64, now.timestamp)) * 6.0;
+    test_rotation += 2e-4;
 
     mvp.model = nd.fMat4x4.modelNoScale(
         fVec3.init(.{0.0, 0.0, 1.0}), 
-        nd.fQuat.fromAxisAngle(fVec3.up, timestamp_f * 0.0000001)
+        nd.fQuat.fromAxisAngle(fVec3.up, @floatCast(f32, test_rotation))
     );
     mvp.view = nd.fMat4x4.lookAt(
         fVec3.fromScalar(2.0), 
@@ -978,11 +989,22 @@ fn createTextureImage() !void {
     direct_image = std.ArrayList(RGBA32).init(allocator);
     try direct_image.?.appendNTimes(RGBA32{}, 16); 
     for (0..direct_image.?.items.len) |i| {
-        if (i % 2 == 0) {
-            direct_image.?.items[i].r = 255;
+        const j = i / 4;
+        if (j % 2 == 0) {
+            if (i % 2 == 0) {
+                direct_image.?.items[i].r = 255;
+            }
+            else {
+                direct_image.?.items[i].b = 255;
+            }
         }
         else {
-            direct_image.?.items[i].b = 255;
+            if (i % 2 == 0) {
+                direct_image.?.items[i].b = 255;
+            }
+            else {
+                direct_image.?.items[i].r = 255;
+            }
         }
     }
 
@@ -1073,8 +1095,8 @@ fn createTextureImageSampler() !void {
         .sType = c.VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
         .pNext = null,
         .flags = 0,
-        .magFilter = c.VK_FILTER_LINEAR,
-        .minFilter = c.VK_FILTER_LINEAR,
+        .magFilter = c.VK_FILTER_NEAREST,
+        .minFilter = c.VK_FILTER_NEAREST,
         .mipmapMode = c.VK_SAMPLER_MIPMAP_MODE_LINEAR,
         .addressModeU = c.VK_SAMPLER_ADDRESS_MODE_REPEAT,
         .addressModeV = c.VK_SAMPLER_ADDRESS_MODE_REPEAT,
@@ -2103,9 +2125,9 @@ var vk_descriptor_set_layout: VkDescriptorSetLayout = null;
 var vk_pipeline_layout: VkPipelineLayout = null;
 var vk_pipeline: VkPipeline = null;
 var vk_descriptor_pool: VkDescriptorPool = null;
-var sem_image_available: [MAX_FRAMES_IN_FLIGHT]VkSemaphore = .{null, null};
-var sem_render_finished: [MAX_FRAMES_IN_FLIGHT]VkSemaphore = .{null, null};
-var in_flight_fences: [MAX_FRAMES_IN_FLIGHT]VkFence = .{null, null};
+var sem_image_available: [MAX_FRAMES_IN_FLIGHT]VkSemaphore = undefined;
+var sem_render_finished: [MAX_FRAMES_IN_FLIGHT]VkSemaphore = undefined;
+var in_flight_fences: [MAX_FRAMES_IN_FLIGHT]VkFence = undefined;
 
 var vma_allocator: c.VmaAllocator = null;
 
@@ -2124,9 +2146,9 @@ var graphics_queue: VkQueue = null;
 var compute_queue: VkQueue = null;
 var transfer_queue: VkQueue = null;
 
-var graphics_command_buffers: [MAX_FRAMES_IN_FLIGHT]VkCommandBuffer = .{null, null};
-var compute_command_buffers: [MAX_FRAMES_IN_FLIGHT]VkCommandBuffer = .{null, null};
-var transfer_command_buffers: [MAX_FRAMES_IN_FLIGHT]VkCommandBuffer = .{null, null};
+var graphics_command_buffers: [MAX_FRAMES_IN_FLIGHT]VkCommandBuffer = undefined;
+var compute_command_buffers: [MAX_FRAMES_IN_FLIGHT]VkCommandBuffer = undefined;
+var transfer_command_buffers: [MAX_FRAMES_IN_FLIGHT]VkCommandBuffer = undefined;
 
 var swapchain : Swapchain = Swapchain{};
 var physical: PhysicalDevice = PhysicalDevice{};
@@ -2168,12 +2190,18 @@ var descriptor_sets: [MAX_FRAMES_IN_FLIGHT]c.VkDescriptorSet = undefined;
 
 var dbg_switch: bool = false;
 
+var gfx_frame_timer = benchmark.WindowTimer(8).new();
+var gfx_frame_timer_print_ctr: u16 = 0;
+const gfx_frame_timer_print_rate: u16 = 200;
+
+var test_rotation: f64 = 0.0;
+
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------- constants
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 const ONE_SECOND_IN_NANOSECONDS: u32 = 1_000_000_000;
-const MAX_FRAMES_IN_FLIGHT: u32 = 2;
+const MAX_FRAMES_IN_FLIGHT: u32 = 1;
 
 const OP_TYPE = enum {Present, Graphics, Compute, Transfer};
 
@@ -2236,15 +2264,16 @@ const VkError = error {
 
 
 const std = @import("std");
-const print = std.debug.print;
 const array = @import("array.zig");
 const window = @import("window.zig");
 const benchmark = @import("benchmark.zig");
 const gfxmath = @import("gfxmath.zig");
 const nd = @import("ndmath.zig");
 const gfxtypes = @import("gfxtypes.zig");
-const c = gfxtypes.c;
+const convert = @import("convert.zig");
 
+const print = std.debug.print;
+const c = gfxtypes.c;
 const LocalArray = array.LocalArray;
 const ScopeTimer = benchmark.ScopeTimer;
 const getScopeTimerID = benchmark.getScopeTimerID;

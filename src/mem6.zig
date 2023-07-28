@@ -38,220 +38,217 @@ pub inline fn shutdown() void {
     windows.VirtualFree(address_space, 0, windows.MEM_RELEASE);
 }
 
-pub fn getAllocator(comptime in_enclave_id: comptime_int) type {
+pub const Allocator = struct {
 
-    return struct {
+    small_pool: *SmallPool = undefined,
+    medium_pool: *MediumPool = undefined,
+    large_pool: *LargePool = undefined,
+    giant_pool: *GiantPool = undefined,
+    records: *Records = undefined,
+    free_lists: *FreeLists = undefined,
 
-        const EnclaveAllocator = @This();
-        const enclave: usize = in_enclave_id;
+    pub inline fn newCopy (enclave_idx: usize) Allocator {
+        return Allocator{
+            .small_pool = &small_pools[enclave_idx],
+            .medium_pool = &medium_pools[enclave_idx],
+            .large_pool = &large_pools[enclave_idx],
+            .giant_pool = &giant_pools[enclave_idx],
+            .records = &records[enclave_idx],
+            .free_lists = &free_lists[enclave_idx]
+        };
+    }
 
-        small_pool: *SmallPool = undefined,
-        medium_pool: *MediumPool = undefined,
-        large_pool: *LargePool = undefined,
-        giant_pool: *GiantPool = undefined,
-        records: *Records = undefined,
-        free_lists: *FreeLists = undefined,
+    pub inline fn enclave(self: *Allocator) usize {
+        return (@ptrToInt(self.small_pool) - @ptrToInt(&small_pools[0])) / @sizeOf(SmallPool);
+    }
 
-        pub inline fn newCopy() EnclaveAllocator {
-            std.debug.assert(in_enclave_id < enclave_ct);
-            return EnclaveAllocator{
-                .small_pool = &small_pools[enclave],
-                .medium_pool = &medium_pools[enclave],
-                .large_pool = &large_pools[enclave],
-                .giant_pool = &giant_pools[enclave],
-                .records = &records[enclave],
-                .free_lists = &free_lists[enclave]
-            };
+    pub fn alloc(self: *Allocator, comptime Type: type, ct: usize) Mem6Error![]Type {
+        const alloc_sz: usize = ct * @sizeOf(Type);
+        assert(alloc_sz > 0);
+
+        var data: []u8 = undefined;
+        if (alloc_sz <= SMALL_ALLOC_MAX_SZ) {
+            data = self.allocSmall(@intCast(u32, alloc_sz)) orelse return Mem6Error.OutOfMemory;
+        }
+        else if (alloc_sz <= MEDIUM_ALLOC_MAX_SZ) {
+            data = self.allocMedium(@intCast(u32, alloc_sz)) orelse return Mem6Error.OutOfMemory;
+        }
+        else {
+            return Mem6Error.OutOfMemory;
         }
 
-        pub fn alloc(self: *EnclaveAllocator, comptime Type: type, ct: usize) Mem6Error![]Type {
-            const alloc_sz: usize = ct * @sizeOf(Type);
-            assert(alloc_sz > 0);
+        return mem.bytesAsSlice(Type, @alignCast(@alignOf(Type), data[0..alloc_sz]));
+    }
 
-            var data: []u8 = undefined;
-            if (alloc_sz <= SMALL_ALLOC_MAX_SZ) {
-                data = self.allocSmall(@intCast(u32, alloc_sz)) orelse return Mem6Error.OutOfMemory;
-            }
-            else if (alloc_sz <= MEDIUM_ALLOC_MAX_SZ) {
-                data = self.allocMedium(@intCast(u32, alloc_sz)) orelse return Mem6Error.OutOfMemory;
-            }
-            else {
-                return Mem6Error.OutOfMemory;
-            }
+    pub fn free(self: *Allocator, data_in: anytype) void {
+        const slice = @typeInfo(@TypeOf(data_in)).Pointer;
+        const bytes = mem.sliceAsBytes(data_in);
+        const alloc_sz = bytes.len + if (slice.sentinel != null) @sizeOf(slice.child) else 0;
+        assert(alloc_sz > 0);
 
-            return mem.bytesAsSlice(Type, @alignCast(@alignOf(Type), data[0..alloc_sz]));
+        if (alloc_sz <= SMALL_ALLOC_MAX_SZ) {
+            self.freeSmall(@ptrCast(*u8, bytes), @intCast(u32, alloc_sz));
+        }
+        else if (alloc_sz <= MEDIUM_ALLOC_MAX_SZ) {
+            self.freeMedium(@ptrCast(*u8, bytes), @intCast(u32, alloc_sz));
+        }
+    }
+
+    fn allocSmall(self: *Allocator, alloc_sz: u32) ?[]u8 {
+        const sz_div_8 = @divTrunc(alloc_sz, 8);
+        const sz_is_multiple_of_8 = @intCast(u32, @boolToInt(alloc_sz % 8 == 0));
+        const sm_idx = sz_div_8 - sz_is_multiple_of_8; 
+
+        var page_list: *PageList = &self.small_pool.page_lists[sm_idx];
+        if (page_list.free_block == null) {
+            expandPageList(
+                page_list, 
+                SMALL_PAGE_SZ, 
+                SMALL_NODE_SETS_PER_PAGE[sm_idx],
+                SMALL_NODES_PER_PAGE,
+                SMALL_BLOCK_COUNTS_PER_PAGE[sm_idx]
+            ) catch return null;
         }
 
-        pub fn free(self: *EnclaveAllocator, data_in: anytype) void {
-            const slice = @typeInfo(@TypeOf(data_in)).Pointer;
-            const bytes = mem.sliceAsBytes(data_in);
-            const alloc_sz = bytes.len + if (slice.sentinel != null) @sizeOf(slice.child) else 0;
-            assert(alloc_sz > 0);
-
-            if (alloc_sz <= SMALL_ALLOC_MAX_SZ) {
-                self.freeSmall(@ptrCast(*u8, bytes), @intCast(u32, alloc_sz));
-            }
-            else if (alloc_sz <= MEDIUM_ALLOC_MAX_SZ) {
-                self.freeMedium(@ptrCast(*u8, bytes), @intCast(u32, alloc_sz));
-            }
+        const block_idx = page_list.free_block.?;
+        const next_free_idx = page_list.blocks[block_idx].next_free;
+        if (next_free_idx == NO_BLOCK) {
+            page_list.free_block = null;
+        }
+        else {
+            page_list.free_block = next_free_idx;
         }
 
-        fn allocSmall(self: *EnclaveAllocator, alloc_sz: u32) ?[]u8 {
-            const sz_div_8 = @divTrunc(alloc_sz, 8);
-            const sz_is_multiple_of_8 = @intCast(u32, @boolToInt(alloc_sz % 8 == 0));
-            const sm_idx = sz_div_8 - sz_is_multiple_of_8; 
+        const page_idx = @divTrunc(block_idx, SMALL_BLOCK_COUNTS_PER_PAGE[sm_idx]);
+        var page_record: *PageRecord = &page_list.pages[page_idx];
+        page_record.free_block_ct -= 1;
 
-            var page_list: *PageList = &self.small_pool.page_lists[sm_idx];
-            if (page_list.free_block == null) {
-                expandPageList(
-                    page_list, 
-                    SMALL_PAGE_SZ, 
-                    SMALL_NODE_SETS_PER_PAGE[sm_idx],
-                    SMALL_NODES_PER_PAGE,
-                    SMALL_BLOCK_COUNTS_PER_PAGE[sm_idx]
-                ) catch return null;
-            }
+        const block_start = block_idx * SMALL_BLOCK_SIZES[sm_idx];
+        const block_end = block_start + SMALL_BLOCK_SIZES[sm_idx];
+        return page_list.bytes[block_start..block_end];
+    }
 
-            const block_idx = page_list.free_block.?;
-            const next_free_idx = page_list.blocks[block_idx].next_free;
-            if (next_free_idx == NO_BLOCK) {
-                page_list.free_block = null;
-            }
-            else {
-                page_list.free_block = next_free_idx;
-            }
+    fn freeSmall(self: *Allocator, data: *u8, alloc_sz: u32) void {
+        const sz_div_8 = @divTrunc(alloc_sz, 8);
+        const sz_is_multiple_of_8 = @intCast(u32, @boolToInt(alloc_sz % 8 == 0));
+        const sm_idx = sz_div_8 - sz_is_multiple_of_8; 
+        
+        var page_list: *PageList = &self.small_pool.page_lists[sm_idx];
+        const page_list_head_address = @ptrToInt(@ptrCast(*u8, page_list.bytes));
+        const data_address = @ptrToInt(data);
+        const block_idx = @intCast(u32, (data_address - page_list_head_address) / SMALL_BLOCK_SIZES[sm_idx]);
+        const next_free = page_list.free_block.?;
 
-            const page_idx = @divTrunc(block_idx, SMALL_BLOCK_COUNTS_PER_PAGE[sm_idx]);
-            var page_record: *PageRecord = &page_list.pages[page_idx];
-            page_record.free_block_ct -= 1;
+        page_list.free_block = block_idx;
+        page_list.blocks[@intCast(usize, block_idx)].next_free = @intCast(u32, next_free);
 
-            const block_start = block_idx * SMALL_BLOCK_SIZES[sm_idx];
-            const block_end = block_start + SMALL_BLOCK_SIZES[sm_idx];
-            return page_list.bytes[block_start..block_end];
+        var page_record: *PageRecord = &page_list.pages[block_idx / SMALL_BLOCK_COUNTS_PER_PAGE[sm_idx]];
+        page_record.free_block_ct += 1;
+    }
+
+    fn allocMedium(self: *Allocator, alloc_sz: u32) ?[]u8 {
+        const sz_div_128 = @divTrunc(alloc_sz, 128);
+        const sz_is_multiple_of_128 = @intCast(u32, @boolToInt(alloc_sz % 128 == 0));
+        const md_idx = sz_div_128 - sz_is_multiple_of_128; 
+
+        var page_list: *PageList = &self.medium_pool.page_lists[md_idx];
+        if (page_list.free_block == null) {
+            expandPageList(
+                page_list, 
+                MEDIUM_PAGE_SZ, 
+                MEDIUM_NODE_SETS_PER_PAGE[md_idx],
+                MEDIUM_NODES_PER_PAGE,
+                MEDIUM_BLOCK_COUNTS_PER_PAGE[md_idx]
+            ) catch return null;
         }
 
-        fn freeSmall(self: *EnclaveAllocator, data: *u8, alloc_sz: u32) void {
-            const sz_div_8 = @divTrunc(alloc_sz, 8);
-            const sz_is_multiple_of_8 = @intCast(u32, @boolToInt(alloc_sz % 8 == 0));
-            const sm_idx = sz_div_8 - sz_is_multiple_of_8; 
-            
-            var page_list: *PageList = &self.small_pool.page_lists[sm_idx];
-            const page_list_head_address = @ptrToInt(@ptrCast(*u8, page_list.bytes));
-            const data_address = @ptrToInt(data);
-            const block_idx = @intCast(u32, (data_address - page_list_head_address) / SMALL_BLOCK_SIZES[sm_idx]);
-            const next_free = page_list.free_block.?;
-
-            page_list.free_block = block_idx;
-            page_list.blocks[@intCast(usize, block_idx)].next_free = @intCast(u32, next_free);
-
-            var page_record: *PageRecord = &page_list.pages[block_idx / SMALL_BLOCK_COUNTS_PER_PAGE[sm_idx]];
-            page_record.free_block_ct += 1;
+        const block_idx = page_list.free_block.?;
+        const next_free_idx = page_list.blocks[block_idx].next_free;
+        if (next_free_idx == NO_BLOCK) {
+            page_list.free_block = null;
+        }
+        else {
+            page_list.free_block = next_free_idx;
         }
 
-        fn allocMedium(self: *EnclaveAllocator, alloc_sz: u32) ?[]u8 {
-            const sz_div_128 = @divTrunc(alloc_sz, 128);
-            const sz_is_multiple_of_128 = @intCast(u32, @boolToInt(alloc_sz % 128 == 0));
-            const sm_idx = sz_div_128 - sz_is_multiple_of_128; 
+        const page_idx = @divTrunc(block_idx, MEDIUM_BLOCK_COUNTS_PER_PAGE[md_idx]);
+        var page_record: *PageRecord = &page_list.pages[page_idx];
+        page_record.free_block_ct -= 1;
 
-            var page_list: *PageList = &self.medium_pool.page_lists[sm_idx];
-            if (page_list.free_block == null) {
-                expandPageList(
-                    page_list, 
-                    MEDIUM_PAGE_SZ, 
-                    MEDIUM_NODE_SETS_PER_PAGE[sm_idx],
-                    MEDIUM_NODES_PER_PAGE,
-                    MEDIUM_BLOCK_COUNTS_PER_PAGE[sm_idx]
-                ) catch return null;
+        const block_start = block_idx * MEDIUM_BLOCK_SIZES[md_idx];
+        const block_end = block_start + MEDIUM_BLOCK_SIZES[md_idx];
+        return page_list.bytes[block_start..block_end];
+    }
+
+    fn freeMedium(self: *Allocator, data: *u8, alloc_sz: u32) void {
+        const sz_div_128 = @divTrunc(alloc_sz, 128);
+        const sz_is_multiple_of_128 = @intCast(u32, @boolToInt(alloc_sz % 128 == 0));
+        const md_idx = sz_div_128 - sz_is_multiple_of_128; 
+        
+        var page_list: *PageList = &self.medium_pool.page_lists[md_idx];
+        const page_list_head_address = @ptrToInt(@ptrCast(*u8, page_list.bytes));
+        const data_address = @ptrToInt(data);
+        const block_idx = @intCast(u32, (data_address - page_list_head_address) / MEDIUM_BLOCK_SIZES[md_idx]);
+        const next_free = page_list.free_block.?;
+
+        page_list.free_block = block_idx;
+        page_list.blocks[@intCast(usize, block_idx)].next_free = @intCast(u32, next_free);
+
+        var page_record: *PageRecord = &page_list.pages[block_idx / MEDIUM_BLOCK_COUNTS_PER_PAGE[md_idx]];
+        page_record.free_block_ct += 1;
+    }
+
+    // TODO: OutOfPages error
+    fn expandPageList(
+        page_list: *PageList, 
+        page_sz: usize, 
+        node_sets_per_page: usize, 
+        nodes_per_page: usize,
+        block_cts_per_page: usize,
+    ) !void {
+        const free_page_idx = page_list.free_page.?;
+        var free_page: *PageRecord = &page_list.pages[free_page_idx]; 
+
+        assert(free_page.free_block_ct == NO_BLOCK);
+        
+        page_list.free_page = free_page.next_free;
+
+        const page_bytes = &page_list.bytes[free_page_idx * page_sz]; 
+        _ = try windows.VirtualAlloc(
+            page_bytes, page_sz, windows.MEM_COMMIT, windows.PAGE_READWRITE
+        );
+
+        // for every page of memory taken out for a given allocation size bracket, only a fraction of a page is required
+        // to track individual allocations (with 'nodes'). So, we need to check if a page has already been committed for
+        // tracking allocations within this range of allocation pages.
+        const page_check_start = free_page_idx - @mod(free_page_idx, node_sets_per_page);
+        const page_check_end = page_check_start + node_sets_per_page;
+
+        for (page_check_start..page_check_end) |i| {
+            if (page_list.pages[i].free_block_ct != NO_BLOCK) {
+                break;
             }
-
-            const block_idx = page_list.free_block.?;
-            const next_free_idx = page_list.blocks[block_idx].next_free;
-            if (next_free_idx == NO_BLOCK) {
-                page_list.free_block = null;
-            }
-            else {
-                page_list.free_block = next_free_idx;
-            }
-
-            const page_idx = @divTrunc(block_idx, MEDIUM_BLOCK_COUNTS_PER_PAGE[sm_idx]);
-            var page_record: *PageRecord = &page_list.pages[page_idx];
-            page_record.free_block_ct -= 1;
-
-            const block_start = block_idx * MEDIUM_BLOCK_SIZES[sm_idx];
-            const block_end = block_start + MEDIUM_BLOCK_SIZES[sm_idx];
-            return page_list.bytes[block_start..block_end];
-        }
-
-        fn freeMedium(self: *EnclaveAllocator, data: *u8, alloc_sz: u32) void {
-            const sz_div_128 = @divTrunc(alloc_sz, 128);
-            const sz_is_multiple_of_128 = @intCast(u32, @boolToInt(alloc_sz % 128 == 0));
-            const sm_idx = sz_div_128 - sz_is_multiple_of_128; 
-            
-            var page_list: *PageList = &self.medium_pool.page_lists[sm_idx];
-            const page_list_head_address = @ptrToInt(@ptrCast(*u8, page_list.bytes));
-            const data_address = @ptrToInt(data);
-            const block_idx = @intCast(u32, (data_address - page_list_head_address) / MEDIUM_BLOCK_SIZES[sm_idx]);
-            const next_free = page_list.free_block.?;
-
-            page_list.free_block = block_idx;
-            page_list.blocks[@intCast(usize, block_idx)].next_free = @intCast(u32, next_free);
-
-            var page_record: *PageRecord = &page_list.pages[block_idx / MEDIUM_BLOCK_COUNTS_PER_PAGE[sm_idx]];
-            page_record.free_block_ct += 1;
-        }
-
-        // TODO: OutOfPages error
-        fn expandPageList(
-            page_list: *PageList, 
-            page_sz: usize, 
-            node_sets_per_page: usize, 
-            nodes_per_page: usize,
-            block_cts_per_page: usize,
-        ) !void {
-            const free_page_idx = page_list.free_page.?;
-            var free_page: *PageRecord = &page_list.pages[free_page_idx]; 
-
-            assert(free_page.free_block_ct == NO_BLOCK);
-            
-            page_list.free_page = free_page.next_free;
-
-            const page_bytes = &page_list.bytes[free_page_idx * page_sz]; 
+        } else {
+            const node_page_idx = page_check_start / node_sets_per_page;
+            const nodes_bytes = &page_list.blocks[node_page_idx * nodes_per_page];
             _ = try windows.VirtualAlloc(
-                page_bytes, page_sz, windows.MEM_COMMIT, windows.PAGE_READWRITE
+                nodes_bytes, page_sz, windows.MEM_COMMIT, windows.PAGE_READWRITE
             );
-
-            // for every page of memory taken out for a given allocation size bracket, only a fraction of a page is required
-            // to track individual allocations (with 'nodes'). So, we need to check if a page has already been committed for
-            // tracking allocations within this range of allocation pages.
-            const page_check_start = free_page_idx - @mod(free_page_idx, node_sets_per_page);
-            const page_check_end = page_check_start + node_sets_per_page;
-
-            for (page_check_start..page_check_end) |i| {
-                if (page_list.pages[i].free_block_ct != NO_BLOCK) {
-                    break;
-                }
-            } else {
-                const node_page_idx = page_check_start / node_sets_per_page;
-                const nodes_bytes = &page_list.blocks[node_page_idx * nodes_per_page];
-                _ = try windows.VirtualAlloc(
-                    nodes_bytes, page_sz, windows.MEM_COMMIT, windows.PAGE_READWRITE
-                );
-            }
-
-            free_page.free_block_ct = @intCast(u32, block_cts_per_page);
-
-            const start_idx = free_page_idx * block_cts_per_page;
-            const end_idx = start_idx + block_cts_per_page - 1;
-            for (start_idx..end_idx) |i| {
-                page_list.blocks[i].next_free = @intCast(u32, i) + 1;
-            }
-            page_list.blocks[end_idx].next_free = NO_BLOCK;
-
-            page_list.free_block = @intCast(u32, start_idx);
-            page_list.page_ct += 1;
         }
-    };
-}
+
+        free_page.free_block_ct = @intCast(u32, block_cts_per_page);
+
+        const start_idx = free_page_idx * block_cts_per_page;
+        const end_idx = start_idx + block_cts_per_page - 1;
+        for (start_idx..end_idx) |i| {
+            page_list.blocks[i].next_free = @intCast(u32, i) + 1;
+        }
+        page_list.blocks[end_idx].next_free = NO_BLOCK;
+
+        page_list.free_block = @intCast(u32, start_idx);
+        page_list.page_ct += 1;
+    }
+};
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- init
@@ -637,7 +634,7 @@ const getScopeTimerID = benchmark.getScopeTimerID;
 test "Single Allocation" {
     try startup(5);
     defer shutdown();
-    var allocator = getAllocator(3).newCopy();
+    var allocator = Allocator.newCopy(3);
 
     var sm1: []u8 = try allocator.alloc(u8, 54);
     for (0..sm1.len) |i| {
@@ -654,7 +651,7 @@ test "Single Allocation" {
 test "Small Allocation Aliasing" {
     try startup(6);
     defer shutdown();
-    var allocator = getAllocator(5).newCopy();
+    var allocator = Allocator.newCopy(5);
 
     var small_1: []u8 = try allocator.alloc(u8, 4);
     allocator.free(small_1);
@@ -750,7 +747,7 @@ test "Small Allocation Aliasing" {
 test "Small Allocation Multi-Page" {
     try startup(7);
     defer shutdown();
-    var allocator = getAllocator(0).newCopy();
+    var allocator = Allocator.newCopy(3);
 
     const alloc_ct: usize = 4097;
     var allocations: [alloc_ct][]u8 = undefined;
@@ -773,7 +770,7 @@ test "Small Allocation Multi-Page" {
 test "Perf vs GPA" {
 // pub fn perfMicroRun () !void {
     try startup(8);
-    var allocator = getAllocator(0).newCopy();
+    var allocator = Allocator.newCopy(0);
 
     for (0..100_000) |i| {
         var t = ScopeTimer.start("m6 small alloc/free x5", getScopeTimerID());

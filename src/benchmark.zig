@@ -35,21 +35,60 @@ fn scopeTimerIDCounter() i32 {
 // -------------------------------------------------------------------------------------------------------------- public
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// TODO: timer with a single tracked value that always directly assigns times higher than it, and blends with lower
+// times, which works in an average-like way while making spikes more noticeable in the number. or, maybe just always
+// average the numbers but weigh larger times greater than lower times, such as (0.8 vs 0.2).
+
 pub const ScopeTimer = struct {
     idx: usize = undefined,
-    start: u64 = undefined,
+    start_time: u64 = undefined,
 
     pub inline fn start(comptime in_name: []const u8, in_idx: usize) ScopeTimer {
         addTimer(in_idx, in_name);
         var start_inst = time.Instant.now() catch time.Instant{.timestamp=0};
-        return ScopeTimer{.idx=in_idx, .start=start_inst.timestamp};
+        return ScopeTimer{.idx=in_idx, .start_time=start_inst.timestamp};
     }
 
     pub inline fn stop(self: *ScopeTimer) void {
-        var end_inst = time.Instant.now() catch time.Instant{.timestamp=self.start};
-        logEndTime(self.idx, end_inst.timestamp - self.start);
+        var end_inst = time.Instant.now() catch time.Instant{.timestamp=self.start_time};
+        logEndTime(self.idx, end_inst.timestamp - self.start_time);
     }
 };
+
+pub fn WindowTimer(comptime window_size: comptime_int) type {
+
+    return struct {
+
+        const TimerType = @This();
+
+        times: [window_size]u64 = undefined,
+        time_idx: usize = 0,
+        start_time: u64 = 0,
+
+        pub inline fn new() TimerType {
+            return TimerType{.times = std.mem.zeroes([window_size]u64)};
+        }
+
+        pub inline fn start(self: *TimerType) void {
+            var start_inst = time.Instant.now() catch time.Instant{.timestamp=0};
+            self.start_time = start_inst.timestamp;
+        }
+
+        pub inline fn stop(self: *TimerType) void {
+            var end_inst = time.Instant.now() catch time.Instant{.timestamp=self.start_time};
+            self.times[self.time_idx] = end_inst.timestamp - self.start_time;
+            self.time_idx = if (self.time_idx == window_size - 1) 0 else self.time_idx + 1;
+        }
+
+        pub inline fn runningAvgMs(self: *TimerType) f64 {
+            var ms: f64 = 0.0;
+            for (0..window_size) |i| {
+                ms += convert.nano100ToMilli(@intToFloat(f64, self.times[i]));
+            }
+            return ms / @intToFloat(f64, window_size);
+        }
+    };
+}
 
 pub fn printAllScopeTimers() void {
     print("\n", .{});
@@ -58,9 +97,9 @@ pub fn printAllScopeTimers() void {
         if (timer.initialized) {
             var total_time_f = @intToFloat(f64, timer.total_time);
             var ticks_f = @intToFloat(f64, timer.log_ct);
-            var avg_time_f = total_time_f / ticks_f * _100_ns_to_ms;
-            var max_time_f = @intToFloat(f64, timer.max_time) * _100_ns_to_ms;
-            var min_time_f = @intToFloat(f64, timer.min_time) * _100_ns_to_ms;
+            var avg_time_f = convert.nano100ToMilli(total_time_f / ticks_f);
+            var max_time_f = convert.nano100ToMilli(@intToFloat(f64, timer.max_time));
+            var min_time_f = convert.nano100ToMilli(@intToFloat(f64, timer.min_time));
 
             print("--- scope timer |{s}| ---\n", .{timer.name});
             print("avg: {d:0.5} ms // max: {d:0.4} ms // min: {d:0.4} ms\n", .{avg_time_f, max_time_f, min_time_f});
@@ -81,12 +120,13 @@ const InternalTimer = struct {
     initialized: bool = false,
 };
 
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------- constants
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // convert 100s of nanoseconds to milliseconds
-const _100_ns_to_ms = 1e-4;
+// const _100_ns_to_ms = 1e-4;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- data
@@ -143,6 +183,7 @@ const assert = std.debug.assert;
 const time = std.time;
 const RandGen = std.rand.DefaultPrng;
 const expect = std.testing.expect;
+const convert = @import("convert.zig");
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // --------------------------------------------------------------------------------------------------------------- tests

@@ -40,14 +40,14 @@ pub inline fn findR(str: []const u8, token: u8) ?usize {
 }
 
 // TODO: generalized copy
-pub inline fn copySmall(str: []const u8) ![]u8 {
-    var new_str: []u8 = try mem6.alloc(u8, str.len);
+pub inline fn copy(str: []const u8, allocator: *mem6.Allocator) ![]u8 {
+    var new_str: []u8 = try allocator.alloc(u8, str.len);
     @memcpy(new_str[0..str.len], str[0..str.len]);
     return new_str;
 }
 
-pub inline fn copySmallLower(str: []const u8) ![]u8 {
-    var new_str: []u8 = try mem6.alloc(u8, str.len);
+pub fn copyLower(str: []const u8, allocator: *mem6.Allocator) ![]u8 {
+    var new_str: []u8 = try allocator.alloc(u8, str.len);
     for (0..str.len) |i| {
         if (str[i] >= 'A' and str[i] <= 'Z') {
             new_str[i] = str[i] + to_lower_diff;
@@ -59,8 +59,8 @@ pub inline fn copySmallLower(str: []const u8) ![]u8 {
     return new_str;
 }
 
-pub inline fn freeSmall(str: []u8) void {
-    mem6.free(&str);
+pub inline fn free(str: []u8, allocator: *mem6.Allocator) void {
+    allocator.free(str);
 }
 
 pub fn toLower(str: []u8) void {
@@ -72,6 +72,5 @@ pub fn toLower(str: []u8) void {
 }
 
 const to_lower_diff: u8 = 'a' - 'A';
-
 const std = @import("std");
 const mem6 = @import("mem6.zig");
