@@ -59,7 +59,7 @@ pub const Allocator = struct {
     }
 
     pub inline fn enclave(self: *Allocator) usize {
-        return (@ptrToInt(self.small_pool) - @ptrToInt(&small_pools[0])) / @sizeOf(SmallPool);
+        return (@ptrToInt(self.small_pool) - @ptrToInt(&small_pools[0])) / @sizeOf(*SmallPool);
     }
 
     pub fn alloc(self: *Allocator, comptime Type: type, ct: usize) Mem6Error![]Type {
@@ -95,9 +95,9 @@ pub const Allocator = struct {
     }
 
     fn allocSmall(self: *Allocator, alloc_sz: u32) ?[]u8 {
-        const sz_div_8 = @divTrunc(alloc_sz, 8);
-        const sz_is_multiple_of_8 = @intCast(u32, @boolToInt(alloc_sz % 8 == 0));
-        const sm_idx = sz_div_8 - sz_is_multiple_of_8; 
+        const sz_div_min = @divTrunc(alloc_sz, SMALL_ALLOC_MIN_SZ);
+        const sz_is_multiple_of_min = @intCast(u32, @boolToInt(alloc_sz % SMALL_ALLOC_MIN_SZ == 0));
+        const sm_idx = sz_div_min - sz_is_multiple_of_min; 
 
         var page_list: *PageList = &self.small_pool.page_lists[sm_idx];
         if (page_list.free_block == null) {
@@ -129,9 +129,9 @@ pub const Allocator = struct {
     }
 
     fn freeSmall(self: *Allocator, data: *u8, alloc_sz: u32) void {
-        const sz_div_8 = @divTrunc(alloc_sz, 8);
-        const sz_is_multiple_of_8 = @intCast(u32, @boolToInt(alloc_sz % 8 == 0));
-        const sm_idx = sz_div_8 - sz_is_multiple_of_8; 
+        const sz_div_min = @divTrunc(alloc_sz, SMALL_ALLOC_MIN_SZ);
+        const sz_is_multiple_of_min = @intCast(u32, @boolToInt(alloc_sz % SMALL_ALLOC_MIN_SZ == 0));
+        const sm_idx = sz_div_min - sz_is_multiple_of_min; 
         
         var page_list: *PageList = &self.small_pool.page_lists[sm_idx];
         const page_list_head_address = @ptrToInt(@ptrCast(*u8, page_list.bytes));
@@ -147,9 +147,10 @@ pub const Allocator = struct {
     }
 
     fn allocMedium(self: *Allocator, alloc_sz: u32) ?[]u8 {
-        const sz_div_128 = @divTrunc(alloc_sz, 128);
-        const sz_is_multiple_of_128 = @intCast(u32, @boolToInt(alloc_sz % 128 == 0));
-        const md_idx = sz_div_128 - sz_is_multiple_of_128; 
+        const leading_zero_ct: u32 = @clz(alloc_sz);
+        const trailing_zero_ct: u32 = @ctz(alloc_sz);
+        const not_pow2: u32 = if(leading_zero_ct + trailing_zero_ct == @as(usize, 31)) @as(usize, 0) else @as(usize, 1);
+        const md_idx = @as(usize, 31) - leading_zero_ct + not_pow2 - MEDIUM_MIN_EXP2;  // TODO: check this
 
         var page_list: *PageList = &self.medium_pool.page_lists[md_idx];
         if (page_list.free_block == null) {
@@ -181,9 +182,10 @@ pub const Allocator = struct {
     }
 
     fn freeMedium(self: *Allocator, data: *u8, alloc_sz: u32) void {
-        const sz_div_128 = @divTrunc(alloc_sz, 128);
-        const sz_is_multiple_of_128 = @intCast(u32, @boolToInt(alloc_sz % 128 == 0));
-        const md_idx = sz_div_128 - sz_is_multiple_of_128; 
+        const leading_zero_ct: u32 = @clz(alloc_sz);
+        const trailing_zero_ct: u32 = @ctz(alloc_sz);
+        const not_pow2: u32 = if(leading_zero_ct + trailing_zero_ct == @as(usize, 31)) @as(usize, 0) else @as(usize, 1);
+        const md_idx = @as(usize, 31) - leading_zero_ct + not_pow2 - MEDIUM_MIN_EXP2; 
         
         var page_list: *PageList = &self.medium_pool.page_lists[md_idx];
         const page_list_head_address = @ptrToInt(@ptrCast(*u8, page_list.bytes));
@@ -228,7 +230,8 @@ pub const Allocator = struct {
             if (page_list.pages[i].free_block_ct != NO_BLOCK) {
                 break;
             }
-        } else {
+        }
+        else {
             const node_page_idx = page_check_start / node_sets_per_page;
             const nodes_bytes = &page_list.blocks[node_page_idx * nodes_per_page];
             _ = try windows.VirtualAlloc(
@@ -456,8 +459,10 @@ const Mem6Error = error {
 
 pub const MAX_ENCLAVE_CT: usize = 32;
 
+// roughly correspond to actual page sizes. naming directly corresponds to which size-pool they're used for
 const SMALL_PAGE_SZ: usize  = 16    * 1024; // 16KB
 const MEDIUM_PAGE_SZ: usize = 64    * 1024; // 64KB
+const LARGE_PAGE_SZ: usize  = 64    * 1024; // 64KB
 
 // address space sizes per enclave
 const SMALL_POOL_SZ: usize  = 512   * 1024 * 1024; // 512 MB
@@ -523,12 +528,12 @@ const SMALL_FREE_LIST_SZ_PER_DIVISION: [8]usize = .{
     SMALL_BLOCK_COUNTS_PER_DIVISION[7] * @sizeOf(BlockNode)
 };
 
-
 //--------------------------------------------------------------------------------------------------------------- medium
 
 const MEDIUM_ALLOC_MIN_SZ: usize = 128;
-const MEDIUM_ALLOC_MAX_SZ: usize = 1024;
+const MEDIUM_ALLOC_MAX_SZ: usize = 16384;
 const MEDIUM_DIVISION_CT: usize = 8;
+const MEDIUM_MIN_EXP2: usize = std.math.log(comptime_int, 2, @as(comptime_int, MEDIUM_ALLOC_MIN_SZ));
 
 const MEDIUM_DIVISION_SZ: usize                     = MEDIUM_POOL_SZ / MEDIUM_DIVISION_CT;
 const MEDIUM_PAGE_RECORDS_SZ: usize                 = MEDIUM_POOL_SZ / MEDIUM_PAGE_SZ;
@@ -536,7 +541,7 @@ const MEDIUM_PAGE_RECORDS_SZ_PER_DIVISION: usize    = MEDIUM_PAGE_RECORDS_SZ / M
 const MEDIUM_DIVISION_PAGE_CT: usize                = MEDIUM_PAGE_RECORDS_SZ_PER_DIVISION / @sizeOf(PageRecord);
 const MEDIUM_NODES_PER_PAGE: usize                  = MEDIUM_PAGE_SZ / @sizeOf(BlockNode);
 
-const MEDIUM_BLOCK_SIZES: [8]usize = .{128, 256, 384, 512, 640, 768, 896, 1024};
+const MEDIUM_BLOCK_SIZES: [8]usize = .{128, 256, 512, 1024, 2048, 4096, 8192, 16384};
 
 const MEDIUM_BLOCK_COUNTS_PER_DIVISION: [8]usize = .{
     MEDIUM_DIVISION_SZ / MEDIUM_BLOCK_SIZES[0],
@@ -773,7 +778,7 @@ test "Perf vs GPA" {
     var allocator = Allocator.newCopy(0);
 
     for (0..100_000) |i| {
-        var t = ScopeTimer.start("m6 small alloc/free x5", getScopeTimerID());
+        var t = ScopeTimer.start("m6 SMALL alloc/free x5", getScopeTimerID());
         defer t.stop();
         _ = i;
         var testalloc = try allocator.alloc(u8, 4);
@@ -791,14 +796,14 @@ test "Perf vs GPA" {
     var allocations: [100_000][]u8 = undefined;
 
     {
-        var t = ScopeTimer.start("m6 small alloc 100k", getScopeTimerID());
+        var t = ScopeTimer.start("m6 SMALL alloc 100k", getScopeTimerID());
         defer t.stop();
         for (0..100_000) |i| {
             allocations[i] = try allocator.alloc(u8, 16);
         }
     }
     {
-        var t = ScopeTimer.start("m6 small free 100k", getScopeTimerID());
+        var t = ScopeTimer.start("m6 SMALL free 100k", getScopeTimerID());
         defer t.stop();
         for (0..100_000) |i| {
             allocator.free(allocations[i]);
@@ -806,32 +811,32 @@ test "Perf vs GPA" {
     }
 
     for (0..100_000) |i| {
-        var t = ScopeTimer.start("m6 medium alloc/free x5", getScopeTimerID());
+        var t = ScopeTimer.start("m6 MEDIUM alloc/free x5", getScopeTimerID());
         defer t.stop();
         _ = i;
         var testalloc = try allocator.alloc(u8, 100);
         allocator.free(testalloc);
         testalloc = try allocator.alloc(u8, 255);
         allocator.free(testalloc);
-        testalloc = try allocator.alloc(u8, 384);
+        testalloc = try allocator.alloc(u8, 512);
         allocator.free(testalloc);
-        testalloc = try allocator.alloc(u8, 767);
+        testalloc = try allocator.alloc(u8, 1025);
         allocator.free(testalloc);
-        testalloc = try allocator.alloc(u8, 1024);
+        testalloc = try allocator.alloc(u8, 8192);
         allocator.free(testalloc);
     }
 
     {
-        var t = ScopeTimer.start("m6 medium alloc 100k", getScopeTimerID());
+        var t = ScopeTimer.start("m6 MEDIUM alloc 10k", getScopeTimerID());
         defer t.stop();
-        for (0..100_000) |i| {
-            allocations[i] = try allocator.alloc(u8, 256);
+        for (0..10_000) |i| {
+            allocations[i] = try allocator.alloc(u8, 2048);
         }
     }
     {
-        var t = ScopeTimer.start("m6 medium free 100k", getScopeTimerID());
+        var t = ScopeTimer.start("m6 MEDIUM free 10k", getScopeTimerID());
         defer t.stop();
-        for (0..100_000) |i| {
+        for (0..10_000) |i| {
             allocator.free(allocations[i]);
         }
     }
@@ -846,7 +851,7 @@ test "Perf vs GPA" {
 
     for (0..100_000) |i| {
         _ = i;
-        var t = ScopeTimer.start("gpa small alloc/free x5", getScopeTimerID()); defer t.stop();
+        var t = ScopeTimer.start("gpa SMALL alloc/free x5", getScopeTimerID()); defer t.stop();
         var testalloc = try gpa_allocator.alloc(u8, 4);
         gpa_allocator.free(testalloc);
         testalloc = try gpa_allocator.alloc(u8, 8);
@@ -860,14 +865,41 @@ test "Perf vs GPA" {
     }
 
     {
-        var t = ScopeTimer.start("gpa small alloc 100k", getScopeTimerID()); defer t.stop();
+        var t = ScopeTimer.start("gpa SMALL alloc 100k", getScopeTimerID()); defer t.stop();
         for (0..100_000) |i| {
             allocations[i] = try gpa_allocator.alloc(u8, 16);
         }
     }
     {
-        var t = ScopeTimer.start("gpa small free 100k", getScopeTimerID()); defer t.stop();
+        var t = ScopeTimer.start("gpa SMALL free 100k", getScopeTimerID()); defer t.stop();
         for (0..100_000) |i| {
+            gpa_allocator.free(allocations[i]);
+        }
+    }
+    for (0..100_000) |i| {
+        _ = i;
+        var t = ScopeTimer.start("gpa MEDIUM alloc/free x5", getScopeTimerID()); defer t.stop();
+        var testalloc = try gpa_allocator.alloc(u8, 100);
+        gpa_allocator.free(testalloc);
+        testalloc = try gpa_allocator.alloc(u8, 255);
+        gpa_allocator.free(testalloc);
+        testalloc = try gpa_allocator.alloc(u8, 512);
+        gpa_allocator.free(testalloc);
+        testalloc = try gpa_allocator.alloc(u8, 1025);
+        gpa_allocator.free(testalloc);
+        testalloc = try gpa_allocator.alloc(u8, 8192);
+        gpa_allocator.free(testalloc);
+    }
+
+    {
+        var t = ScopeTimer.start("gpa MEDIUM alloc 10k", getScopeTimerID()); defer t.stop();
+        for (0..10_000) |i| {
+            allocations[i] = try gpa_allocator.alloc(u8, 2048);
+        }
+    }
+    {
+        var t = ScopeTimer.start("gpa MEDIUM free 10k", getScopeTimerID()); defer t.stop();
+        for (0..10_000) |i| {
             gpa_allocator.free(allocations[i]);
         }
     }
