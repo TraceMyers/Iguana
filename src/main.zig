@@ -26,6 +26,7 @@ pub fn main() !void {
     }
 
     benchmark.printAllScopeTimers();
+    // try mem6.MediumAllocTest();
 }
 
 var frame_timer = benchmark.WindowTimer(4).new();

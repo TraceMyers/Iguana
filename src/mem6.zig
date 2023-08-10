@@ -106,7 +106,8 @@ pub const Allocator = struct {
                 SMALL_PAGE_SZ, 
                 SMALL_NODE_SETS_PER_PAGE[sm_idx],
                 SMALL_NODES_PER_PAGE,
-                SMALL_BLOCK_COUNTS_PER_PAGE[sm_idx]
+                SMALL_BLOCK_COUNTS_PER_PAGE[sm_idx],
+                SMALL_DIVISION_PAGE_CT
             ) catch return null;
         }
 
@@ -149,8 +150,8 @@ pub const Allocator = struct {
     fn allocMedium(self: *Allocator, alloc_sz: u32) ?[]u8 {
         const leading_zero_ct: u32 = @clz(alloc_sz);
         const trailing_zero_ct: u32 = @ctz(alloc_sz);
-        const not_pow2: u32 = if(leading_zero_ct + trailing_zero_ct == @as(usize, 31)) @as(usize, 0) else @as(usize, 1);
-        const md_idx = @as(usize, 31) - leading_zero_ct + not_pow2 - MEDIUM_MIN_EXP2;  // TODO: check this
+        const not_pow2: u32 = if(leading_zero_ct + trailing_zero_ct == @as(u32, 31)) @as(u32, 0) else @as(u32, 1);
+        const md_idx = @as(u32, 31) - leading_zero_ct + not_pow2 - MEDIUM_MIN_EXP2;  // TODO: check this
 
         var page_list: *PageList = &self.medium_pool.page_lists[md_idx];
         if (page_list.free_block == null) {
@@ -159,7 +160,8 @@ pub const Allocator = struct {
                 MEDIUM_PAGE_SZ, 
                 MEDIUM_NODE_SETS_PER_PAGE[md_idx],
                 MEDIUM_NODES_PER_PAGE,
-                MEDIUM_BLOCK_COUNTS_PER_PAGE[md_idx]
+                MEDIUM_BLOCK_COUNTS_PER_PAGE[md_idx],
+                MEDIUM_DIVISION_PAGE_CT,
             ) catch return null;
         }
 
@@ -184,9 +186,9 @@ pub const Allocator = struct {
     fn freeMedium(self: *Allocator, data: *u8, alloc_sz: u32) void {
         const leading_zero_ct: u32 = @clz(alloc_sz);
         const trailing_zero_ct: u32 = @ctz(alloc_sz);
-        const not_pow2: u32 = if(leading_zero_ct + trailing_zero_ct == @as(usize, 31)) @as(usize, 0) else @as(usize, 1);
-        const md_idx = @as(usize, 31) - leading_zero_ct + not_pow2 - MEDIUM_MIN_EXP2; 
-        
+        const not_pow2: u32 = if(leading_zero_ct + trailing_zero_ct == @as(u32, 31)) @as(u32, 0) else @as(u32, 1);
+        const md_idx = @as(u32, 31) - leading_zero_ct + not_pow2 - MEDIUM_MIN_EXP2;  // TODO: check this
+
         var page_list: *PageList = &self.medium_pool.page_lists[md_idx];
         const page_list_head_address = @ptrToInt(@ptrCast(*u8, page_list.bytes));
         const data_address = @ptrToInt(data);
@@ -207,6 +209,7 @@ pub const Allocator = struct {
         node_sets_per_page: usize, 
         nodes_per_page: usize,
         block_cts_per_page: usize,
+        division_page_ct: usize
     ) !void {
         const free_page_idx = page_list.free_page.?;
         var free_page: *PageRecord = &page_list.pages[free_page_idx]; 
@@ -224,7 +227,10 @@ pub const Allocator = struct {
         // to track individual allocations (with 'nodes'). So, we need to check if a page has already been committed for
         // tracking allocations within this range of allocation pages.
         const page_check_start = free_page_idx - @mod(free_page_idx, node_sets_per_page);
-        const page_check_end = page_check_start + node_sets_per_page;
+        var page_check_end = page_check_start + node_sets_per_page;
+        if (page_check_end > division_page_ct) {
+            page_check_end = division_page_ct;
+        }
 
         for (page_check_start..page_check_end) |i| {
             if (page_list.pages[i].free_block_ct != NO_BLOCK) {
@@ -329,47 +335,6 @@ fn initAllocators(enclave: usize) !void {
     }
 }
 
-fn initMediumAllocator(enclave: usize) !void {
-    // virtualloc committed memory is automatically zeroed
-    _ = try windows.VirtualAlloc(
-        records[enclave].bytes, MEDIUM_PAGE_RECORDS_SZ, windows.MEM_COMMIT, windows.PAGE_READWRITE
-    );
-
-    var page_records_casted = @ptrCast(
-        [*]PageRecord, @alignCast(@alignOf(PageRecord), records[enclave].bytes)
-    );
-    var free_lists_casted = @ptrCast(
-        [*]BlockNode, @alignCast(@alignOf(BlockNode), free_lists[enclave].bytes)
-    );
-
-    var block_sum: usize = 0;
-
-    var i : usize = 0;
-    while (i < SMALL_DIVISION_CT) : (i += 1) {
-        const bytes_start = SMALL_DIVISION_SZ * i;
-        const bytes_end = SMALL_DIVISION_SZ * (i + 1);
-        const pages_start = SMALL_DIVISION_PAGE_CT * i;
-        const pages_end = SMALL_DIVISION_PAGE_CT * (i + 1);
-        const block_ct = SMALL_BLOCK_COUNTS_PER_DIVISION[i];
-
-        var page_list = &small_pools[enclave].page_lists[i];
-        page_list.bytes = @ptrCast([*]u8, small_pools[enclave].bytes[bytes_start..bytes_end]);
-        page_list.pages = page_records_casted[pages_start..pages_end];
-        page_list.free_page = 0;
-        page_list.blocks = free_lists_casted[block_sum..(block_sum + block_ct)];
-        page_list.free_block = null;
-        page_list.page_ct = 0;
-        page_list.free_page_ct = 0;
-
-        initPages(page_list.pages, SMALL_DIVISION_PAGE_CT);
-        
-        block_sum += block_ct;
-    }
-}
-
-// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ----------------------------------------------------------------------------------------------------- small allocator
-// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- data
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -824,6 +789,8 @@ test "Perf vs GPA" {
         allocator.free(testalloc);
         testalloc = try allocator.alloc(u8, 8192);
         allocator.free(testalloc);
+        testalloc = try allocator.alloc(u8, 16384);
+        allocator.free(testalloc);
     }
 
     {
@@ -889,6 +856,8 @@ test "Perf vs GPA" {
         gpa_allocator.free(testalloc);
         testalloc = try gpa_allocator.alloc(u8, 8192);
         gpa_allocator.free(testalloc);
+        testalloc = try gpa_allocator.alloc(u8, 16384);
+        gpa_allocator.free(testalloc);
     }
 
     {
@@ -904,6 +873,26 @@ test "Perf vs GPA" {
         }
     }
     benchmark.printAllScopeTimers();
+}
+
+test "Medium Alloc" {
+// pub fn MediumAllocTest() !void {
+    try startup(8);
+    var allocator = Allocator.newCopy(0);
+    defer shutdown();
+
+    var testalloc = try allocator.alloc(u8, 100);
+    allocator.free(testalloc);
+    testalloc = try allocator.alloc(u8, 255);
+    allocator.free(testalloc);
+    testalloc = try allocator.alloc(u8, 512);
+    allocator.free(testalloc);
+    testalloc = try allocator.alloc(u8, 1025);
+    allocator.free(testalloc);
+    testalloc = try allocator.alloc(u8, 8192);
+    allocator.free(testalloc);
+    testalloc = try allocator.alloc(u8, 16384);
+    allocator.free(testalloc);
 }
 
 test "Multiple Enclaves" {
