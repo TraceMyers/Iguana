@@ -23,9 +23,9 @@ pub inline fn getAttributeDescriptions(descriptions: *LocalArray(c.VkVertexInput
     });
 }
 
-const nd = @import("ndmath.zig");
-const fVec2 = nd.fVec2;
-const fVec3 = nd.fVec3;
+const gm = @import("gmath.zig");
+const fVec2 = gm.fVec2;
+const fVec3 = gm.fVec3;
 const array = @import("array.zig");
 const LocalArray = array.LocalArray;
 const gfxtypes = @import("gfxtypes.zig");

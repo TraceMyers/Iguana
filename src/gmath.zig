@@ -1,4 +1,28 @@
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ------------------------------------------------------------------------------------------------------------- General
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub inline fn bitWidth(comptime _t: type) _t {
+    return @ctz(@as(_t, 0));
+}
+
+pub inline fn ceilExp2(x: anytype) @TypeOf(x) {
+    const _t = @TypeOf(x);
+    const bit_width_m1: _t = bitWidth(_t) - @as(_t, 1);
+    const leading_zero_ct: _t = @clz(x);
+    const trailing_zero_ct: _t = @ctz(x);
+    const not_pow2: _t = @intCast(_t, @boolToInt(leading_zero_ct + trailing_zero_ct != bit_width_m1));
+    return bit_width_m1 + not_pow2 - leading_zero_ct;
+} 
+
+pub inline fn ceilPow2(x: anytype) @TypeOf(x) {
+    if (x == 0) {
+        return 0;
+    }
+    return 1 << ceilExp2(x);
+}
+
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------------- Vec
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -786,8 +810,7 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
         pub inline fn nearlyEqualAutoTolerance(self: VecType, other: VecType) bool {
             const diff = self.parts - other.parts;
             inline for(0..len) |i| {
-                const diff_parts = diff[i];
-                if (@fabs(diff_parts) > epsilonAuto(self.parts[i], other.parts[i])) {
+                if (@fabs(diff[i]) > epsilonAuto(self.parts[i], other.parts[i])) {
                     return false;
                 }
             }
@@ -905,7 +928,7 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
         pub const scalar_type = ScalarType;
         pub const length = len;
         pub const zero = std.mem.zeroes(VecType);
-        pub const posx = switch(len) {
+        pub const x_axis = switch(len) {
             2 => switch(ScalarType) {
                 f16, f32, f64 => VecType.init(.{1.0,  0.0}),
                 i16, i32, i64, u16, u32, u64 => VecType.init(.{1, 0}),
@@ -923,7 +946,7 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
             },
             else => undefined
         };
-        pub const posy = switch(len) {
+        pub const y_axis = switch(len) {
             2 => switch(ScalarType) {
                 f16, f32, f64 => VecType.init(.{0.0,  1.0}),
                 i16, i32, i64, u16, u32, u64 => VecType.init(.{0, 1}),
@@ -941,7 +964,7 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
             },
             else => undefined
         };
-        pub const posz = switch(len) {
+        pub const z_axis = switch(len) {
             3 => switch(ScalarType) {
                 f16, f32, f64 => VecType.init(.{0.0, 0.0, 1.0}),
                 i16, i32, i64, u16, u32, u64 => VecType.init(.{0, 0, 1}),
@@ -954,64 +977,7 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
             },
             else => undefined
         };
-        pub const negx = switch(len) {
-            2 => switch(ScalarType) {
-                f16, f32, f64 => VecType.init(.{-1.0,  0.0}),
-                i16, i32, i64 => VecType.init(.{-1, 0}),
-                u16, u32, u64 => undefined,
-                else => unreachable
-            },
-            3 => switch(ScalarType) {
-                f16, f32, f64 => VecType.init(.{-1.0, 0.0, 0.0}),
-                i16, i32, i64 => VecType.init(.{-1, 0, 0}),
-                u16, u32, u64 => undefined,
-                else => unreachable
-            },
-            4 => switch(ScalarType) {
-                f16, f32, f64 => VecType.init(.{-1.0, 0.0, 0.0, 0.0}),
-                i16, i32, i64 => VecType.init(.{-1, 0, 0, 0}),
-                u16, u32, u64 => undefined,
-                else => unreachable
-            },
-            else => undefined
-        };
-        pub const negy = switch(len) {
-            2 => switch(ScalarType) {
-                f16, f32, f64 => VecType.init(.{0.0,  -1.0}),
-                i16, i32, i64 => VecType.init(.{0, -1}),
-                u16, u32, u64 => undefined,
-                else => unreachable
-            },
-            3 => switch(ScalarType) {
-                f16, f32, f64 => VecType.init(.{0.0, -1.0, 0.0}),
-                i16, i32, i64 => VecType.init(.{0, -1, 0}),
-                u16, u32, u64 => undefined,
-                else => unreachable
-            },
-            4 => switch(ScalarType) {
-                f16, f32, f64 => VecType.init(.{0.0, -1.0, 0.0, 0.0}),
-                i16, i32, i64 => VecType.init(.{0, -1, 0, 0}),
-                u16, u32, u64 => undefined,
-                else => unreachable
-            },
-            else => undefined
-        };
-        pub const negz = switch(len) {
-            3 => switch(ScalarType) {
-                f16, f32, f64 => VecType.init(.{0.0, 0.0, -1.0}),
-                i16, i32, i64 => VecType.init(.{0, 0, -1}),
-                u16, u32, u64 => undefined,
-                else => unreachable
-            },
-            4 => switch(ScalarType) {
-                f16, f32, f64 => VecType.init(.{0.0, 0.0, -1.0, 0.0}),
-                i16, i32, i64 => VecType.init(.{0, 0, -1, 0}),
-                u16, u32, u64 => undefined,
-                else => unreachable
-            },
-            else => undefined
-        };
-        pub const posw = switch(len) {
+        pub const w_axis = switch(len) {
             4 => switch(ScalarType) {
                 f16, f32, f64 => VecType.init(.{0.0, 0.0, 0.0, 1.0}),
                 i16, i32, i64, u16, u32, u64 => VecType.init(.{0, 0, 0, 1}),
@@ -1019,21 +985,6 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
             },
             else => undefined,
         };
-        pub const negw = switch(len) {
-            4 => switch(ScalarType) {
-                f16, f32, f64 => VecType.init(.{0.0, 0.0, 0.0 , -1.0}),
-                i16, i32, i64 => VecType.init(.{0, 0, 0, -1}),
-                u16, u32, u64 => undefined,
-                else => unreachable,
-            },
-            else => undefined,
-        };
-        pub const front = posy;
-        pub const back = negy;
-        pub const right = posx;
-        pub const left = negx;
-        pub const up = posz;
-        pub const down = negz;
 
     // -------------------------------------------------------------------------------------------------------- internal
 
@@ -4520,9 +4471,9 @@ test "fVec" {
     var v20 = fVec3.zero;
     try expect(v20.nearlyZero());
 
-    var v21 = fVec2.posx;
-    var v22 = fVec3.posx;
-    var v23 = fVec4.posx;
+    var v21 = fVec2.x_axis;
+    var v22 = fVec3.x_axis;
+    var v23 = fVec4.x_axis;
     try expect (v21.isNorm());
     try expect (v22.isNorm());
     try expect (v23.isNorm());
@@ -4833,9 +4784,9 @@ test "Matrix" {
     var randmat5f = randmat4f.mMul(&randmat4ft);
     _ = randmat5f;
 
-    const q1 = fQuat.fromAxisAngle(fVec3.up, math.pi * 0.25);
+    const q1 = fQuat.fromAxisAngle(fVec3.z_axis, math.pi * 0.25);
     const mq1 = fMat4x4.fromQuaternion(q1);
-    const vq1 = fVec4.right;
+    const vq1 = fVec4.x_axis;
     const vq2 = mq1.vMul(vq1);
     print("\nvq1: {s}\nvq2: {s}\n", .{vq1, vq2});
 

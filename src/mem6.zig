@@ -1,6 +1,14 @@
-// TODO: each enclave gets their own page list. with 32 enclaves, each enclave gets up to 32,768 57-64 byte allocations,
-// twice as many 49-56, four times as many 33-48, ... or, in other words, for each enclave, each small alloc size
-// bracket gets up to 2MB, totaling at 16MB for the entire enclave.
+// TODO: decommitting solution will require dealing with the fact that free allocation tracking nodes can and will point
+// in and out of individual pages at any frequency. So, decommitting a page means detangling the web. one set of 
+// solutions requires regularly scheduled maintenance. one solution in that set might iterate over nodes and put
+// 'next frees' in order, which would at the same time allow easier decommitting of any pages.
+// Another possible solution is: the page list's 'free_block' just always takes the highest value. when the free block
+// is the first block of a page, decommit.
+// Another solution is to never decommit in small and medium allocations, which would probably work fine. combine this
+// this the page list always taking the lowest block idx and it probably stays defragmented pretty well.
+// Yet another solution is to keep track of the lowest and highest free block in a page list. the lowest is what is
+// used for allocations, and the highest is used to tell which pages can be freed.
+// TODO: large allocations work differently than small and medium, in that pages are simply comitted on demand.
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- public
@@ -68,16 +76,62 @@ pub const Allocator = struct {
 
         var data: []u8 = undefined;
         if (alloc_sz <= SMALL_ALLOC_MAX_SZ) {
-            data = self.allocSmall(@intCast(u32, alloc_sz)) orelse return Mem6Error.OutOfMemory;
+            const sm_idx = smallSizeBracket(alloc_sz);
+            data = self.allocSmall(sm_idx) orelse return Mem6Error.OutOfMemory;
         }
         else if (alloc_sz <= MEDIUM_ALLOC_MAX_SZ) {
-            data = self.allocMedium(@intCast(u32, alloc_sz)) orelse return Mem6Error.OutOfMemory;
+            const md_idx = mediumSizeBracket(alloc_sz);
+            data = self.allocMedium(md_idx) orelse return Mem6Error.OutOfMemory;
         }
         else {
             return Mem6Error.OutOfMemory;
         }
 
         return mem.bytesAsSlice(Type, @alignCast(@alignOf(Type), data[0..alloc_sz]));
+    }
+
+    pub fn realloc(self: *Allocator, data_in: anytype, new_ct: usize) Mem6Error![]@typeInfo(@TypeOf(data_in)).Pointer.* {
+        const slice = @typeInfo(@TypeOf(data_in)).Pointer;
+        const bytes = mem.sliceAsBytes(data_in);
+        const alloc_sz = bytes.len + if (slice.sentinel != null) @sizeOf(slice.child) else 0;
+        assert(alloc_sz > 0);
+
+        const type_sz = @sizeOf(@TypeOf(slice.*));
+        const new_alloc_sz = type_sz * new_ct;
+        const prev_sz_bracket = smallSizeBracket(alloc_sz);
+
+        if (alloc_sz <= SMALL_ALLOC_MAX_SZ) {
+            if (new_alloc_sz <= SMALL_ALLOC_MAX_SZ) {
+                const new_sz_bracket = smallSizeBracket(new_alloc_sz);
+                if (prev_sz_bracket == new_sz_bracket) {
+                    return data_in;
+                }
+                else {
+                    self.freeSmall(data_in, prev_sz_bracket);
+                    return self.allocSmall(new_sz_bracket);
+                }
+            }
+            else {
+                self.freeSmall(data_in, prev_sz_bracket);
+                return self.alloc(@TypeOf(slice.*), new_ct);
+            }
+        }
+        else if (alloc_sz <= MEDIUM_ALLOC_MAX_SZ) {
+            if (new_alloc_sz > SMALL_ALLOC_MAX_SZ and new_alloc_sz <= MEDIUM_ALLOC_MAX_SZ) {
+                const new_sz_bracket = mediumSizeBracket(new_alloc_sz);
+                if (prev_sz_bracket == new_sz_bracket) {
+                    return data_in;
+                }
+                else {
+                    self.freeMedium(data_in, prev_sz_bracket);
+                    return self.allocMedium(new_sz_bracket);
+                }
+            }
+            else {
+                self.freeMedium(data_in, prev_sz_bracket);
+                return self.alloc(@TypeOf(slice.*), new_ct);
+            }
+        }
     }
 
     pub fn free(self: *Allocator, data_in: anytype) void {
@@ -87,18 +141,30 @@ pub const Allocator = struct {
         assert(alloc_sz > 0);
 
         if (alloc_sz <= SMALL_ALLOC_MAX_SZ) {
-            self.freeSmall(@ptrCast(*u8, bytes), @intCast(u32, alloc_sz));
+            const sm_idx = smallSizeBracket(alloc_sz);
+            self.freeSmall(@ptrCast(*u8, bytes), sm_idx);
         }
         else if (alloc_sz <= MEDIUM_ALLOC_MAX_SZ) {
-            self.freeMedium(@ptrCast(*u8, bytes), @intCast(u32, alloc_sz));
+            const md_idx = mediumSizeBracket(alloc_sz);
+            self.freeMedium(@ptrCast(*u8, bytes), md_idx);
         }
     }
 
-    fn allocSmall(self: *Allocator, alloc_sz: u32) ?[]u8 {
-        const sz_div_min = @divTrunc(alloc_sz, SMALL_ALLOC_MIN_SZ);
-        const sz_is_multiple_of_min = @intCast(u32, @boolToInt(alloc_sz % SMALL_ALLOC_MIN_SZ == 0));
-        const sm_idx = sz_div_min - sz_is_multiple_of_min; 
+    inline fn smallSizeBracket(alloc_sz: usize) usize {
+        const sz_div_min = @intCast(usize, @divTrunc(alloc_sz, SMALL_ALLOC_MIN_SZ));
+        const sz_is_multiple_of_min = @intCast(usize, @boolToInt(alloc_sz % SMALL_ALLOC_MIN_SZ == 0));
+        return sz_div_min - sz_is_multiple_of_min; 
+    }
 
+    inline fn mediumSizeBracket(alloc_sz: usize) usize {
+        return gm.ceilExp2(alloc_sz) - MEDIUM_MIN_EXP2;
+    }
+
+    inline fn largeSizeBracket(alloc_sz: usize) usize {
+        return gm.ceilExp2(alloc_sz) - LARGE_MIN_EXP2;
+    }
+
+    fn allocSmall(self: *Allocator, sm_idx: usize) ?[]u8 {
         var page_list: *PageList = &self.small_pool.page_lists[sm_idx];
         if (page_list.free_block == null) {
             expandPageList(
@@ -129,30 +195,25 @@ pub const Allocator = struct {
         return page_list.bytes[block_start..block_end];
     }
 
-    fn freeSmall(self: *Allocator, data: *u8, alloc_sz: u32) void {
-        const sz_div_min = @divTrunc(alloc_sz, SMALL_ALLOC_MIN_SZ);
-        const sz_is_multiple_of_min = @intCast(u32, @boolToInt(alloc_sz % SMALL_ALLOC_MIN_SZ == 0));
-        const sm_idx = sz_div_min - sz_is_multiple_of_min; 
-        
+    fn freeSmall(self: *Allocator, data: *u8, sm_idx: usize) void {
         var page_list: *PageList = &self.small_pool.page_lists[sm_idx];
         const page_list_head_address = @ptrToInt(@ptrCast(*u8, page_list.bytes));
         const data_address = @ptrToInt(data);
         const block_idx = @intCast(u32, (data_address - page_list_head_address) / SMALL_BLOCK_SIZES[sm_idx]);
-        const next_free = page_list.free_block.?;
 
+        if (page_list.free_block) |next_free| {
+            page_list.blocks[@intCast(usize, block_idx)].next_free = @intCast(u32, next_free);
+        }
+        else {
+            page_list.blocks[@intCast(usize, block_idx)].next_free = NO_BLOCK;
+        }
         page_list.free_block = block_idx;
-        page_list.blocks[@intCast(usize, block_idx)].next_free = @intCast(u32, next_free);
 
         var page_record: *PageRecord = &page_list.pages[block_idx / SMALL_BLOCK_COUNTS_PER_PAGE[sm_idx]];
         page_record.free_block_ct += 1;
     }
 
-    fn allocMedium(self: *Allocator, alloc_sz: u32) ?[]u8 {
-        const leading_zero_ct: u32 = @clz(alloc_sz);
-        const trailing_zero_ct: u32 = @ctz(alloc_sz);
-        const not_pow2: u32 = if(leading_zero_ct + trailing_zero_ct == @as(u32, 31)) @as(u32, 0) else @as(u32, 1);
-        const md_idx = @as(u32, 31) - leading_zero_ct + not_pow2 - MEDIUM_MIN_EXP2;  // TODO: check this
-
+    fn allocMedium(self: *Allocator, md_idx: usize) ?[]u8 {
         var page_list: *PageList = &self.medium_pool.page_lists[md_idx];
         if (page_list.free_block == null) {
             expandPageList(
@@ -183,23 +244,34 @@ pub const Allocator = struct {
         return page_list.bytes[block_start..block_end];
     }
 
-    fn freeMedium(self: *Allocator, data: *u8, alloc_sz: u32) void {
-        const leading_zero_ct: u32 = @clz(alloc_sz);
-        const trailing_zero_ct: u32 = @ctz(alloc_sz);
-        const not_pow2: u32 = if(leading_zero_ct + trailing_zero_ct == @as(u32, 31)) @as(u32, 0) else @as(u32, 1);
-        const md_idx = @as(u32, 31) - leading_zero_ct + not_pow2 - MEDIUM_MIN_EXP2;  // TODO: check this
-
+    fn freeMedium(self: *Allocator, data: *u8, md_idx: usize) void {
         var page_list: *PageList = &self.medium_pool.page_lists[md_idx];
         const page_list_head_address = @ptrToInt(@ptrCast(*u8, page_list.bytes));
         const data_address = @ptrToInt(data);
         const block_idx = @intCast(u32, (data_address - page_list_head_address) / MEDIUM_BLOCK_SIZES[md_idx]);
-        const next_free = page_list.free_block.?;
-
+        
+        if (page_list.free_block) |next_free| {
+            page_list.blocks[@intCast(usize, block_idx)].next_free = @intCast(u32, next_free);
+        }
+        else {
+            page_list.blocks[@intCast(usize, block_idx)].next_free = NO_BLOCK;
+        }
         page_list.free_block = block_idx;
-        page_list.blocks[@intCast(usize, block_idx)].next_free = @intCast(u32, next_free);
 
-        var page_record: *PageRecord = &page_list.pages[block_idx / MEDIUM_BLOCK_COUNTS_PER_PAGE[md_idx]];
+        const blocks_per_page = MEDIUM_BLOCK_COUNTS_PER_PAGE[md_idx];
+        var page_record: *PageRecord = &page_list.pages[block_idx / blocks_per_page];
         page_record.free_block_ct += 1;
+    }
+
+    fn allocLarge(self: *Allocator, lg_idx: usize) ?[]u8 {
+        _ = self;
+        _ = lg_idx;
+    }
+
+    fn freeLarge(self: *Allocator, data: *u8, lg_idx: usize) void {
+        _ = self;
+        _ = data;
+        _ = lg_idx;
     }
 
     // TODO: OutOfPages error
@@ -427,7 +499,6 @@ pub const MAX_ENCLAVE_CT: usize = 32;
 // roughly correspond to actual page sizes. naming directly corresponds to which size-pool they're used for
 const SMALL_PAGE_SZ: usize  = 16    * 1024; // 16KB
 const MEDIUM_PAGE_SZ: usize = 64    * 1024; // 64KB
-const LARGE_PAGE_SZ: usize  = 64    * 1024; // 64KB
 
 // address space sizes per enclave
 const SMALL_POOL_SZ: usize  = 512   * 1024 * 1024; // 512 MB
@@ -495,8 +566,8 @@ const SMALL_FREE_LIST_SZ_PER_DIVISION: [8]usize = .{
 
 //--------------------------------------------------------------------------------------------------------------- medium
 
-const MEDIUM_ALLOC_MIN_SZ: usize = 128;
-const MEDIUM_ALLOC_MAX_SZ: usize = 16384;
+const MEDIUM_ALLOC_MIN_SZ: usize = MEDIUM_BLOCK_SIZES[0];
+const MEDIUM_ALLOC_MAX_SZ: usize = MEDIUM_BLOCK_SIZES[MEDIUM_DIVISION_CT-1];
 const MEDIUM_DIVISION_CT: usize = 8;
 const MEDIUM_MIN_EXP2: usize = std.math.log(comptime_int, 2, @as(comptime_int, MEDIUM_ALLOC_MIN_SZ));
 
@@ -506,7 +577,7 @@ const MEDIUM_PAGE_RECORDS_SZ_PER_DIVISION: usize    = MEDIUM_PAGE_RECORDS_SZ / M
 const MEDIUM_DIVISION_PAGE_CT: usize                = MEDIUM_PAGE_RECORDS_SZ_PER_DIVISION / @sizeOf(PageRecord);
 const MEDIUM_NODES_PER_PAGE: usize                  = MEDIUM_PAGE_SZ / @sizeOf(BlockNode);
 
-const MEDIUM_BLOCK_SIZES: [8]usize = .{128, 256, 512, 1024, 2048, 4096, 8192, 16384};
+const MEDIUM_BLOCK_SIZES: [8]usize = .{128, 256, 512, 1024, 2048, 4096, 8192, 16_384};
 
 const MEDIUM_BLOCK_COUNTS_PER_DIVISION: [8]usize = .{
     MEDIUM_DIVISION_SZ / MEDIUM_BLOCK_SIZES[0],
@@ -552,6 +623,21 @@ const MEDIUM_FREE_LIST_SZ_PER_DIVISION: [8]usize = .{
     MEDIUM_BLOCK_COUNTS_PER_DIVISION[7] * @sizeOf(BlockNode)
 };
 
+//---------------------------------------------------------------------------------------------------------------- large
+
+const LARGE_ALLOC_MIN_SZ: usize = LARGE_BLOCK_SIZES[0];
+const LARGE_ALLOC_MAX_SZ: usize = LARGE_BLOCK_SIZES[LARGE_DIVISION_CT-1];
+const LARGE_DIVISION_CT: usize = 8;
+const LARGE_MIN_EXP2: usize = std.math.log(comptime_int, 2, @as(comptime_int, LARGE_ALLOC_MIN_SZ));
+
+const LARGE_DIVISION_SZ: usize                  = LARGE_POOL_SZ / LARGE_DIVISION_CT;
+const LARGE_PAGE_RECORDS_SZ: usize              = LARGE_POOL_SZ / SMALL_PAGE_SZ;
+const LARGE_PAGE_RECORDS_SZ_PER_DIVISION: usize = LARGE_PAGE_RECORDS_SZ / LARGE_DIVISION_CT;
+const LARGE_DIVISION_PAGE_CT: usize             = LARGE_PAGE_RECORDS_SZ_PER_DIVISION / @sizeOf(PageRecord);
+const LARGE_NODES_PER_PAGE: usize               = SMALL_PAGE_SZ / @sizeOf(BlockNode);
+
+const LARGE_BLOCK_SIZES: [8]usize = .{32_768, 65_536, 131_072, 262_144, 524_288, 1_048_576, 2_097_152, 4_194_304};
+
 //------------------------------------------------------------------------------------------------------------- the rest
 
 const RECORDS_SZ: usize     = SMALL_PAGE_RECORDS_SZ + MEDIUM_PAGE_RECORDS_SZ;
@@ -596,6 +682,7 @@ const expect = std.testing.expect;
 const benchmark = @import("benchmark.zig");
 const ScopeTimer = benchmark.ScopeTimer;
 const getScopeTimerID = benchmark.getScopeTimerID;
+const gm = @import("gmath.zig");
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- test

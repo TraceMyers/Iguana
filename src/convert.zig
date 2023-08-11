@@ -187,29 +187,3 @@ pub const kilo_to_milli = 1e6;
 pub const kilo_to_centi = 1e5;
 pub const kilo_to_deci = 1e4;
 pub const kilo_to_base = 1e3;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
