@@ -1026,6 +1026,41 @@ test "Perf vs GPA" {
             allocator.free(allocations[i]);
         }
     }
+
+    for (0..1_000) |i| {
+        var t = ScopeTimer.start("m6 LARGE alloc/free x5", getScopeTimerID());
+        defer t.stop();
+        _ = i;
+        var testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[0]);
+        allocator.free(testalloc);
+        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[1]);
+        allocator.free(testalloc);
+        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[2]);
+        allocator.free(testalloc);
+        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[3]);
+        allocator.free(testalloc);
+        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[4]);
+        allocator.free(testalloc);
+        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[5]);
+        allocator.free(testalloc);
+    }
+
+    {
+        var t = ScopeTimer.start("m6 LARGE alloc 1k", getScopeTimerID());
+        defer t.stop();
+        for (0..1_000) |i| {
+            allocations[i] = try allocator.alloc(u8, LARGE_BLOCK_SIZES[1]);
+        }
+    }
+    {
+        var t = ScopeTimer.start("m6 LARGE free 1k", getScopeTimerID());
+        defer t.stop();
+        for (0..1_000) |i| {
+            allocator.free(allocations[i]);
+        }
+    }
+
+
     shutdown();
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -1092,25 +1127,6 @@ test "Perf vs GPA" {
         }
     }
 
-    for (0..1_000) |i| {
-        var t = ScopeTimer.start("m6 LARGE alloc/free x5", getScopeTimerID());
-        defer t.stop();
-        _ = i;
-        var testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[0]);
-        allocator.free(testalloc);
-        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[1]);
-        allocator.free(testalloc);
-        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[2]);
-        allocator.free(testalloc);
-        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[3]);
-        allocator.free(testalloc);
-        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[4]);
-        allocator.free(testalloc);
-        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[5]);
-        allocator.free(testalloc);
-    }
-
-
     benchmark.printAllScopeTimers();
 }
 
@@ -1140,24 +1156,23 @@ test "Large Alloc" {
     var allocator = Allocator.newCopy(0);
     defer shutdown();
 
-    var testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[0]);
-    allocator.free(testalloc);
-    testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[1]);
-    allocator.free(testalloc);
-    testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[2]);
-    allocator.free(testalloc);
-    testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[3]);
-    allocator.free(testalloc);
-    testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[4]);
-    allocator.free(testalloc);
-    testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[5]);
-    allocator.free(testalloc);
-    testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[6]);
-    allocator.free(testalloc);
-    testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[7]);
-    allocator.free(testalloc);
-}
-
-test "Multiple Enclaves" {
-
+    for (0..1_000) |i| {
+        _ = i;
+        var testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[0]);
+        allocator.free(testalloc);
+        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[1]);
+        allocator.free(testalloc);
+        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[2]);
+        allocator.free(testalloc);
+        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[3]);
+        allocator.free(testalloc);
+        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[4]);
+        allocator.free(testalloc);
+        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[5]);
+        allocator.free(testalloc);
+        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[6]);
+        allocator.free(testalloc);
+        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[7]);
+        allocator.free(testalloc);
+    }
 }
