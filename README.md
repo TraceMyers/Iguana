@@ -1,4 +1,4 @@
-# Iguana Game Engine
+# Kochi Engine
 A game engine written in zig that will be as portable as I can handle.
 
 Current zig version is an old dev version (0.11.0-dev.3105+e46d7a369). I'll be more responsible with versioning as the engine really starts to take shape.
@@ -20,9 +20,6 @@ There are currently no plans to use any APIs other than Vulkan.
 ## Allocator
 Every game engine needs a smart strategy for making allocation syscalls. Having a fast, low-fragmentation, debuggable allocator on your side can lighten the load.
 
-## Navmesh
-This is where Iguana might shine compared to some mainstream engines. The navmesh will optionally be generatable on walls and ceilings, and the built-in pathfinding system will have crowd management that handles thousands of pathfinders very quickly.
-
 ## Sound
 ...
 
@@ -35,5 +32,6 @@ A custom vector math library, because I enjoy writing vector math.
   <li>Benchmarking suite</li>
   <li>Convenient stack and heap array implementations</li>
   <li>Graphical debug utilities</li>
+  <li>Extensible SIMD</li>
   <li>...</li>
 </ul>
