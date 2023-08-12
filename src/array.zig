@@ -1,38 +1,94 @@
-// :::::::::::::::::: An array object with local storage. Meant to get convenient arraylist functionality
-// ::: LocalArray ::: (except for resizing) without making an allocator do any work.
-// ::::::::::::::::::
+// TODO: finish Array types
 
-pub fn LocalArray(comptime ItemType: type, comptime array_size: usize) type {
-    assert(array_size > 0);
+pub const ArrayType = enum {
+    Local,
+    Heap,
+    Resize
+};
+
+pub fn LocalArray(comptime ItemType: type, comptime length: usize) type {
+    return Array(ArrayType.Local, ItemType, length);
+}
+
+pub fn HeapArray(comptime ItemType: type) type {
+    return Array(ArrayType.Heap, ItemType, 0);
+}
+
+pub fn ResizeArray(comptime ItemType: type) type {
+    return Array(ArrayType.Resize, ItemType, 0);
+}
+
+pub fn Array(comptime array_type: ArrayType, comptime ItemType: type, comptime length: usize) type {
+
+    const is_local = array_type == ArrayType.Local;
+    if (is_local) {
+        assert(length > 0);
+    }
 
     return struct {
         const Self = @This();
 
-        items: [array_size]ItemType = undefined,
+        items: if (is_local) [length]ItemType else []ItemType = undefined,
+        allocator: if (is_local) void else *mem6.Allocator = undefined, 
         ct: usize = 0,
 
-        pub fn new() Self {
+        inline fn newLocal() Self {
             return Self{};
         }
 
+        inline fn newHeap(allocator: *mem6.Allocator, init_length: usize) !Self {
+            assert(init_length > 0);
+            return Self{
+                .items = try allocator.alloc(ItemType, init_length),
+                .allocator = allocator
+            };
+        }
+
+        inline fn newResize(allocator: *mem6.Allocator, init_length: usize) !Self {
+            if (init_length > 0) {
+                return Self{
+                    .items = try allocator.alloc(ItemType, init_length),
+                    .allocator = allocator
+                };
+            }
+            else {
+                return Self{.allocator=allocator};
+            }
+        }
+
+        pub const new = switch(array_type) {
+            ArrayType.Local => newLocal,
+            ArrayType.Heap=> newHeap,
+            ArrayType.Resize => newResize,
+        };
+
         // get a c-style pointer to many @ this array's items.
-        pub fn cptr(self: *Self) [*c]ItemType {
+        pub inline fn cptr(self: *Self) [*c]ItemType {
             return &self.items[0];
         }
 
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
         // ------------------------------------------------------------------------------------------ general operations
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        
+        inline fn freeHeapResize(self: *Self) void {
+            self.allocator.free(self.items);
+        }
+
+        pub const free = switch(array_type) {
+            ArrayType.Local => undefined,
+            ArrayType.Heap, ArrayType.Resize => freeHeapResize,
+        };
 
         // fill the array with zeroes and set the count to the size (max count)
-        pub fn zero(self: *Self) void {
+        pub inline fn zero(self: *Self) void {
             @memset(&self.items, 0);
             self.ct = self.items.len;
         }
 
         // for structs. set all values within all structs in the array to 0, ignoring default values, and set the count
         // to the size (max count)
-        pub fn sZero(self: *Self) void {
+        pub inline fn sZero(self: *Self) void {
             for (0..self.items.len) |idx| {
                 self.items[idx] = std.mem.zeroes(ItemType);
             }
@@ -41,7 +97,7 @@ pub fn LocalArray(comptime ItemType: type, comptime array_size: usize) type {
 
         // for structs. set any non-default values within all structs in the array to 0 and set the count to the
         // size (max count)
-        pub fn sZeroDefault(self: *Self) void {
+        pub inline fn sZeroDefault(self: *Self) void {
             for (0..self.items.len) |idx| {
                 self.items[idx] = std.mem.zeroInit(ItemType, .{});
             }
@@ -49,7 +105,7 @@ pub fn LocalArray(comptime ItemType: type, comptime array_size: usize) type {
         }
 
         // fill the array with this value and set the count to the size (max count)
-        pub fn fill(self: *Self, fill_item: ItemType) void {
+        pub inline fn fill(self: *Self, fill_item: ItemType) void {
             @memset(&self.items, fill_item);
             self.ct = self.items.len;
         }
@@ -378,7 +434,7 @@ pub fn LocalArray(comptime ItemType: type, comptime array_size: usize) type {
             var item_copy: ItemType = item.*;
 
             while (idx < new_ct) {
-                if (self.items[idx].matches(&item_copy)) {
+                if (self.items[idx]._matches(&item_copy)) {
                     new_ct -= 1;
                     self.items[idx] = self.items[new_ct];
                 } else {
@@ -401,10 +457,10 @@ pub fn LocalArray(comptime ItemType: type, comptime array_size: usize) type {
             var item_copy: ItemType = item.*;
 
             while (to_idx < self.ct) : (to_idx += 1) {
-                if (self.items[to_idx].matches(&item_copy)) {
+                if (self.items[to_idx]._matches(&item_copy)) {
                     from_idx = to_idx + 1;
                     while (from_idx < self.ct) : (from_idx += 1) {
-                        if (!self.items[from_idx].matches(&item_copy)) {
+                        if (!self.items[from_idx]._matches(&item_copy)) {
                             break;
                         }
                     }
@@ -418,7 +474,7 @@ pub fn LocalArray(comptime ItemType: type, comptime array_size: usize) type {
                         self.items[to_idx] = self.items[from_idx];
                         from_idx += 1;
                         to_idx += 1;
-                        while (self.items[from_idx].matches(&item_copy)) {
+                        while (self.items[from_idx]._matches(&item_copy)) {
                             from_idx += 1;
                         }
                     }
@@ -437,7 +493,7 @@ pub fn LocalArray(comptime ItemType: type, comptime array_size: usize) type {
         pub fn sRemoveOnce(self: *Self, item: *const ItemType) bool {
             var idx: usize = 0;
             while (idx < self.ct) : (idx += 1) {
-                if (self.items[idx].matches(&item)) {
+                if (self.items[idx]._matches(&item)) {
                     self.ct -= 1;
                     if (idx != self.ct) {
                         self.items[idx] = self.items[self.ct];
@@ -452,7 +508,7 @@ pub fn LocalArray(comptime ItemType: type, comptime array_size: usize) type {
         // returns true if a struct was removed.
         pub fn sRemoveOnceOrdered(self: *Self, item: *const ItemType) bool {
             for (0..self.ct) |idx| {
-                if (self.items[idx].matches(&item)) {
+                if (self.items[idx]._matches(&item)) {
                     self.ct -= 1;
                     if (idx != self.ct) {
                         for (idx..self.ct) |cpy_idx| {
@@ -468,7 +524,7 @@ pub fn LocalArray(comptime ItemType: type, comptime array_size: usize) type {
         // find the index of a struct with equal data
         pub inline fn sFind(self: *const Self, find_item: *const ItemType) ?usize {
             for (0..self.ct) |idx| {
-                if (self.items[idx].matches(&find_item)) {
+                if (self.items[idx]._matches(&find_item)) {
                     return idx;
                 }
             }
@@ -479,7 +535,7 @@ pub fn LocalArray(comptime ItemType: type, comptime array_size: usize) type {
         pub inline fn sFindReverse(self: *const Self, find_item: *const ItemType) ?usize {
             var idx: usize = self.ct;
             while (idx >= 0) : (idx -= 1) {
-                if (self.data[idx].matches(&find_item)) {
+                if (self.data[idx]._matches(&find_item)) {
                     return idx;
                 }
             }
@@ -487,15 +543,6 @@ pub fn LocalArray(comptime ItemType: type, comptime array_size: usize) type {
         }
     };
 }
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// -------------------------------------------------------------------------------------------------------------- import
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-const std = @import("std");
-const print = std.debug.print;
-const assert = std.debug.assert;
-const expect = std.testing.expect;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- test
@@ -514,7 +561,7 @@ const TestStruct = struct {
         return self.someval;
     }
 
-    pub inline fn matches(self: *const TestStruct, other: *const TestStruct) bool {
+    pub inline fn _matches(self: *const TestStruct, other: *const TestStruct) bool {
         return self.x == other.x and self.y == other.y and self.someval == other.someval;
     }
 };
@@ -712,3 +759,14 @@ test "remove at" {
 
     try expect(array.count() == 0);
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// -------------------------------------------------------------------------------------------------------------- import
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+const std = @import("std");
+const mem6 = @import("mem6.zig");
+const print = std.debug.print;
+const assert = std.debug.assert;
+const expect = std.testing.expect;
+

@@ -1,32 +1,34 @@
 pub fn main() !void {
-    // defer window.cleanup();
-    // try window.init(1024, 768, "yay");
+    defer mem6.shutdown();
+    try mem6.autoStartup();
 
-    // defer vk.cleanup();
-    // try vk.init(vk.RenderMethod.Direct);
+    defer window.cleanup();
+    try window.init(1024, 768, "yay");
 
-    // var should_run: bool = true;
-    // while (should_run) {
-    //     // frame_timer.start();
+    defer vk.cleanup();
+    try vk.init(vk.RenderMethod.Direct);
 
-    //     window.pollEvents();
-    //     if (window.shouldClose()) {
-    //         should_run = false;
-    //     }
-    //     try vk.drawFrame();
+    var should_run: bool = true;
+    while (should_run) {
+        // frame_timer.start();
 
-    //     // frame_timer.stop();
-    //     // if (frame_timer_print_ctr >= frame_timer_print_rate) {
-    //     //     print("avg frame time: {d}\n", .{frame_timer.runningAvgMs()});
-    //     //     frame_timer_print_ctr = 0;
-    //     // }
-    //     // else {
-    //     //     frame_timer_print_ctr += 1;
-    //     // }
-    // }
+        window.pollEvents();
+        if (window.shouldClose()) {
+            should_run = false;
+        }
+        try vk.drawFrame();
 
-    // benchmark.printAllScopeTimers();
-    try mem6.largeAlloc();
+        // frame_timer.stop();
+        // if (frame_timer_print_ctr >= frame_timer_print_rate) {
+        //     print("avg frame time: {d}\n", .{frame_timer.runningAvgMs()});
+        //     frame_timer_print_ctr = 0;
+        // }
+        // else {
+        //     frame_timer_print_ctr += 1;
+        // }
+    }
+
+    benchmark.printAllScopeTimers();
 }
 
 var frame_timer = benchmark.WindowTimer(4).new();

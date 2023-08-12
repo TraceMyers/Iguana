@@ -8,16 +8,44 @@
 // this the page list always taking the lowest block idx and it probably stays defragmented pretty well.
 // Yet another solution is to keep track of the lowest and highest free block in a page list. the lowest is what is
 // used for allocations, and the highest is used to tell which pages can be freed.
-// TODO: large allocations work differently than small and medium, in that pages are simply comitted on demand.
+// TODO: finish realloc
+
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// -------------------------------------------------------------------------------------------------------------- config
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// ------------------------------------------------------------------------------------------------------------ Enclaves
+// Enclaves are groups of code/modules that share the same address space for allocations. There should be enough
+// address space in any single enclave for most games. Enclaves are useful for giving each thread its own address
+// space, thus providing a measure of thread safety. Separating two modules in the same thread into two enclaves *might*
+// have speed benefits, but it will possibly lead to more memory fragmentation.
+
+pub const Enclave = enum {
+    Core,
+    Render,
+    Game,
+    Count // leave this last - it represents the number of enclaves
+};
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- public
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub fn startup(in_enclave_ct: usize) !void {
+// use the Enclave enum to determine how many enclaves should be initialized
+pub inline fn autoStartup() !void {
+    enclave_ct = @enumToInt(Enclave.Count);
+    std.debug.assert(enclave_ct <= MAX_ENCLAVE_CT);
+    try startupExec();
+}
+
+// eschew the Enclave enum and startup the system with up to MAX_ENCLAVE_CT enclaves
+pub inline fn startup(in_enclave_ct: usize) !void {
     std.debug.assert(in_enclave_ct <= MAX_ENCLAVE_CT);
     enclave_ct = in_enclave_ct;
+    try startupExec();
+}
 
+pub fn startupExec() !void {
     address_space = try windows.VirtualAlloc(
         null, 0xfffffffffff, windows.MEM_RESERVE, windows.PAGE_READWRITE
     );
@@ -54,6 +82,18 @@ pub const Allocator = struct {
     giant_pool: *GiantPool = undefined,
     records: *Records = undefined,
     free_lists: *FreeLists = undefined,
+
+    pub inline fn fromEnclave(e: Enclave) Allocator {
+        const enclave_idx = @intCast(usize, @enumToInt(e));
+        return Allocator {
+            .small_pool = &small_pools[enclave_idx],
+            .medium_pool = &medium_pools[enclave_idx],
+            .large_pool = &large_pools[enclave_idx],
+            .giant_pool = &giant_pools[enclave_idx],
+            .records = &records[enclave_idx],
+            .free_lists = &free_lists[enclave_idx]
+        };
+    }
 
     pub inline fn newCopy (enclave_idx: usize) Allocator {
         return Allocator{
@@ -108,7 +148,7 @@ pub const Allocator = struct {
             if (new_alloc_sz <= SMALL_ALLOC_MAX_SZ) {
                 const new_sz_bracket = smallSizeBracket(new_alloc_sz);
                 if (prev_sz_bracket == new_sz_bracket) {
-                    return data_in;
+                    return (&data_in[0])[0..new_ct];
                 }
                 else {
                     self.freeSmall(data_in, prev_sz_bracket);
@@ -124,11 +164,17 @@ pub const Allocator = struct {
             if (new_alloc_sz > SMALL_ALLOC_MAX_SZ and new_alloc_sz <= MEDIUM_ALLOC_MAX_SZ) {
                 const new_sz_bracket = mediumSizeBracket(new_alloc_sz);
                 if (prev_sz_bracket == new_sz_bracket) {
-                    return data_in;
+                    return (&data_in[0])[0..new_ct];
                 }
                 else {
+                    var new_data = self.allocMedium(new_sz_bracket);
+                    if (new_data) {
+
+                    }
+                    else {
+
+                    }
                     self.freeMedium(data_in, prev_sz_bracket);
-                    return self.allocMedium(new_sz_bracket);
                 }
             }
             else {

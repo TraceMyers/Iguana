@@ -1,12 +1,18 @@
 // TODO: better error handling
 // TODO: implement mem6 as vk allocator
 
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// -------------------------------------------------------------------------------------------------------------- config
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+var render_method = RenderMethod.Direct;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- public
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub fn init(method: RenderMethod) !void {
+    allocator = mem6.Allocator.fromEnclave(mem6.Enclave.Render);
     try createInstance();
     try createSurface();
     try getPhysicalDevice();
@@ -72,7 +78,7 @@ pub fn cleanup() void {
     c.vkDestroyInstance(vk_instance, null);
 
     if (direct_image != null) {
-        direct_image.?.deinit();
+        // direct_image.?.deinit();
     }
 }
 
@@ -986,8 +992,7 @@ fn createCommandPools() !void {
 }
 
 fn createTextureImage() !void {
-    direct_image = std.ArrayList(RGBA32).init(allocator);
-    try direct_image.?.appendNTimes(RGBA32{}, 16); 
+    direct_image = try HeapArray(RGBA32).new(&allocator, 16);
     for (0..direct_image.?.items.len) |i| {
         const j = i / 4;
         if (j % 2 == 0) {
@@ -1449,10 +1454,9 @@ fn physicalDeviceHasAdequateExtensionProperties(device: VkPhysicalDevice) bool {
         }
     }
 
-    var extension_props = std.ArrayList(c.VkExtensionProperties).initCapacity(gpa.allocator(), extension_prop_ct)
-        catch return false;
-    extension_props.expandToCapacity();
-    defer extension_props.deinit();
+    var extension_props = HeapArray(c.VkExtensionProperties).new(&allocator, extension_prop_ct) catch return false;
+    extension_props.setCount(extension_prop_ct);
+    defer extension_props.free();
 
     {
         const result = c.vkEnumerateDeviceExtensionProperties(
@@ -1541,10 +1545,8 @@ fn getPhysicalDeviceQueueFamilyCapabilities(device: VkPhysicalDevice, device_int
         return false;
     }
 
-    var queue_family_props = std.ArrayList(c.VkQueueFamilyProperties).initCapacity(gpa.allocator(), queue_family_ct)
-        catch return false;
-    queue_family_props.expandToCapacity();
-    defer queue_family_props.deinit();
+    var queue_family_props = HeapArray(c.VkQueueFamilyProperties).new(&allocator, queue_family_ct) catch return false;
+    defer queue_family_props.free();
 
     c.vkGetPhysicalDeviceQueueFamilyProperties(
         device, &queue_family_ct, @ptrCast([*c]c.VkQueueFamilyProperties, queue_family_props.items)
@@ -2129,8 +2131,6 @@ var sem_image_available: [MAX_FRAMES_IN_FLIGHT]VkSemaphore = undefined;
 var sem_render_finished: [MAX_FRAMES_IN_FLIGHT]VkSemaphore = undefined;
 var in_flight_fences: [MAX_FRAMES_IN_FLIGHT]VkFence = undefined;
 
-var vma_allocator: c.VmaAllocator = null;
-
 var vertex_buffer: VkBuffer = null;
 var vertex_buffer_memory: VkDeviceMemory = null;
 var index_buffer: VkBuffer = null;
@@ -2153,8 +2153,6 @@ var transfer_command_buffers: [MAX_FRAMES_IN_FLIGHT]VkCommandBuffer = undefined;
 var swapchain : Swapchain = Swapchain{};
 var physical: PhysicalDevice = PhysicalDevice{};
 
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-
 var current_frame: u32 = 0;
 var framebuffer_resized: bool = false;
 
@@ -2176,7 +2174,7 @@ var vk_allocation_callbacks = c.VkAllocationCallbacks{
     .pfnInternalFree = vkInterfaceInternalFreeNotification,
 };
 
-var direct_image: ?std.ArrayList(RGBA32) = null;
+var direct_image: ?HeapArray(RGBA32) = null;
 var texture_image_host: VkImage = null;
 var texture_image_host_memory: VkDeviceMemory = null;
 var texture_image_host_view: c.VkImageView = null;
@@ -2196,6 +2194,8 @@ const gfx_frame_timer_print_rate: u16 = 200;
 
 var test_rotation: f64 = 0.0;
 
+var allocator: mem6.Allocator = undefined;
+
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------- constants
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2206,12 +2206,6 @@ const MAX_FRAMES_IN_FLIGHT: u32 = 1;
 const OP_TYPE = enum {Present, Graphics, Compute, Transfer};
 
 const LAYER_CT: u32 = 1;
-
-// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// -------------------------------------------------------------------------------------------------------------- config
-// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-var render_method = RenderMethod.Direct;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- errors
@@ -2267,10 +2261,10 @@ const std = @import("std");
 const array = @import("array.zig");
 const window = @import("window.zig");
 const benchmark = @import("benchmark.zig");
-const gfxmath = @import("gfxmath.zig");
 const gmath = @import("gmath.zig");
 const gfxtypes = @import("gfxtypes.zig");
 const convert = @import("convert.zig");
+const mem6 = @import("mem6.zig");
 
 const print = std.debug.print;
 const c = gfxtypes.c;
@@ -2281,7 +2275,6 @@ const Vertex = gfxtypes.Vertex;
 const fVec2 = gmath.fVec2;
 const fVec3 = gmath.fVec3;
 const RGBA32 = gfxtypes.RGBA32;
-const allocator = std.heap.page_allocator;
 const fMVP = gfxtypes.fMVP;
 
 const VkResult = c.VkResult;
@@ -2304,3 +2297,4 @@ const VkDeviceMemory = c.VkDeviceMemory;
 const VkImage = c.VkImage;
 const VkDescriptorSetLayout = c.VkDescriptorSetLayout;
 const VkDescriptorPool = c.VkDescriptorPool;
+const HeapArray = array.HeapArray;
