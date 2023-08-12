@@ -7,7 +7,7 @@ pub fn main() !void {
 
     var should_run: bool = true;
     while (should_run) {
-        frame_timer.start();
+        // frame_timer.start();
 
         window.pollEvents();
         if (window.shouldClose()) {
@@ -15,7 +15,7 @@ pub fn main() !void {
         }
         try vk.drawFrame();
 
-        frame_timer.stop();
+        // frame_timer.stop();
         // if (frame_timer_print_ctr >= frame_timer_print_rate) {
         //     print("avg frame time: {d}\n", .{frame_timer.runningAvgMs()});
         //     frame_timer_print_ctr = 0;
@@ -26,7 +26,6 @@ pub fn main() !void {
     }
 
     benchmark.printAllScopeTimers();
-    // try mem6.MediumAllocTest();
 }
 
 var frame_timer = benchmark.WindowTimer(4).new();

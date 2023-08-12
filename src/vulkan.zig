@@ -1,6 +1,6 @@
 // TODO: better error handling
-// TODO: implement vulkan memory allocator so this isn't both very slow and limited in usage
-// TODO: VK_CULL_MODE_NONE to VK_CULL_MODE_BACK_BIT once drawing is confirmed
+// TODO: implement mem6 as vk allocator
+
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- public
@@ -166,16 +166,16 @@ fn updateUniformBuffer(current_image: u32) !void {
     // const timestamp_seconds: f64 = convert.nano100ToBase(@intToFloat(f64, now.timestamp)) * 6.0;
     test_rotation += 2e-4;
 
-    mvp.model = nd.fMat4x4.modelNoScale(
+    mvp.model = gmath.fMat4x4.modelNoScale(
         fVec3.init(.{0.0, 0.0, 1.0}), 
-        nd.fQuat.fromAxisAngle(fVec3.up, @floatCast(f32, test_rotation))
+        gmath.fQuat.fromAxisAngle(fVec3.z_axis, @floatCast(f32, test_rotation))
     );
-    mvp.view = nd.fMat4x4.lookAt(
+    mvp.view = gmath.fMat4x4.lookAt(
         fVec3.fromScalar(2.0), 
         fVec3.fromScalar(0.0), 
         fVec3.init(.{0.0, 0.0, 1.0})
     );
-    mvp.projection = nd.fMat4x4.projectionPerspective(
+    mvp.projection = gmath.fMat4x4.projectionPerspective(
         std.math.pi * 0.25, 
         @intToFloat(f32, swapchain.extent.width) / @intToFloat(f32, swapchain.extent.height), 
         0.1, 

@@ -83,6 +83,10 @@ pub const Allocator = struct {
             const md_idx = mediumSizeBracket(alloc_sz);
             data = self.allocMedium(md_idx) orelse return Mem6Error.OutOfMemory;
         }
+        else if (alloc_sz <= LARGE_ALLOC_MAX_SZ) {
+            const lg_idx = largeSizeBracket(alloc_sz);
+            data = self.allocLarge(lg_idx, alloc_sz) orelse return Mem6Error.OutOfMemory;
+        }
         else {
             return Mem6Error.OutOfMemory;
         }
@@ -147,6 +151,10 @@ pub const Allocator = struct {
         else if (alloc_sz <= MEDIUM_ALLOC_MAX_SZ) {
             const md_idx = mediumSizeBracket(alloc_sz);
             self.freeMedium(@ptrCast(*u8, bytes), md_idx);
+        }
+        else if (alloc_sz <= LARGE_ALLOC_MAX_SZ) {
+            const lg_idx = largeSizeBracket(alloc_sz);
+            self.freeLarge(@ptrCast(*u8, bytes), lg_idx);
         }
     }
 
@@ -263,15 +271,49 @@ pub const Allocator = struct {
         page_record.free_block_ct += 1;
     }
 
-    fn allocLarge(self: *Allocator, lg_idx: usize) ?[]u8 {
-        _ = self;
-        _ = lg_idx;
+    fn allocLarge(self: *Allocator, lg_idx: usize, alloc_sz: usize) ?[]u8 {
+        var node_list: *NodeList = &self.large_pool.node_lists[lg_idx];
+        if (node_list.free_node == null) {
+            expandNodeList(node_list, SMALL_PAGE_SZ, LARGE_NODES_PER_PAGE) catch return null;
+        }
+
+        const node_idx = node_list.free_node.?;
+        const next_free_idx = node_list.nodes[node_idx].next_free;
+        if (next_free_idx == NO_BLOCK) {
+            node_list.free_node = null;
+        }
+        else {
+            node_list.free_node = next_free_idx;
+        }
+
+        const alloc_mod_page_not_zero = @intCast(usize, @boolToInt(alloc_sz % SMALL_PAGE_SZ != 0));
+        const alloc_page_ct = @divTrunc(alloc_sz, SMALL_PAGE_SZ) + alloc_mod_page_not_zero;
+
+        const page_alloc_sz = alloc_page_ct * SMALL_PAGE_SZ;
+        const bytes_start = node_idx * LARGE_BLOCK_SIZES[lg_idx];
+        var alloc_bytes = &node_list.bytes[bytes_start];
+        _ = windows.VirtualAlloc(alloc_bytes, page_alloc_sz, windows.MEM_COMMIT, windows.PAGE_READWRITE) catch return null;
+
+        const bytes_end = bytes_start + page_alloc_sz;
+        return node_list.bytes[bytes_start..bytes_end];
     }
 
     fn freeLarge(self: *Allocator, data: *u8, lg_idx: usize) void {
-        _ = self;
-        _ = data;
-        _ = lg_idx;
+        var node_list: *NodeList = &self.large_pool.node_lists[lg_idx];
+        const node_list_head_address = @ptrToInt(@ptrCast(*u8, node_list.bytes));
+        const data_address = @ptrToInt(data);
+        const node_idx = @intCast(u32, (data_address - node_list_head_address) / LARGE_BLOCK_SIZES[lg_idx]);
+
+        if (node_list.free_node) |next_free| {
+            node_list.nodes[@intCast(usize, node_idx)].next_free = @intCast(u32, next_free);
+        }
+        else {
+            node_list.nodes[@intCast(usize, node_idx)].next_free = NO_BLOCK;
+        }
+        node_list.free_node = node_idx;
+
+        const bytes_start = node_idx * LARGE_BLOCK_SIZES[lg_idx];
+        windows.VirtualFree(&node_list.bytes[bytes_start], LARGE_BLOCK_SIZES[lg_idx], windows.MEM_DECOMMIT);
     }
 
     // TODO: OutOfPages error
@@ -329,6 +371,25 @@ pub const Allocator = struct {
         page_list.free_block = @intCast(u32, start_idx);
         page_list.page_ct += 1;
     }
+
+    fn expandNodeList(
+        node_list: *NodeList,
+        page_sz: usize,
+        nodes_per_page: usize
+    ) !void {
+        const page_start = node_list.page_ct * nodes_per_page;
+        const nodes_bytes = &node_list.nodes[page_start];
+        _ = try windows.VirtualAlloc(nodes_bytes, page_sz, windows.MEM_COMMIT, windows.PAGE_READWRITE);
+
+        const page_end = page_start + nodes_per_page;
+        for (page_start..page_end-1) |i| {
+            node_list.nodes[i].next_free = @intCast(u32, i) + 1;
+        }
+        node_list.nodes[page_end-1].next_free = NO_BLOCK;
+
+        node_list.free_node = @intCast(u32, page_start);
+        node_list.page_ct += 1;
+    }
 };
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -360,8 +421,7 @@ fn initAllocators(enclave: usize) !void {
 
     var block_sum: usize = 0;
 
-    var i : usize = 0;
-    while (i < SMALL_DIVISION_CT) : (i += 1) {
+    for (0..SMALL_DIVISION_CT) |i| {
         const bytes_start = SMALL_DIVISION_SZ * i;
         const bytes_end = SMALL_DIVISION_SZ * (i + 1);
         const pages_start = SMALL_DIVISION_PAGE_CT * i;
@@ -382,10 +442,9 @@ fn initAllocators(enclave: usize) !void {
         block_sum += block_ct;
     }
 
-    i = 0;
     const medium_bytes_start = SMALL_DIVISION_SZ * SMALL_DIVISION_CT;
     const medium_pages_start = SMALL_DIVISION_PAGE_CT * SMALL_DIVISION_CT;
-    while (i < MEDIUM_DIVISION_CT) : (i += 1) {
+    for (0..MEDIUM_DIVISION_CT) |i| {
         const bytes_start = medium_bytes_start + MEDIUM_DIVISION_SZ * i;
         const bytes_end = medium_bytes_start + MEDIUM_DIVISION_SZ * (i + 1);
         const pages_start = medium_pages_start + MEDIUM_DIVISION_PAGE_CT * i;
@@ -403,6 +462,21 @@ fn initAllocators(enclave: usize) !void {
 
         initPages(page_list.pages, MEDIUM_DIVISION_PAGE_CT);
         
+        block_sum += block_ct;
+    }
+
+    const large_bytes_start = medium_bytes_start + MEDIUM_DIVISION_SZ * MEDIUM_DIVISION_CT;
+    for (0..LARGE_DIVISION_CT) |i| {
+        const bytes_start = large_bytes_start + LARGE_DIVISION_SZ * i;
+        const bytes_end = large_bytes_start + LARGE_DIVISION_SZ * (i + 1);
+        const block_ct = LARGE_BLOCK_COUNTS_PER_DIVISION[i];
+
+        var node_list = &large_pools[enclave].node_lists[i];
+        node_list.bytes = @ptrCast([*]u8, large_pools[enclave].bytes[bytes_start..bytes_end]);
+        node_list.nodes = free_lists_casted[block_sum..(block_sum + block_ct)];
+        node_list.free_node = null;
+        node_list.page_ct = 0;
+
         block_sum += block_ct;
     }
 }
@@ -445,6 +519,7 @@ const Records = struct {
     bytes: [*]u8 = undefined,
 };
 
+// TODO: pages -> page_records, blocks -> nodes
 const PageList = struct { 
     bytes: [*]u8 = undefined,
     pages: []PageRecord = undefined, 
@@ -453,6 +528,13 @@ const PageList = struct {
     free_block: ?u32 = undefined, 
     page_ct: u32 = undefined, 
     free_page_ct: u32 = undefined,
+};
+
+const NodeList = struct {
+    bytes: [*]u8 = undefined,
+    nodes: []BlockNode = undefined, 
+    free_node: ?u32 = undefined, 
+    page_ct: u32 = undefined,
 };
 
 const SmallPool = struct {
@@ -467,6 +549,7 @@ const MediumPool = struct {
 
 const LargePool = struct {
     bytes: [*]u8 = undefined,
+    node_lists: [LARGE_DIVISION_CT]NodeList = undefined,
 };
 
 const GiantPool = struct {
@@ -631,12 +714,53 @@ const LARGE_DIVISION_CT: usize = 8;
 const LARGE_MIN_EXP2: usize = std.math.log(comptime_int, 2, @as(comptime_int, LARGE_ALLOC_MIN_SZ));
 
 const LARGE_DIVISION_SZ: usize                  = LARGE_POOL_SZ / LARGE_DIVISION_CT;
-const LARGE_PAGE_RECORDS_SZ: usize              = LARGE_POOL_SZ / SMALL_PAGE_SZ;
-const LARGE_PAGE_RECORDS_SZ_PER_DIVISION: usize = LARGE_PAGE_RECORDS_SZ / LARGE_DIVISION_CT;
-const LARGE_DIVISION_PAGE_CT: usize             = LARGE_PAGE_RECORDS_SZ_PER_DIVISION / @sizeOf(PageRecord);
 const LARGE_NODES_PER_PAGE: usize               = SMALL_PAGE_SZ / @sizeOf(BlockNode);
 
 const LARGE_BLOCK_SIZES: [8]usize = .{32_768, 65_536, 131_072, 262_144, 524_288, 1_048_576, 2_097_152, 4_194_304};
+
+const LARGE_BLOCK_COUNTS_PER_DIVISION: [8]usize = .{
+    LARGE_DIVISION_SZ / LARGE_BLOCK_SIZES[0],
+    LARGE_DIVISION_SZ / LARGE_BLOCK_SIZES[1],
+    LARGE_DIVISION_SZ / LARGE_BLOCK_SIZES[2],
+    LARGE_DIVISION_SZ / LARGE_BLOCK_SIZES[3],
+    LARGE_DIVISION_SZ / LARGE_BLOCK_SIZES[4],
+    LARGE_DIVISION_SZ / LARGE_BLOCK_SIZES[5],
+    LARGE_DIVISION_SZ / LARGE_BLOCK_SIZES[6],
+    LARGE_DIVISION_SZ / LARGE_BLOCK_SIZES[7],
+};
+
+const LARGE_PAGES_PER_BLOCK_CT: [8]usize = .{
+    LARGE_BLOCK_SIZES[0] / SMALL_PAGE_SZ,
+    LARGE_BLOCK_SIZES[1] / SMALL_PAGE_SZ,
+    LARGE_BLOCK_SIZES[2] / SMALL_PAGE_SZ,
+    LARGE_BLOCK_SIZES[3] / SMALL_PAGE_SZ,
+    LARGE_BLOCK_SIZES[4] / SMALL_PAGE_SZ,
+    LARGE_BLOCK_SIZES[5] / SMALL_PAGE_SZ,
+    LARGE_BLOCK_SIZES[6] / SMALL_PAGE_SZ,
+    LARGE_BLOCK_SIZES[7] / SMALL_PAGE_SZ,
+};
+
+const LARGE_NODE_SETS_PER_PAGE: [8]usize = .{
+    LARGE_BLOCK_SIZES[0] / @sizeOf(BlockNode),
+    LARGE_BLOCK_SIZES[1] / @sizeOf(BlockNode),
+    LARGE_BLOCK_SIZES[2] / @sizeOf(BlockNode),
+    LARGE_BLOCK_SIZES[3] / @sizeOf(BlockNode),
+    LARGE_BLOCK_SIZES[4] / @sizeOf(BlockNode),
+    LARGE_BLOCK_SIZES[5] / @sizeOf(BlockNode),
+    LARGE_BLOCK_SIZES[6] / @sizeOf(BlockNode),
+    LARGE_BLOCK_SIZES[7] / @sizeOf(BlockNode),
+};
+
+const LARGE_FREE_LIST_SZ_PER_DIVISION: [8]usize = .{
+    LARGE_BLOCK_COUNTS_PER_DIVISION[0] * @sizeOf(BlockNode),
+    LARGE_BLOCK_COUNTS_PER_DIVISION[1] * @sizeOf(BlockNode),
+    LARGE_BLOCK_COUNTS_PER_DIVISION[2] * @sizeOf(BlockNode),
+    LARGE_BLOCK_COUNTS_PER_DIVISION[3] * @sizeOf(BlockNode),
+    LARGE_BLOCK_COUNTS_PER_DIVISION[4] * @sizeOf(BlockNode),
+    LARGE_BLOCK_COUNTS_PER_DIVISION[5] * @sizeOf(BlockNode),
+    LARGE_BLOCK_COUNTS_PER_DIVISION[6] * @sizeOf(BlockNode),
+    LARGE_BLOCK_COUNTS_PER_DIVISION[7] * @sizeOf(BlockNode),
+};
 
 //------------------------------------------------------------------------------------------------------------- the rest
 
@@ -657,7 +781,15 @@ const FREE_LISTS_SZ: usize  =
     + MEDIUM_FREE_LIST_SZ_PER_DIVISION[4]
     + MEDIUM_FREE_LIST_SZ_PER_DIVISION[5]
     + MEDIUM_FREE_LIST_SZ_PER_DIVISION[6]
-    + MEDIUM_FREE_LIST_SZ_PER_DIVISION[7];
+    + MEDIUM_FREE_LIST_SZ_PER_DIVISION[7]
+    + LARGE_FREE_LIST_SZ_PER_DIVISION[0]
+    + LARGE_FREE_LIST_SZ_PER_DIVISION[1]
+    + LARGE_FREE_LIST_SZ_PER_DIVISION[2]
+    + LARGE_FREE_LIST_SZ_PER_DIVISION[3]
+    + LARGE_FREE_LIST_SZ_PER_DIVISION[4]
+    + LARGE_FREE_LIST_SZ_PER_DIVISION[5]
+    + LARGE_FREE_LIST_SZ_PER_DIVISION[6]
+    + LARGE_FREE_LIST_SZ_PER_DIVISION[7];
 
 const SMALL_POOL_BEGIN  = 0;
 const MEDIUM_POOL_BEGIN = SMALL_POOL_SZ;
@@ -959,6 +1091,26 @@ test "Perf vs GPA" {
             gpa_allocator.free(allocations[i]);
         }
     }
+
+    for (0..1_000) |i| {
+        var t = ScopeTimer.start("m6 LARGE alloc/free x5", getScopeTimerID());
+        defer t.stop();
+        _ = i;
+        var testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[0]);
+        allocator.free(testalloc);
+        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[1]);
+        allocator.free(testalloc);
+        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[2]);
+        allocator.free(testalloc);
+        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[3]);
+        allocator.free(testalloc);
+        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[4]);
+        allocator.free(testalloc);
+        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[5]);
+        allocator.free(testalloc);
+    }
+
+
     benchmark.printAllScopeTimers();
 }
 
@@ -979,6 +1131,30 @@ test "Medium Alloc" {
     testalloc = try allocator.alloc(u8, 8192);
     allocator.free(testalloc);
     testalloc = try allocator.alloc(u8, 16384);
+    allocator.free(testalloc);
+}
+
+// pub fn largeAlloc() !void {
+test "Large Alloc" {
+    try startup(1);
+    var allocator = Allocator.newCopy(0);
+    defer shutdown();
+
+    var testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[0]);
+    allocator.free(testalloc);
+    testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[1]);
+    allocator.free(testalloc);
+    testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[2]);
+    allocator.free(testalloc);
+    testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[3]);
+    allocator.free(testalloc);
+    testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[4]);
+    allocator.free(testalloc);
+    testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[5]);
+    allocator.free(testalloc);
+    testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[6]);
+    allocator.free(testalloc);
+    testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[7]);
     allocator.free(testalloc);
 }
 

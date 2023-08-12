@@ -12,6 +12,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // TODO: have file that simply saves the paths to c packages. if path nonexistent or path bad, try to use env vars
+    // if can't find, tell user and exit build.
+
     exe.addIncludePath("D:/programs/zig-windows-x86_64-0.11.0-dev.3105+e46d7a369.lib/libc/include/any-windows-any");
     exe.addIncludePath("D:/libs/VulkanMemoryAllocator-3.0.1/include");
     exe.addIncludePath("D:/libs/VulkanSDK/1.3.243.0/Include");
