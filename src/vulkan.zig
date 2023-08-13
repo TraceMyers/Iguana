@@ -2178,15 +2178,6 @@ const vertices: [4]Vertex = .{
 
 const indices: [6]u16 = .{0, 1, 2, 2, 3, 0};
 
-var vk_allocation_callbacks = c.VkAllocationCallbacks{
-    .pUserData = null,
-    .pfnAllocation = vkInterfaceAllocate,
-    .pfnReallocation = vkInterfaceReallocate,
-    .pfnFree = vkInterfaceFree,
-    .pfnInternalAllocation = vkInterfaceInternalAllocateNotification,
-    .pfnInternalFree = vkInterfaceInternalFreeNotification,
-};
-
 var direct_image: ?HeapArray(RGBA32) = null;
 var texture_image_host: VkImage = null;
 var texture_image_host_memory: VkDeviceMemory = null;

@@ -112,24 +112,84 @@ pub const Allocator = struct {
 
     pub fn alloc(self: *Allocator, comptime Type: type, ct: usize) Mem6Error![]Type {
         const alloc_sz: usize = ct * @sizeOf(Type);
-        assert(alloc_sz > 0);
+        const alignment = @alignOf(Type);
 
+        assert(alloc_sz > 0 and alignment > 0);
+
+        var align_sz: usize = undefined;
+        var division: usize = undefined;
         var data: []u8 = undefined;
+
         if (alloc_sz <= SMALL_ALLOC_MAX_SZ) {
-            const sm_idx = smallSizeBracket(alloc_sz);
-            data = self.allocSmall(sm_idx) orelse return Mem6Error.OutOfMemory;
+            const sz_mod_min = alloc_sz % SMALL_ALLOC_MIN_SZ;
+            const sz_mod_min_eq_0 = sz_mod_min == 0;
+
+            if (std.math.isPowerOfTwo(alignment) or sz_mod_min_eq_0) {
+                const sz_div_min = @intCast(usize, @divTrunc(alloc_sz, SMALL_ALLOC_MIN_SZ));
+                division = sz_div_min - @intCast(usize, @boolToInt(sz_mod_min_eq_0));
+                data = self.allocSmall(division, alignment) orelse return Mem6Error.OutOfMemory;
+            }
+            else {
+                align_sz = alloc_sz + alignment - 1;
+                if (align_sz <= SMALL_ALLOC_MAX_SZ) {
+                    const sz_div_min = @intCast(usize, @divTrunc(alloc_sz, SMALL_ALLOC_MIN_SZ));
+                    division = sz_div_min - @intCast(usize, @boolToInt(sz_mod_min_eq_0));
+                    data = self.allocSmall(division, alignment) orelse return Mem6Error.OutOfMemory;
+                }
+                else {
+                    division = mediumSizeBracket(align_sz);
+                    data = self.allocMedium(division, alignment) orelse return Mem6Error.OutOfMemory;
+                }
+            }
         }
         else if (alloc_sz <= MEDIUM_ALLOC_MAX_SZ) {
-            const md_idx = mediumSizeBracket(alloc_sz);
-            data = self.allocMedium(md_idx) orelse return Mem6Error.OutOfMemory;
+            if (std.math.isPowerOfTwo(alignment)) {
+                division = mediumSizeBracket(alloc_sz);
+                data = self.allocMedium(division, alignment) orelse return Mem6Error.OutOfMemory;
+            }
+            else {
+                align_sz = alloc_sz + alignment - 1;
+                if (align_sz <= MEDIUM_ALLOC_MAX_SZ) {
+                    division = mediumSizeBracket(align_sz);
+                    data = self.allocMedium(division, alignment) orelse return Mem6Error.OutOfMemory;
+                }
+                else {
+                    division = largeSizeBracket(align_sz);
+                    data = self.allocLarge(division, align_sz, alignment) orelse return Mem6Error.OutOfMemory;
+                }
+            }
         }
         else if (alloc_sz <= LARGE_ALLOC_MAX_SZ) {
-            const lg_idx = largeSizeBracket(alloc_sz);
-            data = self.allocLarge(lg_idx, alloc_sz) orelse return Mem6Error.OutOfMemory;
+            if (std.math.isPowerOfTwo(alignment)) {
+                division = largeSizeBracket(alloc_sz);
+                data = self.allocLarge(division, alloc_sz, alignment) orelse return Mem6Error.OutOfMemory;
+            }
+            else {
+                align_sz = alloc_sz + alignment - 1;
+                division = largeSizeBracket(align_sz);
+                data = self.allocLarge(division, align_sz, alignment) orelse return Mem6Error.OutOfMemory;
+            }
         }
         else {
             return Mem6Error.OutOfMemory;
         }
+        // return info;
+        // var data: []u8 = undefined;
+        // if (alloc_sz <= SMALL_ALLOC_MAX_SZ) {
+        //     const sm_idx = smallSizeBracket(alloc_sz);
+        //     data = self.allocSmall(sm_idx) orelse return Mem6Error.OutOfMemory;
+        // }
+        // else if (alloc_sz <= MEDIUM_ALLOC_MAX_SZ) {
+        //     const md_idx = mediumSizeBracket(alloc_sz);
+        //     data = self.allocMedium(md_idx) orelse return Mem6Error.OutOfMemory;
+        // }
+        // else if (alloc_sz <= LARGE_ALLOC_MAX_SZ) {
+        //     const lg_idx = largeSizeBracket(alloc_sz);
+        //     data = self.allocLarge(lg_idx, alloc_sz) orelse return Mem6Error.OutOfMemory;
+        // }
+        // else {
+        //     return Mem6Error.OutOfMemory;
+        // }
 
         return mem.bytesAsSlice(Type, @alignCast(@alignOf(Type), data[0..alloc_sz]));
     }
@@ -228,8 +288,9 @@ pub const Allocator = struct {
 
     inline fn smallSizeBracket(alloc_sz: usize) usize {
         const sz_div_min = @intCast(usize, @divTrunc(alloc_sz, SMALL_ALLOC_MIN_SZ));
-        const sz_is_multiple_of_min = @intCast(usize, @boolToInt(alloc_sz % SMALL_ALLOC_MIN_SZ == 0));
-        return sz_div_min - sz_is_multiple_of_min; 
+        const sz_mod_min = alloc_sz % SMALL_ALLOC_MIN_SZ;
+        const sz_multiple_min = @intCast(usize, @boolToInt(sz_mod_min == 0));
+        return sz_div_min - sz_multiple_min;
     }
 
     inline fn mediumSizeBracket(alloc_sz: usize) usize {
@@ -240,7 +301,7 @@ pub const Allocator = struct {
         return gm.ceilExp2(alloc_sz) - LARGE_MIN_EXP2;
     }
 
-    fn allocSmall(self: *Allocator, sm_idx: usize) ?[]u8 {
+    fn allocSmall(self: *Allocator, sm_idx: usize, alignment: usize) ?[]u8 {
         var page_list: *PageList = &self.small_pool.page_lists[sm_idx];
         if (page_list.free_block == null) {
             expandPageList(
@@ -266,8 +327,16 @@ pub const Allocator = struct {
         var page_record: *PageRecord = &page_list.pages[page_idx];
         page_record.free_block_ct -= 1;
 
-        const block_start = block_idx * SMALL_BLOCK_SIZES[sm_idx];
+        var block_start = block_idx * SMALL_BLOCK_SIZES[sm_idx];
         const block_end = block_start + SMALL_BLOCK_SIZES[sm_idx];
+
+        // make sure we're aligned
+        const start_address = @ptrToInt(&page_list.bytes[block_start]);
+        const address_mod_align = start_address % alignment;
+        if (address_mod_align != 0) {
+            block_start += alignment - address_mod_align;
+        }
+
         return page_list.bytes[block_start..block_end];
     }
 
@@ -275,7 +344,7 @@ pub const Allocator = struct {
         var page_list: *PageList = &self.small_pool.page_lists[sm_idx];
         const page_list_head_address = @ptrToInt(@ptrCast(*u8, page_list.bytes));
         const data_address = @ptrToInt(data);
-        const block_idx = @intCast(u32, (data_address - page_list_head_address) / SMALL_BLOCK_SIZES[sm_idx]);
+        const block_idx = @intCast(u32, @divTrunc((data_address - page_list_head_address), SMALL_BLOCK_SIZES[sm_idx]));
 
         if (page_list.free_block) |next_free| {
             page_list.blocks[@intCast(usize, block_idx)].next_free = @intCast(u32, next_free);
@@ -289,7 +358,7 @@ pub const Allocator = struct {
         page_record.free_block_ct += 1;
     }
 
-    fn allocMedium(self: *Allocator, md_idx: usize) ?[]u8 {
+    fn allocMedium(self: *Allocator, md_idx: usize, alignment: usize) ?[]u8 {
         var page_list: *PageList = &self.medium_pool.page_lists[md_idx];
         if (page_list.free_block == null) {
             expandPageList(
@@ -315,8 +384,16 @@ pub const Allocator = struct {
         var page_record: *PageRecord = &page_list.pages[page_idx];
         page_record.free_block_ct -= 1;
 
-        const block_start = block_idx * MEDIUM_BLOCK_SIZES[md_idx];
+        var block_start = block_idx * MEDIUM_BLOCK_SIZES[md_idx];
         const block_end = block_start + MEDIUM_BLOCK_SIZES[md_idx];
+
+        // make sure we're aligned
+        const start_address = @ptrToInt(&page_list.bytes[block_start]);
+        const address_mod_align = start_address % alignment;
+        if (address_mod_align != 0) {
+            block_start += alignment - address_mod_align;
+        }
+
         return page_list.bytes[block_start..block_end];
     }
 
@@ -324,7 +401,7 @@ pub const Allocator = struct {
         var page_list: *PageList = &self.medium_pool.page_lists[md_idx];
         const page_list_head_address = @ptrToInt(@ptrCast(*u8, page_list.bytes));
         const data_address = @ptrToInt(data);
-        const block_idx = @intCast(u32, (data_address - page_list_head_address) / MEDIUM_BLOCK_SIZES[md_idx]);
+        const block_idx = @intCast(u32, @divTrunc((data_address - page_list_head_address), MEDIUM_BLOCK_SIZES[md_idx]));
         
         if (page_list.free_block) |next_free| {
             page_list.blocks[@intCast(usize, block_idx)].next_free = @intCast(u32, next_free);
@@ -339,7 +416,7 @@ pub const Allocator = struct {
         page_record.free_block_ct += 1;
     }
 
-    fn allocLarge(self: *Allocator, lg_idx: usize, alloc_sz: usize) ?[]u8 {
+    fn allocLarge(self: *Allocator, lg_idx: usize, alloc_sz: usize, alignment: usize) ?[]u8 {
         var node_list: *NodeList = &self.large_pool.node_lists[lg_idx];
         if (node_list.free_node == null) {
             expandNodeList(node_list, SMALL_PAGE_SZ, LARGE_NODES_PER_PAGE) catch return null;
@@ -358,11 +435,19 @@ pub const Allocator = struct {
         const alloc_page_ct = @divTrunc(alloc_sz, SMALL_PAGE_SZ) + alloc_mod_page_not_zero;
 
         const page_alloc_sz = alloc_page_ct * SMALL_PAGE_SZ;
-        const bytes_start = node_idx * LARGE_BLOCK_SIZES[lg_idx];
+        var bytes_start = node_idx * LARGE_BLOCK_SIZES[lg_idx];
         var alloc_bytes = &node_list.bytes[bytes_start];
         _ = windows.VirtualAlloc(alloc_bytes, page_alloc_sz, windows.MEM_COMMIT, windows.PAGE_READWRITE) catch return null;
 
         const bytes_end = bytes_start + page_alloc_sz;
+
+        // make sure we're aligned
+        const start_address = @ptrToInt(&node_list.bytes[bytes_start]);
+        const address_mod_align = start_address % alignment;
+        if (address_mod_align != 0) {
+            bytes_start += alignment - address_mod_align;
+        }
+
         return node_list.bytes[bytes_start..bytes_end];
     }
 
@@ -370,7 +455,7 @@ pub const Allocator = struct {
         var node_list: *NodeList = &self.large_pool.node_lists[lg_idx];
         const node_list_head_address = @ptrToInt(@ptrCast(*u8, node_list.bytes));
         const data_address = @ptrToInt(data);
-        const node_idx = @intCast(u32, (data_address - node_list_head_address) / LARGE_BLOCK_SIZES[lg_idx]);
+        const node_idx = @intCast(u32, @divTrunc((data_address - node_list_head_address), LARGE_BLOCK_SIZES[lg_idx]));
 
         if (node_list.free_node) |next_free| {
             node_list.nodes[@intCast(usize, node_idx)].next_free = @intCast(u32, next_free);
@@ -629,6 +714,11 @@ const AllocatorData = struct {
     small_pool: SmallPool = undefined,
     records: Records = undefined,
     free_lists: FreeLists = undefined,
+};
+
+const SizeAlignInfo = struct {
+    align_sz: usize,
+    division: usize,
 };
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
