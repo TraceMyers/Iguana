@@ -13,6 +13,10 @@ var render_method = RenderMethod.Direct;
 
 pub fn init(method: RenderMethod) !void {
     allocator = mem6.Allocator.fromEnclave(mem6.Enclave.Render);
+
+    var t = ScopeTimer.start("Vulkan Init", getScopeTimerID());
+    defer t.stop();
+
     try createInstance();
     try createSurface();
     try getPhysicalDevice();
@@ -68,7 +72,7 @@ pub fn cleanup() void {
     c.vkDestroyCommandPool(vk_logical, graphics_command_pool, null);
     c.vkDestroyCommandPool(vk_logical, compute_command_pool, null);
     c.vkDestroyCommandPool(vk_logical, transfer_command_pool, null);
-    c.vkDestroyPipelineLayout(vk_logical, vk_pipeline_layout, null);
+    c.vkDestroyPipelineLayout(vk_logical, vk_pipeline_layout, &allocation_callbacks);
     c.vkDestroyRenderPass(vk_logical, vk_render_pass, null);
     c.vkDestroyPipeline(vk_logical, vk_pipeline, null);
     
@@ -875,7 +879,7 @@ fn createGraphicsPipeline() !void {
     };
 
     {
-        const result = c.vkCreatePipelineLayout(vk_logical, &pipeline_layout_info, null, &vk_pipeline_layout);
+        const result = c.vkCreatePipelineLayout(vk_logical, &pipeline_layout_info, &allocation_callbacks, &vk_pipeline_layout);
         if (result != VK_SUCCESS) {
             return VkError.CreatePipelineLayout;
         }
@@ -1931,12 +1935,6 @@ fn createImage(
 // ------------------------------------------------------------------------------------------------ allocation callbacks
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// pub const PFN_vkAllocationFunction = ?*const fn (?*anyopaque, usize, usize, VkSystemAllocationScope) callconv(.C) ?*anyopaque;
-// pub const PFN_vkReallocationFunction = ?*const fn (?*anyopaque, ?*anyopaque, usize, usize, VkSystemAllocationScope) callconv(.C) ?*anyopaque;
-// pub const PFN_vkFreeFunction = ?*const fn (?*anyopaque, ?*anyopaque) callconv(.C) void;
-// pub const PFN_vkInternalAllocationNotification = ?*const fn (?*anyopaque, usize, VkInternalAllocationType, VkSystemAllocationScope) callconv(.C) void;
-// pub const PFN_vkInternalFreeNotification = ?*const fn (?*anyopaque, usize, VkInternalAllocationType, VkSystemAllocationScope) callconv(.C) void;
-
 // typedef enum VkSystemAllocationScope {
 //     VK_SYSTEM_ALLOCATION_SCOPE_COMMAND = 0,
 //     VK_SYSTEM_ALLOCATION_SCOPE_OBJECT = 1,
@@ -1952,9 +1950,11 @@ pub fn vkInterfaceAllocate(
     alloc_scope: c.VkSystemAllocationScope
 ) callconv(.C) ?*anyopaque {
     _ = user_data;
-    _ = sz;
     _ = alignment;
     _ = alloc_scope;
+
+    var data = allocator.alloc(u8, sz) catch return null;
+    return &data[0];
 }
 
 pub fn vkInterfaceReallocate(
@@ -1965,15 +1965,22 @@ pub fn vkInterfaceReallocate(
     alloc_scope: c.VkSystemAllocationScope
 ) callconv(.C) ?*anyopaque {
     _ = user_data;
-    _ = original_alloc;
-    _ = sz;
     _ = alignment;
     _ = alloc_scope;
+
+    if (original_alloc) |valid_alloc| {
+        allocator.freeOpaque(valid_alloc);
+    }
+    var data = allocator.alloc(u8, sz) catch return null;
+    return &data[0];
 }
 
 pub fn vkInterfaceFree(user_data: ?*anyopaque, alloc: ?*anyopaque) callconv(.C) void {
     _ = user_data;
-    _ = alloc;
+
+    if (alloc) |valid_alloc| {
+        allocator.freeOpaque(valid_alloc);
+    }
 }
 
 pub fn vkInterfaceInternalAllocateNotification(
@@ -1999,6 +2006,12 @@ pub fn vkInterfaceInternalFreeNotification(
     _ = alloc_type;
     _ = alloc_scope;
 }
+
+// pub const PFN_vkAllocationFunction = vkInterfaceAllocate;
+// pub const PFN_vkReallocationFunction = vkInterfaceReallocate;
+// pub const PFN_vkFreeFunction = vkInterfaceFree;
+// pub const PFN_vkInternalAllocationNotification = vkInterfaceInternalAllocateNotification;
+// pub const PFN_vkInternalFreeNotification = vkInterfaceInternalFreeNotification;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // --------------------------------------------------------------------------------------------------------------- types
@@ -2195,6 +2208,15 @@ const gfx_frame_timer_print_rate: u16 = 200;
 var test_rotation: f64 = 0.0;
 
 var allocator: mem6.Allocator = undefined;
+
+var allocation_callbacks = c.VkAllocationCallbacks{
+    .pUserData = null,
+    .pfnAllocation = vkInterfaceAllocate,
+    .pfnReallocation = vkInterfaceReallocate,
+    .pfnFree = vkInterfaceFree,
+    .pfnInternalAllocation = vkInterfaceInternalAllocateNotification,
+    .pfnInternalFree = vkInterfaceInternalFreeNotification
+};
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------- constants

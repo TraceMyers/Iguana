@@ -134,7 +134,7 @@ pub const Allocator = struct {
         return mem.bytesAsSlice(Type, @alignCast(@alignOf(Type), data[0..alloc_sz]));
     }
 
-    pub fn realloc(self: *Allocator, data_in: anytype, new_ct: usize) Mem6Error![]@typeInfo(@TypeOf(data_in)).Pointer.* {
+    pub fn realloc(self: *Allocator, data_in: anytype, new_ct: usize) Mem6Error![]@TypeOf(data_in[0]) {
         const slice = @typeInfo(@TypeOf(data_in)).Pointer;
         const bytes = mem.sliceAsBytes(data_in);
         const alloc_sz = bytes.len + if (slice.sentinel != null) @sizeOf(slice.child) else 0;
@@ -201,6 +201,28 @@ pub const Allocator = struct {
         else if (alloc_sz <= LARGE_ALLOC_MAX_SZ) {
             const lg_idx = largeSizeBracket(alloc_sz);
             self.freeLarge(@ptrCast(*u8, bytes), lg_idx);
+        }
+        else {
+            unreachable;
+        }
+    }
+
+    pub fn freeOpaque(self: *Allocator, data_in: *anyopaque) void {
+        const data_address = @ptrToInt(data_in);
+        if (data_address < @ptrToInt(self.medium_pool.bytes)) {
+            const sm_idx = (data_address - @ptrToInt(self.small_pool.bytes)) / SMALL_DIVISION_SZ;
+            self.freeSmall(@ptrCast(*u8, data_in), sm_idx);
+        }
+        else if (data_address < @ptrToInt(self.large_pool.bytes)) {
+            const md_idx = (data_address - @ptrToInt(self.medium_pool.bytes)) / MEDIUM_DIVISION_SZ;
+            self.freeMedium(@ptrCast(*u8, data_in), md_idx);
+        }
+        else if (data_address < @ptrToInt(self.giant_pool.bytes)) {
+            const lg_idx = (data_address - @ptrToInt(self.large_pool.bytes)) / LARGE_DIVISION_SZ;
+            self.freeLarge(@ptrCast(*u8, data_in), lg_idx);
+        }
+        else {
+            print("fuck address is {d}\n", .{data_address});
         }
     }
 
@@ -754,8 +776,8 @@ const MEDIUM_FREE_LIST_SZ_PER_DIVISION: [8]usize = .{
 
 //---------------------------------------------------------------------------------------------------------------- large
 
-const LARGE_ALLOC_MIN_SZ: usize = LARGE_BLOCK_SIZES[0];
-const LARGE_ALLOC_MAX_SZ: usize = LARGE_BLOCK_SIZES[LARGE_DIVISION_CT-1];
+const LARGE_ALLOC_MIN_SZ: usize = 32_768;
+const LARGE_ALLOC_MAX_SZ: usize = 4_194_304;
 const LARGE_DIVISION_CT: usize = 8;
 const LARGE_MIN_EXP2: usize = std.math.log(comptime_int, 2, @as(comptime_int, LARGE_ALLOC_MIN_SZ));
 
@@ -1208,11 +1230,11 @@ test "Large Alloc" {
         allocator.free(testalloc);
         testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[1]);
         allocator.free(testalloc);
-        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[2]);
+        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[1] + LARGE_BLOCK_SIZES[0]);
         allocator.free(testalloc);
-        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[3]);
+        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[3] + LARGE_BLOCK_SIZES[2] + 3);
         allocator.free(testalloc);
-        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[4]);
+        testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[4] + LARGE_BLOCK_SIZES[3]);
         allocator.free(testalloc);
         testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[5]);
         allocator.free(testalloc);
