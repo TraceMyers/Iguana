@@ -55,6 +55,7 @@ const fVec3 = gm.fVec3;
 const LocalArray = @import("array.zig").LocalArray;
 
 pub const c = @cImport({
-    @cInclude("glfwvulk.h");
-    @cInclude("vk_mem_alloc.h");
+    // @cInclude("glfwvulk.h");
+    // @cInclude("vk_mem_alloc.h");
+    @cInclude("memoryapi.h");
 });

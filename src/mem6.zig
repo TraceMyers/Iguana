@@ -8,7 +8,8 @@
 // this the page list always taking the lowest block idx and it probably stays defragmented pretty well.
 // Yet another solution is to keep track of the lowest and highest free block in a page list. the lowest is what is
 // used for allocations, and the highest is used to tell which pages can be freed.
-// TODO: finish realloc
+// TODO: realloc
+// TODO: refactor for consistent naming
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- config
@@ -21,10 +22,47 @@
 // have speed benefits, but it will possibly lead to more memory fragmentation.
 
 pub const Enclave = enum {
-    Core,
-    Render,
+    RenderCPU,
+    RenderTransfer,
     Game,
-    Count // leave this last - it represents the number of enclaves
+    Count // leave this after the last valid Enclave - it represents the number of enclaves
+};
+
+// whether or not to lock comitted memory so that it isn't pageable by the OS, per Enclave. Each enclave needs
+// a rule. In the base engine, this is used to avoid using staging buffers when transferring data to GPU.
+pub const lock_memory_rules: [MAX_ENCLAVE_CT]bool = .{
+    false, // 0 / RenderCPU
+    true,  // 1 / RenderTransfer
+    false, // 2 / Game
+    false, // 3
+    false, // 4
+    false, // 5
+    false, // 6
+    false, // 7
+    false, // 8
+    false, // 9
+    false, // 10 
+    false, // 11
+    false, // 12
+    false, // 13
+    false, // 14
+    false, // 15
+    false, // 16
+    false, // 17
+    false, // 18
+    false, // 19
+    false, // 20
+    false, // 21
+    false, // 22
+    false, // 23
+    false, // 24
+    false, // 25
+    false, // 26
+    false, // 27
+    false, // 28
+    false, // 29
+    false, // 30
+    false  // 31
 };
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -46,6 +84,19 @@ pub inline fn startup(in_enclave_ct: usize) !void {
 }
 
 pub fn startupExec() !void {
+    // if (!builtin.is_test) {
+    //     c.handle
+    //     const handle = windows.kernel32.GetModuleHandleW(null);
+    //     if (handle == null) {
+    //         return Mem6Error.NoProcessHandle;
+    //     }
+    //     const working_set_success: bool = c.SetProcessWorkingSetSizeEx(
+    //         handle.?, MIN_WORKING_SET_SZ, MAX_WORKING_SET_SZ, 0 
+    //     ) != 0;
+    //     const ws_str = if (working_set_success) "success" else "failure";
+    //     print("set working set sizes: {s}\n", .{ws_str});
+    // }
+
     address_space = try windows.VirtualAlloc(
         null, 0xfffffffffff, windows.MEM_RESERVE, windows.PAGE_READWRITE
     );
@@ -61,9 +112,9 @@ pub fn startupExec() !void {
         begin += LARGE_POOL_SZ;
         giant_pools[i].bytes = @ptrCast([*]u8, &address_bytes[begin]);
         begin += GIANT_POOL_SZ;
-        records[i].bytes = @ptrCast([*]u8, &address_bytes[begin]);
+        all_records[i].bytes = @ptrCast([*]u8, &address_bytes[begin]);
         begin += RECORDS_SZ;
-        free_lists[i].bytes = @ptrCast([*]u8, &address_bytes[begin]);
+        all_free_lists[i].bytes = @ptrCast([*]u8, &address_bytes[begin]);
         begin += FREE_LISTS_SZ;
 
         try initAllocators(i);
@@ -74,476 +125,163 @@ pub inline fn shutdown() void {
     windows.VirtualFree(address_space, 0, windows.MEM_RELEASE);
 }
 
-pub const Allocator = struct {
+pub fn Allocator(comptime e: Enclave) type {
 
-    small_pool: *SmallPool = undefined,
-    medium_pool: *MediumPool = undefined,
-    large_pool: *LargePool = undefined,
-    giant_pool: *GiantPool = undefined,
-    records: *Records = undefined,
-    free_lists: *FreeLists = undefined,
+    const enclave_idx: usize = @enumToInt(e);
+    const small_pool: *SmallPool = &small_pools[enclave_idx];
+    const medium_pool: *MediumPool = &medium_pools[enclave_idx];
+    const large_pool: *LargePool = &large_pools[enclave_idx];
+    const giant_pool: *GiantPool = &giant_pools[enclave_idx];
+    const lock_memory: bool = lock_memory_rules[enclave_idx];
 
-    pub inline fn fromEnclave(e: Enclave) Allocator {
-        const enclave_idx = @intCast(usize, @enumToInt(e));
-        return Allocator {
-            .small_pool = &small_pools[enclave_idx],
-            .medium_pool = &medium_pools[enclave_idx],
-            .large_pool = &large_pools[enclave_idx],
-            .giant_pool = &giant_pools[enclave_idx],
-            .records = &records[enclave_idx],
-            .free_lists = &free_lists[enclave_idx]
-        };
-    }
+    return struct {
 
-    pub inline fn newCopy (enclave_idx: usize) Allocator {
-        return Allocator{
-            .small_pool = &small_pools[enclave_idx],
-            .medium_pool = &medium_pools[enclave_idx],
-            .large_pool = &large_pools[enclave_idx],
-            .giant_pool = &giant_pools[enclave_idx],
-            .records = &records[enclave_idx],
-            .free_lists = &free_lists[enclave_idx]
-        };
-    }
+        // allocate with alignment to type
+        pub inline fn alloc(comptime Type: type, ct: usize) Mem6Error![]Type {
+            const alignment = @alignOf(Type);
+            return allocExplicitAlign(Type, ct, alignment);
+        }
 
-    pub inline fn enclave(self: *Allocator) usize {
-        return (@ptrToInt(self.small_pool) - @ptrToInt(&small_pools[0])) / @sizeOf(*SmallPool);
-    }
+        // allocate providing the alignment
+        pub fn allocExplicitAlign(
+            comptime Type: type, 
+            ct: usize, 
+            alignment: usize
+        ) Mem6Error![]Type {
+            const alloc_sz: usize = ct * @sizeOf(Type);
+            assert(alloc_sz > 0 and alignment > 0);
 
-    pub fn alloc(self: *Allocator, comptime Type: type, ct: usize) Mem6Error![]Type {
-        const alloc_sz: usize = ct * @sizeOf(Type);
-        const alignment = @alignOf(Type);
+            var data: []u8 = undefined;
+            var division: usize = undefined;
+            var align_sz: usize = undefined;
 
-        assert(alloc_sz > 0 and alignment > 0);
+            if (alloc_sz <= SMALL_ALLOC_MAX_SZ) {
+                const sz_mod_min = alloc_sz % SMALL_ALLOC_MIN_SZ;
+                const sz_mod_min_eq_0 = sz_mod_min == 0;
 
-        var align_sz: usize = undefined;
-        var division: usize = undefined;
-        var data: []u8 = undefined;
-
-        if (alloc_sz <= SMALL_ALLOC_MAX_SZ) {
-            const sz_mod_min = alloc_sz % SMALL_ALLOC_MIN_SZ;
-            const sz_mod_min_eq_0 = sz_mod_min == 0;
-
-            if (std.math.isPowerOfTwo(alignment) or sz_mod_min_eq_0) {
-                const sz_div_min = @intCast(usize, @divTrunc(alloc_sz, SMALL_ALLOC_MIN_SZ));
-                division = sz_div_min - @intCast(usize, @boolToInt(sz_mod_min_eq_0));
-                data = self.allocSmall(division, alignment) orelse return Mem6Error.OutOfMemory;
-            }
-            else {
-                align_sz = alloc_sz + alignment - 1;
-                if (align_sz <= SMALL_ALLOC_MAX_SZ) {
+                if (std.math.isPowerOfTwo(alignment) or sz_mod_min_eq_0) {
                     const sz_div_min = @intCast(usize, @divTrunc(alloc_sz, SMALL_ALLOC_MIN_SZ));
                     division = sz_div_min - @intCast(usize, @boolToInt(sz_mod_min_eq_0));
-                    data = self.allocSmall(division, alignment) orelse return Mem6Error.OutOfMemory;
+                    data = allocSmall(small_pool, division, alignment) orelse return Mem6Error.OutOfMemory;
                 }
                 else {
-                    division = mediumSizeBracket(align_sz);
-                    data = self.allocMedium(division, alignment) orelse return Mem6Error.OutOfMemory;
-                }
-            }
-        }
-        else if (alloc_sz <= MEDIUM_ALLOC_MAX_SZ) {
-            if (std.math.isPowerOfTwo(alignment)) {
-                division = mediumSizeBracket(alloc_sz);
-                data = self.allocMedium(division, alignment) orelse return Mem6Error.OutOfMemory;
-            }
-            else {
-                align_sz = alloc_sz + alignment - 1;
-                if (align_sz <= MEDIUM_ALLOC_MAX_SZ) {
-                    division = mediumSizeBracket(align_sz);
-                    data = self.allocMedium(division, alignment) orelse return Mem6Error.OutOfMemory;
-                }
-                else {
-                    division = largeSizeBracket(align_sz);
-                    data = self.allocLarge(division, align_sz, alignment) orelse return Mem6Error.OutOfMemory;
-                }
-            }
-        }
-        else if (alloc_sz <= LARGE_ALLOC_MAX_SZ) {
-            if (std.math.isPowerOfTwo(alignment)) {
-                division = largeSizeBracket(alloc_sz);
-                data = self.allocLarge(division, alloc_sz, alignment) orelse return Mem6Error.OutOfMemory;
-            }
-            else {
-                align_sz = alloc_sz + alignment - 1;
-                division = largeSizeBracket(align_sz);
-                data = self.allocLarge(division, align_sz, alignment) orelse return Mem6Error.OutOfMemory;
-            }
-        }
-        else {
-            return Mem6Error.OutOfMemory;
-        }
-        // return info;
-        // var data: []u8 = undefined;
-        // if (alloc_sz <= SMALL_ALLOC_MAX_SZ) {
-        //     const sm_idx = smallSizeBracket(alloc_sz);
-        //     data = self.allocSmall(sm_idx) orelse return Mem6Error.OutOfMemory;
-        // }
-        // else if (alloc_sz <= MEDIUM_ALLOC_MAX_SZ) {
-        //     const md_idx = mediumSizeBracket(alloc_sz);
-        //     data = self.allocMedium(md_idx) orelse return Mem6Error.OutOfMemory;
-        // }
-        // else if (alloc_sz <= LARGE_ALLOC_MAX_SZ) {
-        //     const lg_idx = largeSizeBracket(alloc_sz);
-        //     data = self.allocLarge(lg_idx, alloc_sz) orelse return Mem6Error.OutOfMemory;
-        // }
-        // else {
-        //     return Mem6Error.OutOfMemory;
-        // }
-
-        return mem.bytesAsSlice(Type, @alignCast(@alignOf(Type), data[0..alloc_sz]));
-    }
-
-    pub fn realloc(self: *Allocator, data_in: anytype, new_ct: usize) Mem6Error![]@TypeOf(data_in[0]) {
-        const slice = @typeInfo(@TypeOf(data_in)).Pointer;
-        const bytes = mem.sliceAsBytes(data_in);
-        const alloc_sz = bytes.len + if (slice.sentinel != null) @sizeOf(slice.child) else 0;
-        assert(alloc_sz > 0);
-
-        const type_sz = @sizeOf(@TypeOf(slice.*));
-        const new_alloc_sz = type_sz * new_ct;
-        const prev_sz_bracket = smallSizeBracket(alloc_sz);
-
-        if (alloc_sz <= SMALL_ALLOC_MAX_SZ) {
-            if (new_alloc_sz <= SMALL_ALLOC_MAX_SZ) {
-                const new_sz_bracket = smallSizeBracket(new_alloc_sz);
-                if (prev_sz_bracket == new_sz_bracket) {
-                    return (&data_in[0])[0..new_ct];
-                }
-                else {
-                    self.freeSmall(data_in, prev_sz_bracket);
-                    return self.allocSmall(new_sz_bracket);
-                }
-            }
-            else {
-                self.freeSmall(data_in, prev_sz_bracket);
-                return self.alloc(@TypeOf(slice.*), new_ct);
-            }
-        }
-        else if (alloc_sz <= MEDIUM_ALLOC_MAX_SZ) {
-            if (new_alloc_sz > SMALL_ALLOC_MAX_SZ and new_alloc_sz <= MEDIUM_ALLOC_MAX_SZ) {
-                const new_sz_bracket = mediumSizeBracket(new_alloc_sz);
-                if (prev_sz_bracket == new_sz_bracket) {
-                    return (&data_in[0])[0..new_ct];
-                }
-                else {
-                    var new_data = self.allocMedium(new_sz_bracket);
-                    if (new_data) {
-
+                    align_sz = alloc_sz + alignment - 1;
+                    if (align_sz <= SMALL_ALLOC_MAX_SZ) {
+                        const align_sz_div_min = @intCast(usize, @divTrunc(align_sz, SMALL_ALLOC_MIN_SZ));
+                        const align_sz_mod_min_eq_0 = (align_sz % SMALL_ALLOC_MIN_SZ == 0);
+                        division = align_sz_div_min - @intCast(usize, @boolToInt(align_sz_mod_min_eq_0));
+                        data = allocSmall(small_pool, division, alignment) orelse return Mem6Error.OutOfMemory;
                     }
                     else {
-
+                        division = mediumSizeBracket(align_sz);
+                        data = allocMedium(medium_pool, division, alignment) orelse return Mem6Error.OutOfMemory;
                     }
-                    self.freeMedium(data_in, prev_sz_bracket);
+                }
+            }
+            else if (alloc_sz <= MEDIUM_ALLOC_MAX_SZ) {
+                if (std.math.isPowerOfTwo(alignment)) {
+                    division = mediumSizeBracket(alloc_sz);
+                    data = allocMedium(medium_pool, division, alignment) orelse return Mem6Error.OutOfMemory;
+                }
+                else {
+                    align_sz = alloc_sz + alignment - 1;
+                    if (align_sz <= MEDIUM_ALLOC_MAX_SZ) {
+                        division = mediumSizeBracket(align_sz);
+                        data = allocMedium(medium_pool, division, alignment) orelse return Mem6Error.OutOfMemory;
+                    }
+                    else {
+                        division = largeSizeBracket(align_sz);
+                        data = allocLarge(large_pool, division, align_sz, alignment, lock_memory) orelse return Mem6Error.OutOfMemory;
+                    }
+                }
+            }
+            else if (alloc_sz <= LARGE_ALLOC_MAX_SZ) {
+                if (std.math.isPowerOfTwo(alignment)) {
+                    division = largeSizeBracket(alloc_sz);
+                    data = allocLarge(large_pool, division, alloc_sz, alignment, lock_memory) orelse return Mem6Error.OutOfMemory;
+                }
+                else {
+                    align_sz = alloc_sz + alignment - 1;
+                    division = largeSizeBracket(align_sz);
+                    data = allocLarge(large_pool, division, align_sz, alignment, lock_memory) orelse return Mem6Error.OutOfMemory;
                 }
             }
             else {
-                self.freeMedium(data_in, prev_sz_bracket);
-                return self.alloc(@TypeOf(slice.*), new_ct);
+                return Mem6Error.OutOfMemory;
+            }
+
+            return mem.bytesAsSlice(Type, @alignCast(@alignOf(Type), data[0..alloc_sz]));
+        }
+
+        pub inline fn free(data_in: anytype) void {
+            freeOpaque(&data_in[0]);
+        }
+
+        pub fn freeOpaque(data_in: *anyopaque) void {
+            const data_address = @ptrToInt(data_in);
+            if (data_address < @ptrToInt(medium_pool.bytes)) {
+                const sm_idx = (data_address - @ptrToInt(small_pool.bytes)) / SMALL_DIVISION_SZ;
+                freeSmall(small_pool, @ptrCast(*u8, data_in), sm_idx);
+            }
+            else if (data_address < @ptrToInt(large_pool.bytes)) {
+                const md_idx = (data_address - @ptrToInt(medium_pool.bytes)) / MEDIUM_DIVISION_SZ;
+                freeMedium(medium_pool, @ptrCast(*u8, data_in), md_idx);
+            }
+            else if (data_address < @ptrToInt(giant_pool.bytes)) {
+                const lg_idx = (data_address - @ptrToInt(large_pool.bytes)) / LARGE_DIVISION_SZ;
+                freeLarge(large_pool, @ptrCast(*u8, data_in), lg_idx, lock_memory);
+            }
+            else {
+                print("fuck address is {d}\n", .{data_address});
             }
         }
-    }
 
-    pub fn free(self: *Allocator, data_in: anytype) void {
-        const slice = @typeInfo(@TypeOf(data_in)).Pointer;
-        const bytes = mem.sliceAsBytes(data_in);
-        const alloc_sz = bytes.len + if (slice.sentinel != null) @sizeOf(slice.child) else 0;
-        assert(alloc_sz > 0);
-
-        if (alloc_sz <= SMALL_ALLOC_MAX_SZ) {
-            const sm_idx = smallSizeBracket(alloc_sz);
-            self.freeSmall(@ptrCast(*u8, bytes), sm_idx);
-        }
-        else if (alloc_sz <= MEDIUM_ALLOC_MAX_SZ) {
-            const md_idx = mediumSizeBracket(alloc_sz);
-            self.freeMedium(@ptrCast(*u8, bytes), md_idx);
-        }
-        else if (alloc_sz <= LARGE_ALLOC_MAX_SZ) {
-            const lg_idx = largeSizeBracket(alloc_sz);
-            self.freeLarge(@ptrCast(*u8, bytes), lg_idx);
-        }
-        else {
-            unreachable;
-        }
-    }
-
-    pub fn freeOpaque(self: *Allocator, data_in: *anyopaque) void {
-        const data_address = @ptrToInt(data_in);
-        if (data_address < @ptrToInt(self.medium_pool.bytes)) {
-            const sm_idx = (data_address - @ptrToInt(self.small_pool.bytes)) / SMALL_DIVISION_SZ;
-            self.freeSmall(@ptrCast(*u8, data_in), sm_idx);
-        }
-        else if (data_address < @ptrToInt(self.large_pool.bytes)) {
-            const md_idx = (data_address - @ptrToInt(self.medium_pool.bytes)) / MEDIUM_DIVISION_SZ;
-            self.freeMedium(@ptrCast(*u8, data_in), md_idx);
-        }
-        else if (data_address < @ptrToInt(self.giant_pool.bytes)) {
-            const lg_idx = (data_address - @ptrToInt(self.large_pool.bytes)) / LARGE_DIVISION_SZ;
-            self.freeLarge(@ptrCast(*u8, data_in), lg_idx);
-        }
-        else {
-            print("fuck address is {d}\n", .{data_address});
-        }
-    }
-
-    inline fn smallSizeBracket(alloc_sz: usize) usize {
-        const sz_div_min = @intCast(usize, @divTrunc(alloc_sz, SMALL_ALLOC_MIN_SZ));
-        const sz_mod_min = alloc_sz % SMALL_ALLOC_MIN_SZ;
-        const sz_multiple_min = @intCast(usize, @boolToInt(sz_mod_min == 0));
-        return sz_div_min - sz_multiple_min;
-    }
-
-    inline fn mediumSizeBracket(alloc_sz: usize) usize {
-        return gm.ceilExp2(alloc_sz) - MEDIUM_MIN_EXP2;
-    }
-
-    inline fn largeSizeBracket(alloc_sz: usize) usize {
-        return gm.ceilExp2(alloc_sz) - LARGE_MIN_EXP2;
-    }
-
-    fn allocSmall(self: *Allocator, sm_idx: usize, alignment: usize) ?[]u8 {
-        var page_list: *PageList = &self.small_pool.page_lists[sm_idx];
-        if (page_list.free_block == null) {
-            expandPageList(
-                page_list, 
-                SMALL_PAGE_SZ, 
-                SMALL_NODE_SETS_PER_PAGE[sm_idx],
-                SMALL_NODES_PER_PAGE,
-                SMALL_BLOCK_COUNTS_PER_PAGE[sm_idx],
-                SMALL_DIVISION_PAGE_CT
-            ) catch return null;
+        pub inline fn enclave() Enclave {
+            return e;
         }
 
-        const block_idx = page_list.free_block.?;
-        const next_free_idx = page_list.blocks[block_idx].next_free;
-        if (next_free_idx == NO_BLOCK) {
-            page_list.free_block = null;
-        }
-        else {
-            page_list.free_block = next_free_idx;
+        pub inline fn enclaveIndex() usize {
+            return enclave_idx;
         }
 
-        const page_idx = @divTrunc(block_idx, SMALL_BLOCK_COUNTS_PER_PAGE[sm_idx]);
-        var page_record: *PageRecord = &page_list.pages[page_idx];
-        page_record.free_block_ct -= 1;
-
-        var block_start = block_idx * SMALL_BLOCK_SIZES[sm_idx];
-        const block_end = block_start + SMALL_BLOCK_SIZES[sm_idx];
-
-        // make sure we're aligned
-        const start_address = @ptrToInt(&page_list.bytes[block_start]);
-        const address_mod_align = start_address % alignment;
-        if (address_mod_align != 0) {
-            block_start += alignment - address_mod_align;
+        pub inline fn smallPoolAddress() usize {
+            return @ptrToInt(@ptrCast(*u8, small_pool.bytes));
         }
 
-        return page_list.bytes[block_start..block_end];
-    }
-
-    fn freeSmall(self: *Allocator, data: *u8, sm_idx: usize) void {
-        var page_list: *PageList = &self.small_pool.page_lists[sm_idx];
-        const page_list_head_address = @ptrToInt(@ptrCast(*u8, page_list.bytes));
-        const data_address = @ptrToInt(data);
-        const block_idx = @intCast(u32, @divTrunc((data_address - page_list_head_address), SMALL_BLOCK_SIZES[sm_idx]));
-
-        if (page_list.free_block) |next_free| {
-            page_list.blocks[@intCast(usize, block_idx)].next_free = @intCast(u32, next_free);
-        }
-        else {
-            page_list.blocks[@intCast(usize, block_idx)].next_free = NO_BLOCK;
-        }
-        page_list.free_block = block_idx;
-
-        var page_record: *PageRecord = &page_list.pages[block_idx / SMALL_BLOCK_COUNTS_PER_PAGE[sm_idx]];
-        page_record.free_block_ct += 1;
-    }
-
-    fn allocMedium(self: *Allocator, md_idx: usize, alignment: usize) ?[]u8 {
-        var page_list: *PageList = &self.medium_pool.page_lists[md_idx];
-        if (page_list.free_block == null) {
-            expandPageList(
-                page_list, 
-                MEDIUM_PAGE_SZ, 
-                MEDIUM_NODE_SETS_PER_PAGE[md_idx],
-                MEDIUM_NODES_PER_PAGE,
-                MEDIUM_BLOCK_COUNTS_PER_PAGE[md_idx],
-                MEDIUM_DIVISION_PAGE_CT,
-            ) catch return null;
+        pub inline fn mediumPoolAddress() usize {
+            return @ptrToInt(@ptrCast(*u8, medium_pool.bytes));
         }
 
-        const block_idx = page_list.free_block.?;
-        const next_free_idx = page_list.blocks[block_idx].next_free;
-        if (next_free_idx == NO_BLOCK) {
-            page_list.free_block = null;
-        }
-        else {
-            page_list.free_block = next_free_idx;
+        pub inline fn largePoolAddress() usize {
+            return @ptrToInt(@ptrCast(*u8, large_pool.bytes));
         }
 
-        const page_idx = @divTrunc(block_idx, MEDIUM_BLOCK_COUNTS_PER_PAGE[md_idx]);
-        var page_record: *PageRecord = &page_list.pages[page_idx];
-        page_record.free_block_ct -= 1;
-
-        var block_start = block_idx * MEDIUM_BLOCK_SIZES[md_idx];
-        const block_end = block_start + MEDIUM_BLOCK_SIZES[md_idx];
-
-        // make sure we're aligned
-        const start_address = @ptrToInt(&page_list.bytes[block_start]);
-        const address_mod_align = start_address % alignment;
-        if (address_mod_align != 0) {
-            block_start += alignment - address_mod_align;
+        pub inline fn giantPoolAddress() usize {
+            return @ptrToInt(@ptrCast(*u8, giant_pool.bytes));
         }
 
-        return page_list.bytes[block_start..block_end];
-    }
-
-    fn freeMedium(self: *Allocator, data: *u8, md_idx: usize) void {
-        var page_list: *PageList = &self.medium_pool.page_lists[md_idx];
-        const page_list_head_address = @ptrToInt(@ptrCast(*u8, page_list.bytes));
-        const data_address = @ptrToInt(data);
-        const block_idx = @intCast(u32, @divTrunc((data_address - page_list_head_address), MEDIUM_BLOCK_SIZES[md_idx]));
-        
-        if (page_list.free_block) |next_free| {
-            page_list.blocks[@intCast(usize, block_idx)].next_free = @intCast(u32, next_free);
-        }
-        else {
-            page_list.blocks[@intCast(usize, block_idx)].next_free = NO_BLOCK;
-        }
-        page_list.free_block = block_idx;
-
-        const blocks_per_page = MEDIUM_BLOCK_COUNTS_PER_PAGE[md_idx];
-        var page_record: *PageRecord = &page_list.pages[block_idx / blocks_per_page];
-        page_record.free_block_ct += 1;
-    }
-
-    fn allocLarge(self: *Allocator, lg_idx: usize, alloc_sz: usize, alignment: usize) ?[]u8 {
-        var node_list: *NodeList = &self.large_pool.node_lists[lg_idx];
-        if (node_list.free_node == null) {
-            expandNodeList(node_list, SMALL_PAGE_SZ, LARGE_NODES_PER_PAGE) catch return null;
+        pub inline fn locksMemory() bool {
+            return lock_memory;
         }
 
-        const node_idx = node_list.free_node.?;
-        const next_free_idx = node_list.nodes[node_idx].next_free;
-        if (next_free_idx == NO_BLOCK) {
-            node_list.free_node = null;
-        }
-        else {
-            node_list.free_node = next_free_idx;
+        pub inline fn smallPoolPageCt(division: usize) u32 {
+            return small_pool.page_lists[division].page_ct;
         }
 
-        const alloc_mod_page_not_zero = @intCast(usize, @boolToInt(alloc_sz % SMALL_PAGE_SZ != 0));
-        const alloc_page_ct = @divTrunc(alloc_sz, SMALL_PAGE_SZ) + alloc_mod_page_not_zero;
-
-        const page_alloc_sz = alloc_page_ct * SMALL_PAGE_SZ;
-        var bytes_start = node_idx * LARGE_BLOCK_SIZES[lg_idx];
-        var alloc_bytes = &node_list.bytes[bytes_start];
-        _ = windows.VirtualAlloc(alloc_bytes, page_alloc_sz, windows.MEM_COMMIT, windows.PAGE_READWRITE) catch return null;
-
-        const bytes_end = bytes_start + page_alloc_sz;
-
-        // make sure we're aligned
-        const start_address = @ptrToInt(&node_list.bytes[bytes_start]);
-        const address_mod_align = start_address % alignment;
-        if (address_mod_align != 0) {
-            bytes_start += alignment - address_mod_align;
+        pub inline fn mediumPoolPageCt(division: usize) u32 {
+            return medium_pool.page_lists[division].page_ct;
         }
 
-        return node_list.bytes[bytes_start..bytes_end];
-    }
-
-    fn freeLarge(self: *Allocator, data: *u8, lg_idx: usize) void {
-        var node_list: *NodeList = &self.large_pool.node_lists[lg_idx];
-        const node_list_head_address = @ptrToInt(@ptrCast(*u8, node_list.bytes));
-        const data_address = @ptrToInt(data);
-        const node_idx = @intCast(u32, @divTrunc((data_address - node_list_head_address), LARGE_BLOCK_SIZES[lg_idx]));
-
-        if (node_list.free_node) |next_free| {
-            node_list.nodes[@intCast(usize, node_idx)].next_free = @intCast(u32, next_free);
-        }
-        else {
-            node_list.nodes[@intCast(usize, node_idx)].next_free = NO_BLOCK;
-        }
-        node_list.free_node = node_idx;
-
-        const bytes_start = node_idx * LARGE_BLOCK_SIZES[lg_idx];
-        windows.VirtualFree(&node_list.bytes[bytes_start], LARGE_BLOCK_SIZES[lg_idx], windows.MEM_DECOMMIT);
-    }
-
-    // TODO: OutOfPages error
-    fn expandPageList(
-        page_list: *PageList, 
-        page_sz: usize, 
-        node_sets_per_page: usize, 
-        nodes_per_page: usize,
-        block_cts_per_page: usize,
-        division_page_ct: usize
-    ) !void {
-        const free_page_idx = page_list.free_page.?;
-        var free_page: *PageRecord = &page_list.pages[free_page_idx]; 
-
-        assert(free_page.free_block_ct == NO_BLOCK);
-        
-        page_list.free_page = free_page.next_free;
-
-        const page_bytes = &page_list.bytes[free_page_idx * page_sz]; 
-        _ = try windows.VirtualAlloc(
-            page_bytes, page_sz, windows.MEM_COMMIT, windows.PAGE_READWRITE
-        );
-
-        // for every page of memory taken out for a given allocation size bracket, only a fraction of a page is required
-        // to track individual allocations (with 'nodes'). So, we need to check if a page has already been committed for
-        // tracking allocations within this range of allocation pages.
-        const page_check_start = free_page_idx - @mod(free_page_idx, node_sets_per_page);
-        var page_check_end = page_check_start + node_sets_per_page;
-        if (page_check_end > division_page_ct) {
-            page_check_end = division_page_ct;
+        pub inline fn smallPoolFreeBlockCt(division: usize, page: usize) u32 {
+            return small_pool.page_lists[division].pages[page].free_block_ct;
         }
 
-        for (page_check_start..page_check_end) |i| {
-            if (page_list.pages[i].free_block_ct != NO_BLOCK) {
-                break;
-            }
-        }
-        else {
-            const node_page_idx = page_check_start / node_sets_per_page;
-            const nodes_bytes = &page_list.blocks[node_page_idx * nodes_per_page];
-            _ = try windows.VirtualAlloc(
-                nodes_bytes, page_sz, windows.MEM_COMMIT, windows.PAGE_READWRITE
-            );
+        pub inline fn mediumPoolFreeBlockCt(division: usize, page: usize) u32 {
+            return medium_pool.page_lists[division].pages[page].free_block_ct;
         }
 
-        free_page.free_block_ct = @intCast(u32, block_cts_per_page);
-
-        const start_idx = free_page_idx * block_cts_per_page;
-        const end_idx = start_idx + block_cts_per_page - 1;
-        for (start_idx..end_idx) |i| {
-            page_list.blocks[i].next_free = @intCast(u32, i) + 1;
-        }
-        page_list.blocks[end_idx].next_free = NO_BLOCK;
-
-        page_list.free_block = @intCast(u32, start_idx);
-        page_list.page_ct += 1;
-    }
-
-    fn expandNodeList(
-        node_list: *NodeList,
-        page_sz: usize,
-        nodes_per_page: usize
-    ) !void {
-        const page_start = node_list.page_ct * nodes_per_page;
-        const nodes_bytes = &node_list.nodes[page_start];
-        _ = try windows.VirtualAlloc(nodes_bytes, page_sz, windows.MEM_COMMIT, windows.PAGE_READWRITE);
-
-        const page_end = page_start + nodes_per_page;
-        for (page_start..page_end-1) |i| {
-            node_list.nodes[i].next_free = @intCast(u32, i) + 1;
-        }
-        node_list.nodes[page_end-1].next_free = NO_BLOCK;
-
-        node_list.free_node = @intCast(u32, page_start);
-        node_list.page_ct += 1;
-    }
-};
+    };
+}
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- init
@@ -562,14 +300,14 @@ fn initPages(pages: []PageRecord, ct: usize) void {
 fn initAllocators(enclave: usize) !void {
     // virtualloc committed memory is automatically zeroed
     _ = try windows.VirtualAlloc(
-        records[enclave].bytes, RECORDS_SZ, windows.MEM_COMMIT, windows.PAGE_READWRITE
+        all_records[enclave].bytes, RECORDS_SZ, windows.MEM_COMMIT, windows.PAGE_READWRITE
     );
 
     var page_records_casted = @ptrCast(
-        [*]PageRecord, @alignCast(@alignOf(PageRecord), records[enclave].bytes)
+        [*]PageRecord, @alignCast(@alignOf(PageRecord), all_records[enclave].bytes)
     );
     var free_lists_casted = @ptrCast(
-        [*]BlockNode, @alignCast(@alignOf(BlockNode), free_lists[enclave].bytes)
+        [*]BlockNode, @alignCast(@alignOf(BlockNode), all_free_lists[enclave].bytes)
     );
 
     var block_sum: usize = 0;
@@ -634,6 +372,273 @@ fn initAllocators(enclave: usize) !void {
     }
 }
 
+inline fn smallSizeBracket(alloc_sz: usize) usize {
+    const sz_div_min = @intCast(usize, @divTrunc(alloc_sz, SMALL_ALLOC_MIN_SZ));
+    const sz_mod_min = alloc_sz % SMALL_ALLOC_MIN_SZ;
+    const sz_multiple_min = @intCast(usize, @boolToInt(sz_mod_min == 0));
+    return sz_div_min - sz_multiple_min;
+}
+
+inline fn mediumSizeBracket(alloc_sz: usize) usize {
+    return gm.ceilExp2(alloc_sz) - MEDIUM_MIN_EXP2;
+}
+
+inline fn largeSizeBracket(alloc_sz: usize) usize {
+    return gm.ceilExp2(alloc_sz) - LARGE_MIN_EXP2;
+}
+
+fn allocSmall(small_pool: *SmallPool, sm_idx: usize, alignment: usize) ?[]u8 {
+    var page_list: *PageList = &small_pool.page_lists[sm_idx];
+    if (page_list.free_block == null) {
+        expandPageList(
+            page_list, 
+            SMALL_PAGE_SZ, 
+            SMALL_NODE_SETS_PER_PAGE[sm_idx],
+            SMALL_NODES_PER_PAGE,
+            SMALL_BLOCK_COUNTS_PER_PAGE[sm_idx],
+            SMALL_DIVISION_PAGE_CT
+        ) catch return null;
+    }
+
+    const block_idx = page_list.free_block.?;
+    const next_free_idx = page_list.blocks[block_idx].next_free;
+    if (next_free_idx == NO_BLOCK) {
+        page_list.free_block = null;
+    }
+    else {
+        page_list.free_block = next_free_idx;
+    }
+
+    const page_idx = @divTrunc(block_idx, SMALL_BLOCK_COUNTS_PER_PAGE[sm_idx]);
+    var page_record: *PageRecord = &page_list.pages[page_idx];
+    page_record.free_block_ct -= 1;
+
+    var block_start = block_idx * SMALL_BLOCK_SIZES[sm_idx];
+    const block_end = block_start + SMALL_BLOCK_SIZES[sm_idx];
+
+    // make sure we're aligned
+    const start_address = @ptrToInt(&page_list.bytes[block_start]);
+    const address_mod_align = start_address % alignment;
+    if (address_mod_align != 0) {
+        block_start += alignment - address_mod_align;
+    }
+
+    return page_list.bytes[block_start..block_end];
+}
+
+fn freeSmall(small_pool: *SmallPool, data: *u8, sm_idx: usize) void {
+    var page_list: *PageList = &small_pool.page_lists[sm_idx];
+    const page_list_head_address = @ptrToInt(@ptrCast(*u8, page_list.bytes));
+    const data_address = @ptrToInt(data);
+    const block_idx = @intCast(u32, @divTrunc((data_address - page_list_head_address), SMALL_BLOCK_SIZES[sm_idx]));
+
+    if (page_list.free_block) |next_free| {
+        page_list.blocks[@intCast(usize, block_idx)].next_free = @intCast(u32, next_free);
+    }
+    else {
+        page_list.blocks[@intCast(usize, block_idx)].next_free = NO_BLOCK;
+    }
+    page_list.free_block = block_idx;
+
+    var page_record: *PageRecord = &page_list.pages[block_idx / SMALL_BLOCK_COUNTS_PER_PAGE[sm_idx]];
+    page_record.free_block_ct += 1;
+}
+
+fn allocMedium(medium_pool: *MediumPool, md_idx: usize, alignment: usize) ?[]u8 {
+    var page_list: *PageList = &medium_pool.page_lists[md_idx];
+    if (page_list.free_block == null) {
+        expandPageList(
+            page_list, 
+            MEDIUM_PAGE_SZ, 
+            MEDIUM_NODE_SETS_PER_PAGE[md_idx],
+            MEDIUM_NODES_PER_PAGE,
+            MEDIUM_BLOCK_COUNTS_PER_PAGE[md_idx],
+            MEDIUM_DIVISION_PAGE_CT,
+        ) catch return null;
+    }
+
+    const block_idx = page_list.free_block.?;
+    const next_free_idx = page_list.blocks[block_idx].next_free;
+    if (next_free_idx == NO_BLOCK) {
+        page_list.free_block = null;
+    }
+    else {
+        page_list.free_block = next_free_idx;
+    }
+
+    const page_idx = @divTrunc(block_idx, MEDIUM_BLOCK_COUNTS_PER_PAGE[md_idx]);
+    var page_record: *PageRecord = &page_list.pages[page_idx];
+    page_record.free_block_ct -= 1;
+
+    var block_start = block_idx * MEDIUM_BLOCK_SIZES[md_idx];
+    const block_end = block_start + MEDIUM_BLOCK_SIZES[md_idx];
+
+    // make sure we're aligned
+    const start_address = @ptrToInt(&page_list.bytes[block_start]);
+    const address_mod_align = start_address % alignment;
+    if (address_mod_align != 0) {
+        block_start += alignment - address_mod_align;
+    }
+
+    return page_list.bytes[block_start..block_end];
+}
+
+fn freeMedium(medium_pool: *MediumPool, data: *u8, md_idx: usize) void {
+    var page_list: *PageList = &medium_pool.page_lists[md_idx];
+    const page_list_head_address = @ptrToInt(@ptrCast(*u8, page_list.bytes));
+    const data_address = @ptrToInt(data);
+    const block_idx = @intCast(u32, @divTrunc((data_address - page_list_head_address), MEDIUM_BLOCK_SIZES[md_idx]));
+    
+    if (page_list.free_block) |next_free| {
+        page_list.blocks[@intCast(usize, block_idx)].next_free = @intCast(u32, next_free);
+    }
+    else {
+        page_list.blocks[@intCast(usize, block_idx)].next_free = NO_BLOCK;
+    }
+    page_list.free_block = block_idx;
+
+    const blocks_per_page = MEDIUM_BLOCK_COUNTS_PER_PAGE[md_idx];
+    var page_record: *PageRecord = &page_list.pages[block_idx / blocks_per_page];
+    page_record.free_block_ct += 1;
+}
+
+fn allocLarge(large_pool: *LargePool, lg_idx: usize, alloc_sz: usize, alignment: usize, lock_memory: bool) ?[]u8 {
+    var node_list: *NodeList = &large_pool.node_lists[lg_idx];
+    if (node_list.free_node == null) {
+        expandNodeList(node_list, SMALL_PAGE_SZ, LARGE_NODES_PER_PAGE, lock_memory) catch return null;
+    }
+
+    const node_idx = node_list.free_node.?;
+    const next_free_idx = node_list.nodes[node_idx].next_free;
+    if (next_free_idx == NO_BLOCK) {
+        node_list.free_node = null;
+    }
+    else {
+        node_list.free_node = next_free_idx;
+    }
+
+    const alloc_mod_page_not_zero = @intCast(usize, @boolToInt(alloc_sz % SMALL_PAGE_SZ != 0));
+    const alloc_page_ct = @divTrunc(alloc_sz, SMALL_PAGE_SZ) + alloc_mod_page_not_zero;
+
+    const page_alloc_sz = alloc_page_ct * SMALL_PAGE_SZ;
+    var bytes_start = node_idx * LARGE_BLOCK_SIZES[lg_idx];
+    var alloc_bytes = &node_list.bytes[bytes_start];
+    _ = windows.VirtualAlloc(alloc_bytes, page_alloc_sz, windows.MEM_COMMIT, windows.PAGE_READWRITE) catch return null;
+    if (lock_memory) {
+        _ = c.VirtualLock(alloc_bytes, page_alloc_sz);
+    }
+
+    const bytes_end = bytes_start + page_alloc_sz;
+
+    // make sure we're aligned
+    const start_address = @ptrToInt(&node_list.bytes[bytes_start]);
+    const address_mod_align = start_address % alignment;
+    if (address_mod_align != 0) {
+        bytes_start += alignment - address_mod_align;
+    }
+
+    return node_list.bytes[bytes_start..bytes_end];
+}
+
+fn freeLarge(large_pool: *LargePool, data: *u8, lg_idx: usize, lock_memory: bool) void {
+    var node_list: *NodeList = &large_pool.node_lists[lg_idx];
+    const node_list_head_address = @ptrToInt(@ptrCast(*u8, node_list.bytes));
+    const data_address = @ptrToInt(data);
+    const node_idx = @intCast(u32, @divTrunc((data_address - node_list_head_address), LARGE_BLOCK_SIZES[lg_idx]));
+
+    if (node_list.free_node) |next_free| {
+        node_list.nodes[@intCast(usize, node_idx)].next_free = @intCast(u32, next_free);
+    }
+    else {
+        node_list.nodes[@intCast(usize, node_idx)].next_free = NO_BLOCK;
+    }
+    node_list.free_node = node_idx;
+
+    const bytes_start = node_idx * LARGE_BLOCK_SIZES[lg_idx];
+    if (lock_memory) {
+        _ = c.VirtualUnlock(&node_list.bytes[bytes_start], LARGE_BLOCK_SIZES[lg_idx]);
+    }
+    windows.VirtualFree(&node_list.bytes[bytes_start], LARGE_BLOCK_SIZES[lg_idx], windows.MEM_DECOMMIT);
+}
+
+// TODO: OutOfPages error
+fn expandPageList(
+    page_list: *PageList, 
+    page_sz: usize, 
+    node_sets_per_page: usize, 
+    nodes_per_page: usize,
+    block_cts_per_page: usize,
+    division_page_ct: usize
+) !void {
+    const free_page_idx = page_list.free_page.?;
+    var free_page: *PageRecord = &page_list.pages[free_page_idx]; 
+
+    assert(free_page.free_block_ct == NO_BLOCK);
+    
+    page_list.free_page = free_page.next_free;
+
+    const page_bytes = &page_list.bytes[free_page_idx * page_sz]; 
+    _ = try windows.VirtualAlloc(
+        page_bytes, page_sz, windows.MEM_COMMIT, windows.PAGE_READWRITE
+    );
+
+    // for every page of memory taken out for a given allocation size bracket, only a fraction of a page is required
+    // to track individual allocations (with 'nodes'). So, we need to check if a page has already been committed for
+    // tracking allocations within this range of allocation pages.
+    const page_check_start = free_page_idx - @mod(free_page_idx, node_sets_per_page);
+    var page_check_end = page_check_start + node_sets_per_page;
+    if (page_check_end > division_page_ct) {
+        page_check_end = division_page_ct;
+    }
+
+    for (page_check_start..page_check_end) |i| {
+        if (page_list.pages[i].free_block_ct != NO_BLOCK) {
+            break;
+        }
+    }
+    else {
+        const node_page_idx = page_check_start / node_sets_per_page;
+        const nodes_bytes = &page_list.blocks[node_page_idx * nodes_per_page];
+        _ = try windows.VirtualAlloc(
+            nodes_bytes, page_sz, windows.MEM_COMMIT, windows.PAGE_READWRITE
+        );
+    }
+
+    free_page.free_block_ct = @intCast(u32, block_cts_per_page);
+
+    const start_idx = free_page_idx * block_cts_per_page;
+    const end_idx = start_idx + block_cts_per_page - 1;
+    for (start_idx..end_idx) |i| {
+        page_list.blocks[i].next_free = @intCast(u32, i) + 1;
+    }
+    page_list.blocks[end_idx].next_free = NO_BLOCK;
+
+    page_list.free_block = @intCast(u32, start_idx);
+    page_list.page_ct += 1;
+}
+
+fn expandNodeList(
+    node_list: *NodeList,
+    page_sz: usize,
+    nodes_per_page: usize,
+    lock_memory: bool,
+) !void {
+    const page_start = node_list.page_ct * nodes_per_page;
+    const nodes_bytes = &node_list.nodes[page_start];
+    _ = try windows.VirtualAlloc(nodes_bytes, page_sz, windows.MEM_COMMIT, windows.PAGE_READWRITE);
+    if (lock_memory) {
+        _ = c.VirtualLock(nodes_bytes, page_sz);
+    }
+
+    const page_end = page_start + nodes_per_page;
+    for (page_start..page_end-1) |i| {
+        node_list.nodes[i].next_free = @intCast(u32, i) + 1;
+    }
+    node_list.nodes[page_end-1].next_free = NO_BLOCK;
+
+    node_list.free_node = @intCast(u32, page_start);
+    node_list.page_ct += 1;
+}
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- data
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -643,8 +648,8 @@ var small_pools: [MAX_ENCLAVE_CT]SmallPool = undefined;
 var medium_pools: [MAX_ENCLAVE_CT]MediumPool = undefined;
 var large_pools: [MAX_ENCLAVE_CT]LargePool = undefined;
 var giant_pools: [MAX_ENCLAVE_CT]GiantPool = undefined;
-var records: [MAX_ENCLAVE_CT]Records = undefined;
-var free_lists: [MAX_ENCLAVE_CT]FreeLists = undefined;
+var all_records: [MAX_ENCLAVE_CT]Records = undefined;
+var all_free_lists: [MAX_ENCLAVE_CT]FreeLists = undefined;
 var enclave_ct: usize = 0;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -709,23 +714,12 @@ const GiantPool = struct {
     bytes: [*]u8 = undefined,
 };
 
-const AllocatorData = struct {
-    address_space: windows.LPVOID = undefined,
-    small_pool: SmallPool = undefined,
-    records: Records = undefined,
-    free_lists: FreeLists = undefined,
-};
-
-const SizeAlignInfo = struct {
-    align_sz: usize,
-    division: usize,
-};
-
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- errors
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 const Mem6Error = error {
+    NoProcessHandle,
     OutOfMemory,
     BadSizeAtFree,
     NoExistingAllocationAtFree,
@@ -746,6 +740,10 @@ const SMALL_POOL_SZ: usize  = 512   * 1024 * 1024; // 512 MB
 const MEDIUM_POOL_SZ: usize = 8     * 1024 * 1024 * 1024; // 8 GB
 const LARGE_POOL_SZ: usize  = 160   * 1024 * 1024 * 1024; // 160 GB
 const GIANT_POOL_SZ: usize  = 256   * 1024 * 1024 * 1024; // 256 GB
+
+// how much memory we're telling the OS to attempt to keep available to the process
+const MIN_WORKING_SET_SZ: usize = 1024 * 1024; // 1GB
+const MAX_WORKING_SET_SZ: usize = 2 * 1024 * 1024; // 8GB
 
 //---------------------------------------------------------------------------------------------------------------- small
 
@@ -960,28 +958,13 @@ const FREE_LISTS_END    = FREE_LISTS_BEGIN  + FREE_LISTS_SZ;
 const NO_BLOCK: u32 = 0xffffffff;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// -------------------------------------------------------------------------------------------------------------- import
-// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-const std = @import("std");
-const assert = std.debug.assert;
-const print = std.debug.print;
-const windows = std.os.windows;
-const mem = std.mem;
-const expect = std.testing.expect;
-const benchmark = @import("benchmark.zig");
-const ScopeTimer = benchmark.ScopeTimer;
-const getScopeTimerID = benchmark.getScopeTimerID;
-const gm = @import("gmath.zig");
-
-// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- test
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 test "Single Allocation" {
     try startup(5);
     defer shutdown();
-    var allocator = Allocator.newCopy(3);
+    const allocator = Allocator(@intToEnum(Enclave, 0));
 
     var sm1: []u8 = try allocator.alloc(u8, 54);
     for (0..sm1.len) |i| {
@@ -998,7 +981,7 @@ test "Single Allocation" {
 test "Small Allocation Aliasing" {
     try startup(6);
     defer shutdown();
-    var allocator = Allocator.newCopy(5);
+    const allocator = Allocator(@intToEnum(Enclave, 2));
 
     var small_1: []u8 = try allocator.alloc(u8, 4);
     allocator.free(small_1);
@@ -1019,7 +1002,7 @@ test "Small Allocation Aliasing" {
     small_1 = try allocator.alloc(u8, 8);
 
     var small_1_address = @ptrToInt(@ptrCast(*u8, small_1));
-    var small_pool_address = @ptrToInt(@ptrCast(*u8, allocator.small_pool.bytes));
+    var small_pool_address = allocator.smallPoolAddress();
 
     try expect(small_pool_address == small_1_address);
 
@@ -1094,7 +1077,7 @@ test "Small Allocation Aliasing" {
 test "Small Allocation Multi-Page" {
     try startup(7);
     defer shutdown();
-    var allocator = Allocator.newCopy(3);
+    const allocator = Allocator(@intToEnum(Enclave, 2));
 
     const alloc_ct: usize = 4097;
     var allocations: [alloc_ct][]u8 = undefined;
@@ -1103,21 +1086,21 @@ test "Small Allocation Multi-Page" {
         allocations[i] = try allocator.alloc(u8, 16);
     }
 
-    try expect(allocator.small_pool.page_lists[1].page_ct == 5);
+    try expect(allocator.smallPoolPageCt(1) == 5);
 
     for (0..alloc_ct)  |i| {
         allocator.free(allocations[i]);
     }
 
-    for (0..allocator.small_pool.page_lists[1].page_ct) |i| {
-        try expect(allocator.small_pool.page_lists[1].pages[i].free_block_ct == SMALL_BLOCK_COUNTS_PER_PAGE[1]);
+    for (0..allocator.smallPoolPageCt(1)) |i| {
+        try expect(allocator.smallPoolFreeBlockCt(1, i) == SMALL_BLOCK_COUNTS_PER_PAGE[1]);
     }
 }
 
 test "Perf vs GPA" {
 // pub fn perfMicroRun () !void {
     try startup(8);
-    var allocator = Allocator.newCopy(0);
+    const allocator = Allocator(@intToEnum(Enclave, 0));
 
     for (0..100_000) |i| {
         var t = ScopeTimer.start("m6 SMALL alloc/free x5", getScopeTimerID());
@@ -1291,7 +1274,7 @@ test "Perf vs GPA" {
 test "Medium Alloc" {
 // pub fn MediumAllocTest() !void {
     try startup(8);
-    var allocator = Allocator.newCopy(0);
+    const allocator = Allocator(@intToEnum(Enclave, 0));
     defer shutdown();
 
     var testalloc = try allocator.alloc(u8, 100);
@@ -1304,14 +1287,14 @@ test "Medium Alloc" {
     allocator.free(testalloc);
     testalloc = try allocator.alloc(u8, 8192);
     allocator.free(testalloc);
-    testalloc = try allocator.alloc(u8, 16384);
+    testalloc = try allocator.alloc(u8, 16_384);
     allocator.free(testalloc);
 }
 
 // pub fn largeAlloc() !void {
 test "Large Alloc" {
-    try startup(1);
-    var allocator = Allocator.newCopy(0);
+    try startup(2);
+    const allocator = Allocator(@intToEnum(Enclave, 1));
     defer shutdown();
 
     for (0..1_000) |i| {
@@ -1334,3 +1317,20 @@ test "Large Alloc" {
         allocator.free(testalloc);
     }
 }
+
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// -------------------------------------------------------------------------------------------------------------- import
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+const std = @import("std");
+const assert = std.debug.assert;
+const print = std.debug.print;
+const windows = std.os.windows;
+const mem = std.mem;
+const expect = std.testing.expect;
+const benchmark = @import("benchmark.zig");
+const ScopeTimer = benchmark.ScopeTimer;
+const getScopeTimerID = benchmark.getScopeTimerID;
+const gm = @import("gmath.zig");
+const c = @import("gfxtypes.zig").c;
+const builtin = @import("builtin");

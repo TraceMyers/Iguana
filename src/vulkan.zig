@@ -12,7 +12,7 @@ var render_method = RenderMethod.Direct;
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub fn init(method: RenderMethod) !void {
-    allocator = mem6.Allocator.fromEnclave(mem6.Enclave.Render);
+    allocator = mem6.Allocator.fromEnclave(mem6.Enclave.RenderCPU);
 
     var t = ScopeTimer.start("Vulkan Init", getScopeTimerID());
     defer t.stop();
@@ -49,36 +49,36 @@ pub fn cleanup() void {
         _ = c.vkWaitForFences(vk_logical, MAX_FRAMES_IN_FLIGHT, &in_flight_fences[0], c.VK_TRUE, ONE_SECOND_IN_NANOSECONDS);
     }
     cleanupSwapchain();
-    c.vkDestroyBuffer(vk_logical, vertex_buffer, null);
-    c.vkFreeMemory(vk_logical, vertex_buffer_memory, null);
-    c.vkDestroyDescriptorPool(vk_logical, vk_descriptor_pool, null);
-    c.vkDestroyDescriptorSetLayout(vk_logical, vk_descriptor_set_layout, null);
-    c.vkDestroyBuffer(vk_logical, index_buffer, null);
+    c.vkDestroyBuffer(vk_logical, vertex_buffer, &alloc_cb);
+    c.vkFreeMemory(vk_logical, vertex_buffer_memory, &alloc_cb);
+    c.vkDestroyDescriptorPool(vk_logical, vk_descriptor_pool, &alloc_cb);
+    c.vkDestroyDescriptorSetLayout(vk_logical, vk_descriptor_set_layout, &alloc_cb);
+    c.vkDestroyBuffer(vk_logical, index_buffer, &alloc_cb);
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
-        c.vkDestroyBuffer(vk_logical, uniform_buffers.items[i], null);
-        c.vkFreeMemory(vk_logical, uniform_buffers_memory.items[i], null);
+        c.vkDestroyBuffer(vk_logical, uniform_buffers.items[i], &alloc_cb);
+        c.vkFreeMemory(vk_logical, uniform_buffers_memory.items[i], &alloc_cb);
     }
-    c.vkFreeMemory(vk_logical, index_buffer_memory, null);
+    c.vkFreeMemory(vk_logical, index_buffer_memory, &alloc_cb);
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
-        c.vkDestroySemaphore(vk_logical, sem_image_available[i], null);
-        c.vkDestroySemaphore(vk_logical, sem_render_finished[i], null);
-        c.vkDestroyFence(vk_logical, in_flight_fences[i], null);
+        c.vkDestroySemaphore(vk_logical, sem_image_available[i], &alloc_cb);
+        c.vkDestroySemaphore(vk_logical, sem_render_finished[i], &alloc_cb);
+        c.vkDestroyFence(vk_logical, in_flight_fences[i], &alloc_cb);
     }
-    c.vkDestroySampler(vk_logical, texture_image_host_sampler, null);
-    c.vkDestroyImageView(vk_logical, texture_image_host_view, null);
-    c.vkDestroyImage(vk_logical, texture_image_host, null);
-    c.vkFreeMemory(vk_logical, texture_image_host_memory, null);
-    c.vkDestroyCommandPool(vk_logical, transient_command_pool, null);
-    c.vkDestroyCommandPool(vk_logical, graphics_command_pool, null);
-    c.vkDestroyCommandPool(vk_logical, compute_command_pool, null);
-    c.vkDestroyCommandPool(vk_logical, transfer_command_pool, null);
-    c.vkDestroyPipelineLayout(vk_logical, vk_pipeline_layout, &allocation_callbacks);
-    c.vkDestroyRenderPass(vk_logical, vk_render_pass, null);
-    c.vkDestroyPipeline(vk_logical, vk_pipeline, null);
+    c.vkDestroySampler(vk_logical, texture_image_host_sampler, &alloc_cb);
+    c.vkDestroyImageView(vk_logical, texture_image_host_view, &alloc_cb);
+    c.vkDestroyImage(vk_logical, texture_image_host, &alloc_cb);
+    c.vkFreeMemory(vk_logical, texture_image_host_memory, &alloc_cb);
+    c.vkDestroyCommandPool(vk_logical, transient_command_pool, &alloc_cb);
+    c.vkDestroyCommandPool(vk_logical, graphics_command_pool, &alloc_cb);
+    c.vkDestroyCommandPool(vk_logical, compute_command_pool, &alloc_cb);
+    c.vkDestroyCommandPool(vk_logical, transfer_command_pool, &alloc_cb);
+    c.vkDestroyPipelineLayout(vk_logical, vk_pipeline_layout, &alloc_cb);
+    c.vkDestroyRenderPass(vk_logical, vk_render_pass, &alloc_cb);
+    c.vkDestroyPipeline(vk_logical, vk_pipeline, &alloc_cb);
     
     swapchain.reset();
-    c.vkDestroyDevice(vk_logical, null);
-    c.vkDestroySurfaceKHR(vk_instance, vk_surface, null);
+    c.vkDestroyDevice(vk_logical, &alloc_cb);
+    c.vkDestroySurfaceKHR(vk_instance, vk_surface, &alloc_cb);
     c.vkDestroyInstance(vk_instance, null);
 
     if (direct_image != null) {
@@ -322,12 +322,12 @@ fn recreateSwapchain() !void {
 
 fn cleanupSwapchain() void {
     for (swapchain.framebuffers.items[0..swapchain.framebuffers.count()]) |buf| {
-        c.vkDestroyFramebuffer(vk_logical, buf, null);
+        c.vkDestroyFramebuffer(vk_logical, buf, &alloc_cb);
     }
     for (swapchain.image_views.items[0..swapchain.image_views.count()]) |view| {
-        c.vkDestroyImageView(vk_logical, view, null);
+        c.vkDestroyImageView(vk_logical, view, &alloc_cb);
     }
-    c.vkDestroySwapchainKHR(vk_logical, swapchain.vk_swapchain, null);
+    c.vkDestroySwapchainKHR(vk_logical, swapchain.vk_swapchain, &alloc_cb);
 }
 
 fn createBuffer(
@@ -349,7 +349,7 @@ fn createBuffer(
         .pQueueFamilyIndices = qfam_indices.cptr(),
     };
 
-    var result = c.vkCreateBuffer(vk_logical, &buffer_info, null, @ptrCast([*c]c.VkBuffer, buffer));
+    var result = c.vkCreateBuffer(vk_logical, &buffer_info, &alloc_cb, @ptrCast([*c]c.VkBuffer, buffer));
     if (result != VK_SUCCESS) {
         return VkError.CreateBuffer;
     }
@@ -365,7 +365,7 @@ fn createBuffer(
         .memoryTypeIndex = memory_type,
     };
 
-    result = c.vkAllocateMemory(vk_logical, &allocate_info, null, @ptrCast([*c]c.VkDeviceMemory, buffer_memory));
+    result = c.vkAllocateMemory(vk_logical, &allocate_info, &alloc_cb, @ptrCast([*c]c.VkDeviceMemory, buffer_memory));
     if (result != VK_SUCCESS) {
         return VkError.AllocateBufferMemory;
     }
@@ -391,9 +391,9 @@ fn createInstance() !void {
     var app_info = c.VkApplicationInfo {
         .sType = c.VK_STRUCTURE_TYPE_APPLICATION_INFO,
         .pNext = null,
-        .pApplicationName = "Hello Triangle",
+        .pApplicationName = "Run Please",
         .applicationVersion = c.VK_MAKE_VERSION(0, 0, 1),
-        .pEngineName = "VGCore",
+        .pEngineName = "Kochi",
         .engineVersion = c.VK_MAKE_VERSION(0, 0, 1),
         .apiVersion = c.VK_API_VERSION_1_0,
     };
@@ -435,7 +435,7 @@ fn createInstance() !void {
 }
 
 fn createSurface() !void {
-    const result: VkResult = c.glfwCreateWindowSurface(vk_instance, window.get(), null, &vk_surface);
+    const result: VkResult = c.glfwCreateWindowSurface(vk_instance, window.get(), &alloc_cb, &vk_surface);
     if (result != VK_SUCCESS) {
         return VkError.CreateSurface;
     }
@@ -555,7 +555,7 @@ fn createLogicalDevice() !void {
         .pEnabledFeatures = null
     };
 
-    const result = c.vkCreateDevice(physical.vk_physical, &device_info, null, &vk_logical);
+    const result = c.vkCreateDevice(physical.vk_physical, &device_info, &alloc_cb, &vk_logical);
     if (result != VK_SUCCESS) {
         return VkError.CreateLogicalDevice;
     }
@@ -619,7 +619,7 @@ fn createSwapchain() !void {
         .oldSwapchain = null,
     };
 
-    var result = c.vkCreateSwapchainKHR(vk_logical, &swapchain_info, null, &swapchain.vk_swapchain);
+    var result = c.vkCreateSwapchainKHR(vk_logical, &swapchain_info, &alloc_cb, &swapchain.vk_swapchain);
     if (result != VK_SUCCESS) {
         return VkError.CreateSwapchain;
     }
@@ -661,7 +661,7 @@ fn createImageViews() !void {
 
     for (0..swapchain.image_views.count()) |i| {
         create_info.image = swapchain.images.items[i];
-        const result = c.vkCreateImageView(vk_logical, &create_info, null, &swapchain.image_views.items[i]);
+        const result = c.vkCreateImageView(vk_logical, &create_info, &alloc_cb, &swapchain.image_views.items[i]);
         if (result != VK_SUCCESS) {
             return VkError.CreateImageViews;
         }
@@ -721,7 +721,7 @@ fn createRenderPass() !void {
         .pDependencies = &dependency,
     };
 
-    const result = c.vkCreateRenderPass(vk_logical, &render_pass_info, null, &vk_render_pass);
+    const result = c.vkCreateRenderPass(vk_logical, &render_pass_info, &alloc_cb, &vk_render_pass);
     if (result != VK_SUCCESS) {
         return VkError.CreateRenderPass;
     }
@@ -731,11 +731,11 @@ fn createGraphicsPipeline() !void {
     // var vert_module: c.VkShaderModule = try createShaderModule("../../test/shaders/trivert.spv");
     // var vert_module: c.VkShaderModule = try createShaderModule("test/shaders/trivert.spv");
     var vert_module: c.VkShaderModule = try createShaderModule("D:/projects/zig/core/test/shaders/trivert.spv");
-    defer c.vkDestroyShaderModule(vk_logical, vert_module, null);
+    defer c.vkDestroyShaderModule(vk_logical, vert_module, &alloc_cb);
     // var frag_module: c.VkShaderModule = try createShaderModule("../../test/shaders/trifrag.spv");
     // var frag_module: c.VkShaderModule = try createShaderModule("test/shaders/trifrag.spv");
     var frag_module: c.VkShaderModule = try createShaderModule("D:/projects/zig/core/test/shaders/trifrag.spv");
-    defer c.vkDestroyShaderModule(vk_logical, frag_module, null);
+    defer c.vkDestroyShaderModule(vk_logical, frag_module, &alloc_cb);
 
     const vert_shader_info = c.VkPipelineShaderStageCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -879,7 +879,7 @@ fn createGraphicsPipeline() !void {
     };
 
     {
-        const result = c.vkCreatePipelineLayout(vk_logical, &pipeline_layout_info, &allocation_callbacks, &vk_pipeline_layout);
+        const result = c.vkCreatePipelineLayout(vk_logical, &pipeline_layout_info, &alloc_cb, &vk_pipeline_layout);
         if (result != VK_SUCCESS) {
             return VkError.CreatePipelineLayout;
         }
@@ -908,7 +908,7 @@ fn createGraphicsPipeline() !void {
     };
 
     {
-        const result = c.vkCreateGraphicsPipelines(vk_logical, null, 1, &pipeline_info, null, &vk_pipeline);
+        const result = c.vkCreateGraphicsPipelines(vk_logical, null, 1, &pipeline_info, &alloc_cb, &vk_pipeline);
         if (result != VK_SUCCESS) {
             return VkError.CreatePipeline;
         }
@@ -934,7 +934,7 @@ fn createFramebuffers() !void {
             .layers = 1,
         };
 
-        const result = c.vkCreateFramebuffer(vk_logical, &frame_buffer_info, null, &swapchain.framebuffers.items[i]);
+        const result = c.vkCreateFramebuffer(vk_logical, &frame_buffer_info, &alloc_cb, &swapchain.framebuffers.items[i]);
         if (result != VK_SUCCESS) {
             return VkError.CreateFramebuffers;
         }
@@ -949,7 +949,7 @@ fn createCommandPools() !void {
         .queueFamilyIndex = physical.present_idx.?,
     };
 
-    var result = c.vkCreateCommandPool(vk_logical, &command_pool_info, null, &transient_command_pool);
+    var result = c.vkCreateCommandPool(vk_logical, &command_pool_info, &alloc_cb, &transient_command_pool);
     if (result != VK_SUCCESS) {
         return VkError.CreateCommandPool;
     }
@@ -961,7 +961,7 @@ fn createCommandPools() !void {
         .queueFamilyIndex = physical.graphics_idx.?,
     };
 
-    result = c.vkCreateCommandPool(vk_logical, &command_pool_info, null, &graphics_command_pool);
+    result = c.vkCreateCommandPool(vk_logical, &command_pool_info, &alloc_cb, &graphics_command_pool);
     if (result != VK_SUCCESS) {
         return VkError.CreateCommandPool;
     }
@@ -974,7 +974,7 @@ fn createCommandPools() !void {
             .queueFamilyIndex = physical.compute_idx.?,
         };
 
-        result = c.vkCreateCommandPool(vk_logical, &command_pool_info, null, &compute_command_pool);
+        result = c.vkCreateCommandPool(vk_logical, &command_pool_info, &alloc_cb, &compute_command_pool);
         if (result != VK_SUCCESS) {
             return VkError.CreateCommandPool;
         }
@@ -988,7 +988,7 @@ fn createCommandPools() !void {
             .queueFamilyIndex = physical.transfer_idx.?,
         };
 
-        result = c.vkCreateCommandPool(vk_logical, &command_pool_info, null, &transfer_command_pool);
+        result = c.vkCreateCommandPool(vk_logical, &command_pool_info, &alloc_cb, &transfer_command_pool);
         if (result != VK_SUCCESS) {
             return VkError.CreateCommandPool;
         }
@@ -1056,8 +1056,8 @@ fn createTextureImage() !void {
         c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
     );
 
-    c.vkDestroyBuffer(vk_logical, staging_buffer, null);
-    c.vkFreeMemory(vk_logical, staging_buffer_memory, null);
+    c.vkDestroyBuffer(vk_logical, staging_buffer, &alloc_cb);
+    c.vkFreeMemory(vk_logical, staging_buffer_memory, &alloc_cb);
 }
 
 fn createImageView(image: VkImage, format: c.VkFormat) !c.VkImageView {
@@ -1084,7 +1084,7 @@ fn createImageView(image: VkImage, format: c.VkFormat) !c.VkImageView {
     };
 
     var image_view: c.VkImageView = undefined;
-    var result = c.vkCreateImageView(vk_logical, &view_info, null, &image_view);
+    var result = c.vkCreateImageView(vk_logical, &view_info, &alloc_cb, &image_view);
     if (result != VK_SUCCESS) {
         return VkError.CreateDirectImageView;
     }
@@ -1121,7 +1121,7 @@ fn createTextureImageSampler() !void {
         .unnormalizedCoordinates = c.VK_FALSE,
     };
 
-    var result = c.vkCreateSampler(vk_logical, &sampler_info, null, &texture_image_host_sampler);
+    var result = c.vkCreateSampler(vk_logical, &sampler_info, &alloc_cb, &texture_image_host_sampler);
     if (result != VK_SUCCESS) {
         return VkError.CreateTextureSampler;
     }
@@ -1158,8 +1158,8 @@ fn createVertexBuffer() !void {
     );
 
     try copyBuffer(staging_buffer, vertex_buffer, buffer_size);
-    c.vkDestroyBuffer(vk_logical, staging_buffer, null);
-    c.vkFreeMemory(vk_logical, staging_buffer_memory, null);
+    c.vkDestroyBuffer(vk_logical, staging_buffer, &alloc_cb);
+    c.vkFreeMemory(vk_logical, staging_buffer_memory, &alloc_cb);
 }
 
 fn createIndexBuffer() !void {
@@ -1193,8 +1193,8 @@ fn createIndexBuffer() !void {
     );
 
     try copyBuffer(staging_buffer, index_buffer, buffer_size);
-    c.vkDestroyBuffer(vk_logical, staging_buffer, null);
-    c.vkFreeMemory(vk_logical, staging_buffer_memory, null);
+    c.vkDestroyBuffer(vk_logical, staging_buffer, &alloc_cb);
+    c.vkFreeMemory(vk_logical, staging_buffer_memory, &alloc_cb);
 }
 
 fn createUniformBuffers() !void {
@@ -1242,7 +1242,7 @@ fn createDescriptorPool() !void {
         .pPoolSizes = @ptrCast([*c]c.VkDescriptorPoolSize, &pool_sizes[0]),
     };
 
-    var result = c.vkCreateDescriptorPool(vk_logical, &pool_info, null, &vk_descriptor_pool);
+    var result = c.vkCreateDescriptorPool(vk_logical, &pool_info, &alloc_cb, &vk_descriptor_pool);
     if (result != VK_SUCCESS) {
         return VkError.CreateDescriptorPool;
     }
@@ -1372,19 +1372,19 @@ fn createSyncObjects() !void {
 
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
         {
-            const result = c.vkCreateSemaphore(vk_logical, &semaphore_info, null, &sem_image_available[i]);
+            const result = c.vkCreateSemaphore(vk_logical, &semaphore_info, &alloc_cb, &sem_image_available[i]);
             if (result != VK_SUCCESS) {
                 return VkError.CreateSyncObjects;
             }
         }
         {
-            const result = c.vkCreateSemaphore(vk_logical, &semaphore_info, null, &sem_render_finished[i]);
+            const result = c.vkCreateSemaphore(vk_logical, &semaphore_info, &alloc_cb, &sem_render_finished[i]);
             if (result != VK_SUCCESS) {
                 return VkError.CreateSyncObjects;
             }
         }
         {
-            const result = c.vkCreateFence(vk_logical, &fence_info, null, &in_flight_fences[i]);
+            const result = c.vkCreateFence(vk_logical, &fence_info, &alloc_cb, &in_flight_fences[i]);
             if (result != VK_SUCCESS) {
                 return VkError.CreateSyncObjects;
             }
@@ -1419,7 +1419,7 @@ fn createDescriptorSetLayout() !void {
         .pBindings = @ptrCast([*c]c.VkDescriptorSetLayoutBinding, &bindings[0]),
     };
 
-    var result = c.vkCreateDescriptorSetLayout(vk_logical, &layout_info, null, &vk_descriptor_set_layout);
+    var result = c.vkCreateDescriptorSetLayout(vk_logical, &layout_info, &alloc_cb, &vk_descriptor_set_layout);
     if (result != VK_SUCCESS) {
         return VkError.CreateDescriptorSetLayout;
     }
@@ -1726,7 +1726,7 @@ fn createShaderModule(file_name: []const u8) !c.VkShaderModule {
     };
 
     var shader_module: c.VkShaderModule = undefined;
-    const result = c.vkCreateShaderModule(vk_logical, &shader_info, null, &shader_module);
+    const result = c.vkCreateShaderModule(vk_logical, &shader_info, &alloc_cb, &shader_module);
     if (result != VK_SUCCESS) {
         return VkError.CreateShaderModule;
     }
@@ -1909,7 +1909,7 @@ fn createImage(
         .initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED,
     };
 
-    var result = c.vkCreateImage(vk_logical, &image_info, null, image);
+    var result = c.vkCreateImage(vk_logical, &image_info, &alloc_cb, image);
     if (result != VK_SUCCESS) {
         return VkError.CreateDirectImage;
     }
@@ -1924,7 +1924,7 @@ fn createImage(
         .memoryTypeIndex = try findMemoryType(mem_requirements.memoryTypeBits, properties),
     };
 
-    result = c.vkAllocateMemory(vk_logical, &alloc_info, null, image_memory);
+    result = c.vkAllocateMemory(vk_logical, &alloc_info, &alloc_cb, image_memory);
     if (result != VK_SUCCESS) {
         return VkError.CreateDirectImage;
     }
@@ -1950,10 +1950,9 @@ pub fn vkInterfaceAllocate(
     alloc_scope: c.VkSystemAllocationScope
 ) callconv(.C) ?*anyopaque {
     _ = user_data;
-    _ = alignment;
     _ = alloc_scope;
 
-    var data = allocator.alloc(u8, sz) catch return null;
+    var data = allocator.allocExplicitAlign(u8, sz, alignment) catch return null;
     return &data[0];
 }
 
@@ -1965,21 +1964,20 @@ pub fn vkInterfaceReallocate(
     alloc_scope: c.VkSystemAllocationScope
 ) callconv(.C) ?*anyopaque {
     _ = user_data;
-    _ = alignment;
     _ = alloc_scope;
 
-    if (original_alloc) |valid_alloc| {
-        allocator.freeOpaque(valid_alloc);
+    if (original_alloc != null) {
+        allocator.freeOpaque(original_alloc.?);
     }
-    var data = allocator.alloc(u8, sz) catch return null;
+    var data = allocator.allocExplicitAlign(u8, sz, alignment) catch return null;
     return &data[0];
 }
 
 pub fn vkInterfaceFree(user_data: ?*anyopaque, alloc: ?*anyopaque) callconv(.C) void {
     _ = user_data;
 
-    if (alloc) |valid_alloc| {
-        allocator.freeOpaque(valid_alloc);
+    if (alloc != null) {
+        allocator.freeOpaque(alloc.?);
     }
 }
 
@@ -2200,7 +2198,7 @@ var test_rotation: f64 = 0.0;
 
 var allocator: mem6.Allocator = undefined;
 
-var allocation_callbacks = c.VkAllocationCallbacks{
+const alloc_cb = c.VkAllocationCallbacks{
     .pUserData = null,
     .pfnAllocation = vkInterfaceAllocate,
     .pfnReallocation = vkInterfaceReallocate,

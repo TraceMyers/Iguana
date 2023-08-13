@@ -4718,7 +4718,7 @@ test "Matrix" {
                 result_vectors[j] = m1.vMulLoop(mul_vectors[j]);
             }
         }
-        print("{any}\n", .{result_vectors[0]});
+        // print("{any}\n", .{result_vectors[0]});
     }
     {
         for (0..iter_ct) |i| {
@@ -4730,14 +4730,14 @@ test "Matrix" {
                 result_vectors[j] = m1.vMul(mul_vectors[j]);
             }
         }
-        print("{any}\n", .{result_vectors[0]});
+        // print("{any}\n", .{result_vectors[0]});
     }
 
-    var randmat = fMat4x4.random(&rand, 100.0);
-    var result1 = randmat.vMul(mul_vectors[0]);
-    var result2 = randmat.vMulLoop(mul_vectors[0]);
-    print("\n\nresult 1\n{any}\n", .{result1});
-    print("result 2\n{any}\n", .{result2});
+    // var randmat = fMat4x4.random(&rand, 100.0);
+    // var result1 = randmat.vMul(mul_vectors[0]);
+    // var result2 = randmat.vMulLoop(mul_vectors[0]);
+    // print("\n\nresult 1\n{any}\n", .{result1});
+    // print("result 2\n{any}\n", .{result2});
     // try expect(result1.dist(result2) < epsilonMedium(f32));
 
 
@@ -4745,8 +4745,8 @@ test "Matrix" {
     var randmat2 = fMat3x3.random(&rand, 100.0);
     var result3 = randmat2.vMul(randvec);
     var result4 = randmat2.vMulLoop(randvec);
-    print("\n\nresult 3\n{any}\n", .{result3});
-    print("result 4\n{any}\n", .{result4});
+    // print("\n\nresult 3\n{any}\n", .{result3});
+    // print("result 4\n{any}\n", .{result4});
     try expect(result3.dist(result4) < epsilonMedium(f32));
 
     var mul_vecs2: [mul_vec_ct]fVec3 = undefined;
@@ -4768,27 +4768,27 @@ test "Matrix" {
 
     // const test_allocator = std.heap.testAllocator;
     // const mat_str = try std.fmt.allocPrint(test_allocator, )
-    print("\n 4x4:\n{s}\n", .{randmat3f});
-    print("\n 4x4 t:\n{s}\n", .{randmat3ft});
+    // print("\n 4x4:\n{s}\n", .{randmat3f});
+    // print("\n 4x4 t:\n{s}\n", .{randmat3ft});
 
     var randmat4f = fMat3x4.random(&rand, 1.0);
     var randmat4ft = randmat4f.transpose();
-    var randmat4ftt = randmat4ft.transpose();
+    // var randmat4ftt = randmat4ft.transpose();
 
-    print("\n 3x4:\n{s}\n", .{randmat4f});
-    print("\n3x4 t:\n{s}\n", .{randmat4ft});
-    print("\n3x4 tt:\n{s}\n", .{randmat4ftt});
+    // print("\n 3x4:\n{s}\n", .{randmat4f});
+    // print("\n3x4 t:\n{s}\n", .{randmat4ft});
+    // print("\n3x4 tt:\n{s}\n", .{randmat4ftt});
 
     randmat3f = randmat3f.mMul(&randmat3ft);
 
     var randmat5f = randmat4f.mMul(&randmat4ft);
     _ = randmat5f;
 
-    const q1 = fQuat.fromAxisAngle(fVec3.z_axis, math.pi * 0.25);
-    const mq1 = fMat4x4.fromQuaternion(q1);
-    const vq1 = fVec4.x_axis;
-    const vq2 = mq1.vMul(vq1);
-    print("\nvq1: {s}\nvq2: {s}\n", .{vq1, vq2});
+    // const q1 = fQuat.fromAxisAngle(fVec3.z_axis, math.pi * 0.25);
+    // const mq1 = fMat4x4.fromQuaternion(q1);
+    // const vq1 = fVec4.x_axis;
+    // const vq2 = mq1.vMul(vq1);
+    // print("\nvq1: {s}\nvq2: {s}\n", .{vq1, vq2});
 
     var mats3: [4]fMat3x3 = undefined;
     var mat4: fMat4x4 = undefined;
@@ -4798,7 +4798,7 @@ test "Matrix" {
 
     for (0..4) |i| {
         mat4.subMat4x4(&mats3[i], 0, i);
-        print("mat[{d}]:\n{s}\n", .{i, mats3[i]});
+        // print("mat[{d}]:\n{s}\n", .{i, mats3[i]});
     }
 
     // print("\nrandmat3f\n", .{});
