@@ -730,6 +730,7 @@ const Mem6Error = error {
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub const MAX_ENCLAVE_CT: usize = 32;
+pub const MAX_SZ: usize = LARGE_BLOCK_SIZES[LARGE_DIVISION_CT - 1];
 
 // roughly correspond to actual page sizes. naming directly corresponds to which size-pool they're used for
 const SMALL_PAGE_SZ: usize  = 16    * 1024; // 16KB

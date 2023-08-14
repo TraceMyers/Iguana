@@ -1,34 +1,35 @@
 pub fn main() !void {
-    defer mem6.shutdown();
-    try mem6.autoStartup();
+    // defer mem6.shutdown();
+    // try mem6.autoStartup();
 
-    defer window.cleanup();
-    try window.init(1024, 768, "yay");
+    // defer window.cleanup();
+    // try window.init(1024, 768, "yay");
 
-    defer vk.cleanup();
-    try vk.init(vk.RenderMethod.Direct);
+    // defer vk.cleanup();
+    // try vk.init(vk.RenderMethod.Direct);
 
-    var should_run: bool = true;
-    while (should_run) {
-        // frame_timer.start();
+    // var should_run: bool = true;
+    // while (should_run) {
+    //     // frame_timer.start();
 
-        window.pollEvents();
-        if (window.shouldClose()) {
-            should_run = false;
-        }
-        try vk.drawFrame();
+    //     window.pollEvents();
+    //     if (window.shouldClose()) {
+    //         should_run = false;
+    //     }
+    //     try vk.drawFrame();
 
-        // frame_timer.stop();
-        // if (frame_timer_print_ctr >= frame_timer_print_rate) {
-        //     print("avg frame time: {d}\n", .{frame_timer.runningAvgMs()});
-        //     frame_timer_print_ctr = 0;
-        // }
-        // else {
-        //     frame_timer_print_ctr += 1;
-        // }
-    }
+    //     // frame_timer.stop();
+    //     // if (frame_timer_print_ctr >= frame_timer_print_rate) {
+    //     //     print("avg frame time: {d}\n", .{frame_timer.runningAvgMs()});
+    //     //     frame_timer_print_ctr = 0;
+    //     // }
+    //     // else {
+    //     //     frame_timer_print_ctr += 1;
+    //     // }
+    // }
 
-    benchmark.printAllScopeTimers();
+    // benchmark.printAllScopeTimers();
+    try img.LoadImageTest();
 }
 
 var frame_timer = benchmark.WindowTimer(4).new();
@@ -47,3 +48,4 @@ const gm = @import("gmath.zig");
 const window = @import("window.zig");
 const vk = @import("vulkan.zig");
 const str = @import("string.zig");
+const img = @import("image.zig");
