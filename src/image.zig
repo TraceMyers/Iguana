@@ -56,12 +56,15 @@ pub fn loadBmp(file: std.fs.File, img: *Image, allocator: anytype) !void {
     const bytes_read: usize = try file.reader().readAll(buffer);
 
     if (bytes_read != stat.size) {
+        // the reader reached the end of the file before reading all of the file's bytes according to file.stat()
         return ImageError.PartialRead;
     }
 
     const identity = buffer[0..2];
 
     if (!str.equal(identity, "BM")) {
+        // the header may be invalid if the format doesn't match the extension, or if the image is too old. If 
+        // the image is too old, it can be converted to a new version of the format.
         return ImageError.InvalidHeader;
     }
 
@@ -85,7 +88,7 @@ pub fn loadBmp(file: std.fs.File, img: *Image, allocator: anytype) !void {
     const vertical_ppm = std.mem.readIntNative(i32, buffer[42..46]);
     var color_ct = std.mem.readIntNative(u32, buffer[46..50]);
     if (color_ct == 0) {
-        color_ct = std.math.maxInt(u32);
+        color_ct = @as(u32, 1) << @intCast(u5, (color_depth - 1));
     }
     const important_color_ct = std.mem.readIntNative(u32, buffer[50..54]);
 
