@@ -68,34 +68,41 @@ pub fn loadBmp(file: std.fs.File, img: *Image, allocator: anytype) !void {
         return ImageError.InvalidHeader;
     }
 
-    // const field_reserved_0 = buffer[6..8];
-    // const field_reserved_1 = buffer[8..10];
-
+    // --- OG header ---
+    // whole file sz
     const data_sz = std.mem.readIntNative(u32, buffer[2..6]);
+    // offset to data from 0
     const data_address = std.mem.readIntNative(u32, buffer[10..14]);
 
-    _ = data_sz;
-    _ = data_address;
-
+    // --- BITMAPINFOHEADER ---
+    // sz of the extended header, including these 4 bytes
     const ext_header_sz = std.mem.readIntNative(u32, buffer[14..18]);
     const width = std.mem.readIntNative(i32, buffer[18..22]);
     const height = std.mem.readIntNative(i32, buffer[22..26]);
-    const color_pane_ct = std.mem.readIntNative(u16, buffer[26..28]);
+    const color_plane_ct = std.mem.readIntNative(u16, buffer[26..28]);
     const color_depth = std.mem.readIntNative(u16, buffer[28..30]);
     const compression = std.mem.readIntNative(u32, buffer[30..34]);
     const image_sz = std.mem.readIntNative(u32, buffer[34..38]);
-    const horizontal_ppm = std.mem.readIntNative(i32, buffer[38..42]);
-    const vertical_ppm = std.mem.readIntNative(i32, buffer[42..46]);
     var color_ct = std.mem.readIntNative(u32, buffer[46..50]);
     if (color_ct == 0) {
-        color_ct = @as(u32, 1) << @intCast(u5, (color_depth - 1));
+        if (color_depth == 32) {
+            color_ct = std.math.maxInt(u32);
+        }
+        else {
+            color_ct = @as(u32, 1) << @intCast(u5, color_depth);
+        }
     }
     const important_color_ct = std.mem.readIntNative(u32, buffer[50..54]);
 
+    if (color_plane_ct != 1) {
+        // apparently this is an error...
+    }
+
     print("ext header sz: {d}, width: {d}, height: {d}\n", .{ext_header_sz, width, height});
-    print("color pane ct: {d}, color depth: {d}, compression: {d}\n", .{color_pane_ct, color_depth, compression});
-    print("image sz: {d}, horizontal ppm: {d}, vertical ppm: {d}\n", .{image_sz, horizontal_ppm, vertical_ppm});
+    print("color plane ct: {d}, color depth: {d}, compression: {d}\n", .{color_plane_ct, color_depth, compression});
+    print("image sz: {d}\n", .{image_sz});
     print("color ct: {d}, important color ct: {d}\n", .{color_ct, important_color_ct});
+    print("data sz: {}, data_address: {}\n", .{data_sz, data_address});
 }
 
 pub fn loadJpg(file: std.fs.File, img: *Image, allocator: anytype) !void {
@@ -135,7 +142,56 @@ const ImageError = error {
     InvalidHeader,
 };
 
-pub const MIN_SZ_BMP = 14;
+const BitmapHeaderType = enum(u8) {
+    Bitmap,
+    BitmapV2,
+    BitmapV3,
+    BitmapV4,
+    BitmapV5,
+};
+
+const BitmapCompression = enum(u8) {
+    RGB,
+    RLE8,
+    RLE4,
+    BITFIELDS,
+    JPEG,
+    PNG,
+    ALPHABITFIELDS,
+    CMYK,
+    CMYKRLE8,
+    CMYKRLE4
+};
+
+const BitmapColorSpace = enum(u8) {
+    CalibratedRGB,
+    sRGB,
+    WindowsCS,
+    ProfileLinked,
+    ProfileEmbedded,
+};
+
+const FxPt2Dot30 = struct {
+    data: u32,
+};
+
+const BitmapInfo = struct {
+    header_type: BitmapHeaderType,
+    header_sz: u8,
+    compression: BitmapCompression,
+    color_space: BitmapColorSpace,
+    color_depth: u8,
+    width: u32,
+    height: u32,
+    size: u32,
+    color_ct: u32,
+    red_mask: u32,
+    green_mask: u32,
+    blue_mask: u32,
+    alpha_mask: u32,
+};
+
+pub const MIN_SZ_BMP = 18;
 
 // pub fn LoadImageTest() !void {
 test "Load Image" {
