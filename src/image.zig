@@ -13,20 +13,21 @@ pub fn loadImage(file_path: []const u8, img_type: ImageType, img: *Image, alloca
         }
         extension_idx.? += 1;
         const extension_len = file_path.len - extension_idx.?;
-        if (extension_len > 4) {
-            return ImageError.LongFileExtension;
+        if (extension_len > 4 or extension_len < 3) {
+            return ImageError.InvalidFileExtension;
         }
-        var extension_lower: [4]u8 = undefined;
         const extension: []const u8 = str.substrR(file_path, extension_idx.?);
-        try str.copyLowerToBuffer(extension, &extension_lower);
+        var extension_lower_buf: [4]u8 = undefined;
+        try str.copyLowerToBuffer(extension, &extension_lower_buf);
+        var extension_lower = extension_lower_buf[0..extension.len];
 
-        if (str.equalCount(&extension_lower, "bmp") == 3 or str.equalCount(&extension_lower, "dib") == 3) {
+        if (str.equal(extension_lower, "bmp") or str.equal(extension_lower, "dib")) {
             try loadBmp(file, img, allocator);
         }
-        else if (str.equalCount(&extension_lower, "jpg") == 3 or str.equal(&extension_lower, "jpeg")) {
+        else if (str.equal(extension_lower, "jpg") or str.equal(extension_lower, "jpeg")) {
             try loadJpg(file, img, allocator);
         }
-        else if (str.equalCount(&extension_lower, "png") == 3) {
+        else if (str.equal(extension_lower, "png")) {
             try loadPng(file, img, allocator);
         }
         else {
@@ -43,16 +44,17 @@ pub fn loadImage(file_path: []const u8, img_type: ImageType, img: *Image, alloca
     }
 }
 
-pub fn loadBmp(file: std.fs.File, img: *Image, allocator: anytype) !void {
-    print("loading bmp\n", .{});
-    _ = img;
+fn loadImageFromDisk(file: std.fs.File, allocator: anytype, min_sz: usize) ![]u8 {
     const stat = try file.stat();
-    if (stat.size > mem6.MAX_SZ or stat.size < MIN_SZ_BMP) {
+    if (stat.size > mem6.MAX_SZ) {
         return ImageError.TooLarge;
     }
 
+    if (stat.size < min_sz) {
+        return ImageError.InvalidSizeForFormat;
+    }
+
     var buffer: []u8 = try allocator.alloc(u8, stat.size);
-    defer allocator.free(buffer);
     const bytes_read: usize = try file.reader().readAll(buffer);
 
     if (bytes_read != stat.size) {
@@ -60,49 +62,129 @@ pub fn loadBmp(file: std.fs.File, img: *Image, allocator: anytype) !void {
         return ImageError.PartialRead;
     }
 
+    return buffer;
+}
+
+fn bmpFillCoreHeaderInfo(buffer: []u8, info: *BitmapInfo) !void {
+    info.header_type = BitmapHeaderType.WindowsCore;
+    info.width = @intCast(i32, std.mem.readIntNative(i16, buffer[18..20]));
+    info.height = @intCast(i32, std.mem.readIntNative(i16, buffer[20..22]));
+    info.color_depth = @intCast(u8, std.mem.readIntNative(u16, buffer[24..26]));
+}
+
+fn bmpFillCore2HeaderInfo(buffer: []u8, info: *BitmapInfo) !void {
+    _ = buffer;
+    _ = info;
+    return ImageError.BMPFormatUnsupported;
+}
+
+fn bmpFillCore2ShortHeaderInfo(buffer: []u8, info: *BitmapInfo) !void {
+    _ = buffer;
+    _ = info;
+    return ImageError.BMPFormatUnsupported;
+}
+
+fn bmpFillWindowsV1HeaderInfo(buffer: []u8, info: *BitmapInfo) !void {
+    _ = buffer;
+    _ = info;
+    return ImageError.BMPFormatUnsupported;
+}
+
+fn bmpFillWindowsV2HeaderInfo(buffer: []u8, info: *BitmapInfo) !void {
+    _ = buffer;
+    _ = info;
+    return ImageError.BMPFormatUnsupported;
+}
+
+fn bmpFillWindowsV3HeaderInfo(buffer: []u8, info: *BitmapInfo) !void {
+    _ = buffer;
+    _ = info;
+    return ImageError.BMPFormatUnsupported;
+}
+
+fn bmpFillWindowsV4HeaderInfo(buffer: []u8, info: *BitmapInfo) !void {
+    _ = buffer;
+    _ = info;
+    return ImageError.BMPFormatUnsupported;
+}
+
+fn bmpFillWindowsV5HeaderInfo(buffer: []u8, info: *BitmapInfo) !void {
+    _ = buffer;
+    _ = info;
+    return ImageError.BMPFormatUnsupported;
+}
+
+pub fn loadBmp(file: std.fs.File, img: *Image, allocator: anytype) !void {
+    _ = img;
+    
+    var buffer: []u8 = try loadImageFromDisk(file, allocator, MIN_SZ_BMP);
+    defer allocator.free(buffer);
+
     const identity = buffer[0..2];
 
     if (!str.equal(identity, "BM")) {
         // the header may be invalid if the format doesn't match the extension, or if the image is too old. If 
         // the image is too old, it can be converted to a new version of the format.
-        return ImageError.InvalidHeader;
+        return ImageError.BMPInvalidHeader;
     }
 
-    // --- OG header ---
+    var info: BitmapInfo = undefined;
+
+    // --- OG File header ---
     // whole file sz
     const data_sz = std.mem.readIntNative(u32, buffer[2..6]);
-    // offset to data from 0
-    const data_address = std.mem.readIntNative(u32, buffer[10..14]);
+    const reserved_verify_zero = std.mem.readIntNative(u32, buffer[6..10]);
+    if (reserved_verify_zero != 0) {
+        return ImageError.BMPInvalidReservedFieldValue;
+    }
 
-    // --- BITMAPINFOHEADER ---
+    // offset to image data from 0
+    info.data_offset = @intCast(u8, std.mem.readIntNative(u32, buffer[10..14]));
+
+    // --- A Forest of different headers beyond this point ---
     // sz of the extended header, including these 4 bytes
-    const ext_header_sz = std.mem.readIntNative(u32, buffer[14..18]);
-    const width = std.mem.readIntNative(i32, buffer[18..22]);
-    const height = std.mem.readIntNative(i32, buffer[22..26]);
-    const color_plane_ct = std.mem.readIntNative(u16, buffer[26..28]);
-    const color_depth = std.mem.readIntNative(u16, buffer[28..30]);
-    const compression = std.mem.readIntNative(u32, buffer[30..34]);
-    const image_sz = std.mem.readIntNative(u32, buffer[34..38]);
-    var color_ct = std.mem.readIntNative(u32, buffer[46..50]);
-    if (color_ct == 0) {
-        if (color_depth == 32) {
-            color_ct = std.math.maxInt(u32);
-        }
-        else {
-            color_ct = @as(u32, 1) << @intCast(u5, color_depth);
-        }
-    }
-    const important_color_ct = std.mem.readIntNative(u32, buffer[50..54]);
+    info.header_sz = @intCast(u8, std.mem.readIntNative(u32, buffer[14..18]));
 
-    if (color_plane_ct != 1) {
-        // apparently this is an error...
-    }
+    try switch(info.header_sz) {
+        12 => bmpFillCoreHeaderInfo(buffer, &info),
+        16 => bmpFillCore2ShortHeaderInfo(buffer, &info),
+        64 => bmpFillCore2HeaderInfo(buffer, &info),
+        40 => bmpFillWindowsV1HeaderInfo(buffer, &info),
+        52 => bmpFillWindowsV2HeaderInfo(buffer, &info),
+        56 => bmpFillWindowsV3HeaderInfo(buffer, &info),
+        108 => bmpFillWindowsV4HeaderInfo(buffer, &info),
+        124 => bmpFillWindowsV5HeaderInfo(buffer, &info),
+        else => return ImageError.BMPInvalidHeaderSize,
+    };
 
-    print("ext header sz: {d}, width: {d}, height: {d}\n", .{ext_header_sz, width, height});
-    print("color plane ct: {d}, color depth: {d}, compression: {d}\n", .{color_plane_ct, color_depth, compression});
-    print("image sz: {d}\n", .{image_sz});
-    print("color ct: {d}, important color ct: {d}\n", .{color_ct, important_color_ct});
-    print("data sz: {}, data_address: {}\n", .{data_sz, data_address});
+    _ = data_sz;
+
+    // const width = std.mem.readIntNative(i32, buffer[18..22]);
+    // const height = std.mem.readIntNative(i32, buffer[22..26]);
+    // const color_plane_ct = std.mem.readIntNative(u16, buffer[26..28]);
+    // const color_depth = std.mem.readIntNative(u16, buffer[28..30]);
+    // const compression = std.mem.readIntNative(u32, buffer[30..34]);
+    // const image_sz = std.mem.readIntNative(u32, buffer[34..38]);
+    // var color_ct = std.mem.readIntNative(u32, buffer[46..50]);
+    // if (color_ct == 0) {
+    //     if (color_depth == 32) {
+    //         color_ct = std.math.maxInt(u32);
+    //     }
+    //     else {
+    //         color_ct = @as(u32, 1) << @intCast(u5, color_depth);
+    //     }
+    // }
+    // const important_color_ct = std.mem.readIntNative(u32, buffer[50..54]);
+
+    // if (color_plane_ct != 1) {
+    //     // apparently this is an error...
+    // }
+
+    // print("ext header sz: {d}, width: {d}, height: {d}\n", .{ext_header_sz, width, height});
+    // print("color plane ct: {d}, color depth: {d}, compression: {d}\n", .{color_plane_ct, color_depth, compression});
+    // print("image sz: {d}\n", .{image_sz});
+    // print("color ct: {d}, important color ct: {d}\n", .{color_ct, important_color_ct});
+    // print("data sz: {}, data_address: {}\n", .{data_sz, data_offset});
 }
 
 pub fn loadJpg(file: std.fs.File, img: *Image, allocator: anytype) !void {
@@ -136,18 +218,25 @@ const ImageError = error {
     TempError,
     NoFileExtension,
     InvalidFileExtension,
-    LongFileExtension,
     TooLarge,
+    InvalidSizeForFormat,
     PartialRead,
-    InvalidHeader,
+    BMPInvalidHeader,
+    BMPInvalidReservedFieldValue,
+    BMPInvalidHeaderSize,
+    BMPFormatUnsupported,
 };
 
 const BitmapHeaderType = enum(u8) {
-    Bitmap,
-    BitmapV2,
-    BitmapV3,
-    BitmapV4,
-    BitmapV5,
+    Os2Core, // this format can't be told apart from WindowsCore, so WindowsCore is default
+    Os2Core2,
+    Os2Core2Short,
+    WindowsCore,
+    WindowsV1,
+    WindowsV2,
+    WindowsV3,
+    WindowsV4,
+    WindowsV5,
 };
 
 const BitmapCompression = enum(u8) {
@@ -172,26 +261,38 @@ const BitmapColorSpace = enum(u8) {
 };
 
 const FxPt2Dot30 = struct {
-    data: u32,
+    dot: u30,
+    pt: u2,
+};
+
+const CieXYZ = struct {
+    points: [3]FxPt2Dot30 = undefined,
 };
 
 const BitmapInfo = struct {
-    header_type: BitmapHeaderType,
     header_sz: u8,
-    compression: BitmapCompression,
-    color_space: BitmapColorSpace,
+    header_type: BitmapHeaderType,
+    data_offset: u8,
     color_depth: u8,
-    width: u32,
-    height: u32,
+    compression: ?BitmapCompression,
+    color_space: ?BitmapColorSpace,
+    width: i32,
+    height: i32,
     size: u32,
-    color_ct: u32,
-    red_mask: u32,
-    green_mask: u32,
-    blue_mask: u32,
-    alpha_mask: u32,
+    color_ct: ?u32,
+    red_mask: ?u32,
+    green_mask: ?u32,
+    blue_mask: ?u32,
+    alpha_mask: ?u32,
+    red_cs: ?CieXYZ,
+    green_cs: ?CieXYZ,
+    blue_cs: ?CieXYZ,
+    red_gamma: ?u32,
+    green_gamma: ?u32,
+    blue_gamma: ?u32,
 };
 
-pub const MIN_SZ_BMP = 18;
+pub const MIN_SZ_BMP = 25;
 
 // pub fn LoadImageTest() !void {
 test "Load Image" {
