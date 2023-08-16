@@ -1,3 +1,8 @@
+// inline for (std.meta.fields(@TypeOf(info))) |f| {
+//     const value = @as(f.type, @field(info, f.name));
+//     print("{s}: {any}\n", .{f.name, value});
+// }
+
 pub fn init() !void {
 
 }
@@ -65,53 +70,62 @@ fn loadImageFromDisk(file: std.fs.File, allocator: anytype, min_sz: usize) ![]u8
     return buffer;
 }
 
-fn bmpFillCoreHeaderInfo(buffer: []u8, info: *BitmapInfo) !void {
-    info.header_type = BitmapHeaderType.WindowsCore;
+inline fn bmpFillCoreHeaderInfo(buffer: []u8, info: *BitmapInfo, data_sz: u32) void {
+    info.header_type = BitmapHeaderType.Core;
     info.width = @intCast(i32, std.mem.readIntNative(i16, buffer[18..20]));
     info.height = @intCast(i32, std.mem.readIntNative(i16, buffer[20..22]));
     info.color_depth = @intCast(u8, std.mem.readIntNative(u16, buffer[24..26]));
+    info.size = data_sz - 26;
 }
 
-fn bmpFillCore2HeaderInfo(buffer: []u8, info: *BitmapInfo) !void {
-    _ = buffer;
-    _ = info;
-    return ImageError.BMPFormatUnsupported;
+inline fn bmpFillV1HeaderPart(buffer: []u8, info: *BitmapInfo) void {
+    info.width = std.mem.readIntNative(i32, buffer[18..22]);
+    info.height = std.mem.readIntNative(i32, buffer[22..26]);
+    info.color_depth = @intCast(u8, std.mem.readIntNative(u16, buffer[28..30]));
+    info.compression = @intToEnum(BitmapCompression, std.mem.readIntNative(u32, buffer[30..34]));
+    info.size = std.mem.readIntNative(u32, buffer[34..38]);
+    info.color_ct = std.mem.readIntNative(u32, buffer[46..50]);
 }
 
-fn bmpFillCore2ShortHeaderInfo(buffer: []u8, info: *BitmapInfo) !void {
-    _ = buffer;
-    _ = info;
-    return ImageError.BMPFormatUnsupported;
+fn bmpFillV4HeaderPart(buffer: []u8, info: *BitmapInfo) void {
+    info.red_mask = std.mem.readIntNative(u32, buffer[54..58]);
+    info.green_mask = std.mem.readIntNative(u32, buffer[58..62]);
+    info.blue_mask = std.mem.readIntNative(u32, buffer[62..66]);
+    info.alpha_mask = std.mem.readIntNative(u32, buffer[66..70]);
+    info.color_space = @intToEnum(BitmapColorSpace, std.mem.readIntNative(u32, buffer[70..74]));
+    if (info.color_space == BitmapColorSpace.sRGB or info.color_space == BitmapColorSpace.WindowsCS) {
+        return;
+    }
+    var buffer_casted = @ptrCast([*]FxPt2Dot30, @alignCast(@alignOf(FxPt2Dot30), &buffer[72]));
+    @memcpy(info.cs_points.red[0..3], buffer_casted[0..3]);
+    @memcpy(info.cs_points.green[0..3], buffer_casted[3..6]);
+    @memcpy(info.cs_points.blue[0..3], buffer_casted[6..9]);
+    info.red_gamma = std.mem.readIntNative(u32, buffer[110..114]);
+    info.green_gamma = std.mem.readIntNative(u32, buffer[114..118]);
+    info.blue_gamma = std.mem.readIntNative(u32, buffer[118..122]);
 }
 
-fn bmpFillWindowsV1HeaderInfo(buffer: []u8, info: *BitmapInfo) !void {
-    _ = buffer;
-    _ = info;
-    return ImageError.BMPFormatUnsupported;
+inline fn bmpFillV5HeaderPart(buffer: []u8, info: *BitmapInfo) void {
+    info.profile_data = std.mem.readIntNative(u32, buffer[126..130]);
+    info.profile_size = std.mem.readIntNative(u32, buffer[130..134]);
 }
 
-fn bmpFillWindowsV2HeaderInfo(buffer: []u8, info: *BitmapInfo) !void {
-    _ = buffer;
-    _ = info;
-    return ImageError.BMPFormatUnsupported;
+inline fn bmpFillV1HeaderInfo(buffer: []u8, info: *BitmapInfo) void {
+    info.header_type = BitmapHeaderType.V1;
+    bmpFillV1HeaderPart(buffer, info);
 }
 
-fn bmpFillWindowsV3HeaderInfo(buffer: []u8, info: *BitmapInfo) !void {
-    _ = buffer;
-    _ = info;
-    return ImageError.BMPFormatUnsupported;
+fn bmpFillV4HeaderInfo(buffer: []u8, info: *BitmapInfo) void {
+    info.header_type = BitmapHeaderType.V4;
+    bmpFillV1HeaderPart(buffer, info);
+    bmpFillV4HeaderPart(buffer, info);
 }
 
-fn bmpFillWindowsV4HeaderInfo(buffer: []u8, info: *BitmapInfo) !void {
-    _ = buffer;
-    _ = info;
-    return ImageError.BMPFormatUnsupported;
-}
-
-fn bmpFillWindowsV5HeaderInfo(buffer: []u8, info: *BitmapInfo) !void {
-    _ = buffer;
-    _ = info;
-    return ImageError.BMPFormatUnsupported;
+fn bmpFillV5HeaderInfo(buffer: []u8, info: *BitmapInfo) void {
+    info.header_type = BitmapHeaderType.V5;
+    bmpFillV1HeaderPart(buffer, info);
+    bmpFillV4HeaderPart(buffer, info);
+    bmpFillV5HeaderPart(buffer, info);
 }
 
 pub fn loadBmp(file: std.fs.File, img: *Image, allocator: anytype) !void {
@@ -123,68 +137,45 @@ pub fn loadBmp(file: std.fs.File, img: *Image, allocator: anytype) !void {
     const identity = buffer[0..2];
 
     if (!str.equal(identity, "BM")) {
-        // the header may be invalid if the format doesn't match the extension, or if the image is too old. If 
-        // the image is too old, it can be converted to a new version of the format.
-        return ImageError.BMPInvalidHeader;
+        return ImageError.BmpInvalidIdentifier;
     }
 
-    var info: BitmapInfo = undefined;
+    var info = BitmapInfo{};
 
-    // --- OG File header ---
-    // whole file sz
+    // --- OG file header ---
     const data_sz = std.mem.readIntNative(u32, buffer[2..6]);
     const reserved_verify_zero = std.mem.readIntNative(u32, buffer[6..10]);
     if (reserved_verify_zero != 0) {
-        return ImageError.BMPInvalidReservedFieldValue;
+        return ImageError.BmpInvalidBytesInHeader;
     }
 
     // offset to image data from 0
     info.data_offset = @intCast(u8, std.mem.readIntNative(u32, buffer[10..14]));
 
-    // --- A Forest of different headers beyond this point ---
-    // sz of the extended header, including these 4 bytes
+    // --- A Forest of different headers beyond this point (this captures about half of them) ---
+    // sz of the info (not file) header, including these 4 bytes
     info.header_sz = @intCast(u8, std.mem.readIntNative(u32, buffer[14..18]));
 
-    try switch(info.header_sz) {
-        12 => bmpFillCoreHeaderInfo(buffer, &info),
-        16 => bmpFillCore2ShortHeaderInfo(buffer, &info),
-        64 => bmpFillCore2HeaderInfo(buffer, &info),
-        40 => bmpFillWindowsV1HeaderInfo(buffer, &info),
-        52 => bmpFillWindowsV2HeaderInfo(buffer, &info),
-        56 => bmpFillWindowsV3HeaderInfo(buffer, &info),
-        108 => bmpFillWindowsV4HeaderInfo(buffer, &info),
-        124 => bmpFillWindowsV5HeaderInfo(buffer, &info),
-        else => return ImageError.BMPInvalidHeaderSize,
-    };
+    if (info.header_sz + 14 != info.data_offset or buffer.len <= info.data_offset) {
+        return ImageError.BmpInvalidDataOffset;
+    }
 
-    _ = data_sz;
+    switch(info.header_sz) {
+        12 => bmpFillCoreHeaderInfo(buffer, &info, data_sz),
+        40 => bmpFillV1HeaderInfo(buffer, &info),
+        108 => bmpFillV4HeaderInfo(buffer, &info),
+        124 => bmpFillV5HeaderInfo(buffer, &info),
+        else => return ImageError.BmpInvalidHeaderSizeOrFormatUnsupported, // try converting to a newer format
+    }
 
-    // const width = std.mem.readIntNative(i32, buffer[18..22]);
-    // const height = std.mem.readIntNative(i32, buffer[22..26]);
-    // const color_plane_ct = std.mem.readIntNative(u16, buffer[26..28]);
-    // const color_depth = std.mem.readIntNative(u16, buffer[28..30]);
-    // const compression = std.mem.readIntNative(u32, buffer[30..34]);
-    // const image_sz = std.mem.readIntNative(u32, buffer[34..38]);
-    // var color_ct = std.mem.readIntNative(u32, buffer[46..50]);
-    // if (color_ct == 0) {
-    //     if (color_depth == 32) {
-    //         color_ct = std.math.maxInt(u32);
-    //     }
-    //     else {
-    //         color_ct = @as(u32, 1) << @intCast(u5, color_depth);
-    //     }
-    // }
-    // const important_color_ct = std.mem.readIntNative(u32, buffer[50..54]);
+    if (info.data_offset + info.size != buffer.len) {
+        return ImageError.BmpInvalidSizeInfo;
+    }
 
-    // if (color_plane_ct != 1) {
-    //     // apparently this is an error...
-    // }
-
-    // print("ext header sz: {d}, width: {d}, height: {d}\n", .{ext_header_sz, width, height});
-    // print("color plane ct: {d}, color depth: {d}, compression: {d}\n", .{color_plane_ct, color_depth, compression});
-    // print("image sz: {d}\n", .{image_sz});
-    // print("color ct: {d}, important color ct: {d}\n", .{color_ct, important_color_ct});
-    // print("data sz: {}, data_address: {}\n", .{data_sz, data_offset});
+    inline for (std.meta.fields(@TypeOf(info))) |f| {
+        const value = @as(f.type, @field(info, f.name));
+        print("{s}: {any}\n", .{f.name, value});
+    }
 }
 
 pub fn loadJpg(file: std.fs.File, img: *Image, allocator: anytype) !void {
@@ -221,22 +212,19 @@ const ImageError = error {
     TooLarge,
     InvalidSizeForFormat,
     PartialRead,
-    BMPInvalidHeader,
-    BMPInvalidReservedFieldValue,
-    BMPInvalidHeaderSize,
-    BMPFormatUnsupported,
+    BmpInvalidIdentifier,
+    BmpInvalidBytesInHeader,
+    BmpInvalidHeaderSizeOrFormatUnsupported,
+    BmpFormatUnsupported,
+    BmpInvalidDataOffset,
+    BmpInvalidSizeInfo,
 };
 
 const BitmapHeaderType = enum(u8) {
-    Os2Core, // this format can't be told apart from WindowsCore, so WindowsCore is default
-    Os2Core2,
-    Os2Core2Short,
-    WindowsCore,
-    WindowsV1,
-    WindowsV2,
-    WindowsV3,
-    WindowsV4,
-    WindowsV5,
+    Core,
+    V1,
+    V4,
+    V5,
 };
 
 const BitmapCompression = enum(u8) {
@@ -252,44 +240,50 @@ const BitmapCompression = enum(u8) {
     CMYKRLE4
 };
 
-const BitmapColorSpace = enum(u8) {
-    CalibratedRGB,
-    sRGB,
-    WindowsCS,
-    ProfileLinked,
-    ProfileEmbedded,
+const BitmapColorSpace = enum(u32) {
+    CalibratedRGB = 0x0,
+    ProfileLinked = 0x4C494E4B,
+    ProfileEmbedded = 0x4D424544,
+    WindowsCS = 0x57696E20,
+    sRGB = 0x73524742,
 };
 
-const FxPt2Dot30 = struct {
-    dot: u30,
-    pt: u2,
+const FxPt2Dot30 = packed struct {
+    integer: u2,
+    fraction: u30,
 };
 
-const CieXYZ = struct {
-    points: [3]FxPt2Dot30 = undefined,
+// const CieXYZ = packed struct {
+//     components: [3]FxPt2Dot30 = undefined,
+// };
+
+const CieXYZTriple = struct {
+    red: [3]FxPt2Dot30 = undefined,
+    green: [3]FxPt2Dot30 = undefined,
+    blue: [3]FxPt2Dot30 = undefined,
 };
 
 const BitmapInfo = struct {
-    header_sz: u8,
-    header_type: BitmapHeaderType,
-    data_offset: u8,
-    color_depth: u8,
-    compression: ?BitmapCompression,
-    color_space: ?BitmapColorSpace,
-    width: i32,
-    height: i32,
-    size: u32,
-    color_ct: ?u32,
-    red_mask: ?u32,
-    green_mask: ?u32,
-    blue_mask: ?u32,
-    alpha_mask: ?u32,
-    red_cs: ?CieXYZ,
-    green_cs: ?CieXYZ,
-    blue_cs: ?CieXYZ,
-    red_gamma: ?u32,
-    green_gamma: ?u32,
-    blue_gamma: ?u32,
+    data_offset: u8 = undefined,
+    header_sz: u8 = undefined,
+    header_type: BitmapHeaderType = undefined,
+    color_depth: u8 = undefined,
+    compression: ?BitmapCompression = null,
+    color_space: ?BitmapColorSpace = null,
+    width: i32 = undefined,
+    height: i32 = undefined,
+    size: u32 = undefined,
+    color_ct: ?u32 = null,
+    red_mask: ?u32 = null,
+    green_mask: ?u32 = null,
+    blue_mask: ?u32 = null,
+    alpha_mask: ?u32 = null,
+    cs_points: CieXYZTriple = undefined,
+    red_gamma: ?u32 = null,
+    green_gamma: ?u32 = null,
+    blue_gamma: ?u32 = null,
+    profile_data: ?u32 = null,
+    profile_size: ?u32 = null
 };
 
 pub const MIN_SZ_BMP = 25;
