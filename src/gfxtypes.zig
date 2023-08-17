@@ -35,11 +35,17 @@ pub const Vertex = struct {
     }
 };
 
-pub const RGBA32 = packed struct {
+pub const RGBA32 = extern struct {
     r: u8 = 0,
     g: u8 = 0,
     b: u8 = 0,
     a: u8 = 0,
+};
+
+pub const RGB24 = extern struct {
+    r: u8 = 0,
+    g: u8 = 0,
+    b: u8 = 0,
 };
 
 pub const fMVP = struct {

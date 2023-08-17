@@ -1,5 +1,39 @@
 // TODO: vector intrinsics
 
+pub fn LocalStringBuffer(comptime sz: comptime_int) type {
+
+    return struct {
+        const LSBufType = @This();
+
+        bytes: [sz]u8 = undefined,
+        len: usize = 0,
+        prev_len: usize = 0,
+
+        pub inline fn new() LSBufType {
+            return LSBufType{};
+        }
+
+        pub fn append(self: *LSBufType, append_str: []const u8) StringError!void {
+            const new_len = self.len + append_str.len;
+            if (new_len > sz) {
+                return StringError.BufferTooShort;
+            }
+            @memcpy(self.bytes[self.len..new_len], append_str[0..append_str.len]);
+            self.prev_len = self.len;
+            self.len = new_len;
+        }
+
+        pub fn setToPreviousLength(self: *LSBufType) void {
+            self.len = self.prev_len;
+        }
+
+        pub inline fn string(self: *const LSBufType) []const u8 {
+            return self.bytes[0..self.len];
+        }
+
+    };
+}
+
 pub fn equal(a: []const u8, b: []const u8) bool {
     if (a.len != b.len) {
         return false;
@@ -78,7 +112,7 @@ pub inline fn copyToBuffer(str: []const u8, buffer: []u8) StringError!void {
     else @memcpy(buffer[0..str.len], str[0..str.len]);
 }
 
-pub inline fn copyLowerToBuffer(str: []const u8, buffer: []u8) StringError!void {
+pub fn copyLowerToBuffer(str: []const u8, buffer: []u8) StringError!void {
     if (buffer.len < str.len) {
         return StringError.BufferTooShort;
     }

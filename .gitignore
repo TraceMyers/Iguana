@@ -2,6 +2,7 @@
 zig-cache/
 zig-out/
 src/scripts/
+test/nocommit/
 translatevulk.bat
 vulkincl.h
 core.s
