@@ -13,28 +13,31 @@ pub fn LocalStringBuffer(comptime sz: comptime_int) type {
             return LSBufType{};
         }
 
-        pub fn append(self: *LSBufType, append_str: []const u8) StringError!void {
+        pub inline fn append(self: *LSBufType, append_str: []const u8) StringError!void {
             const new_len = self.len + append_str.len;
-            if (new_len > sz) {
-                return StringError.BufferTooShort;
-            }
-            @memcpy(self.bytes[self.len..new_len], append_str[0..append_str.len]);
+            try copyToBuffer(append_str, self.bytes[self.len..]);
             self.prev_len = self.len;
             self.len = new_len;
         }
 
-        pub fn setToPreviousLength(self: *LSBufType) void {
+        pub inline fn appendLower(self: *LSBufType, append_str: []const u8) StringError!void {
+            const new_len = self.len + append_str.len;
+            try copyLowerToBuffer(append_str, self.bytes[self.len..]);
+            self.prev_len = self.len;
+            self.len = new_len;
+        }
+
+        pub inline fn setToPrevLen(self: *LSBufType) void {
             self.len = self.prev_len;
         }
 
         pub inline fn string(self: *const LSBufType) []const u8 {
             return self.bytes[0..self.len];
         }
-
     };
 }
 
-pub fn equal(a: []const u8, b: []const u8) bool {
+pub fn same(a: []const u8, b: []const u8) bool {
     if (a.len != b.len) {
         return false;
     }
@@ -47,7 +50,7 @@ pub fn equal(a: []const u8, b: []const u8) bool {
 }
 
 // returns how many characters are equal, starting from the beginning
-pub fn equalCount(a: []const u8, b: []const u8) usize {
+pub fn sameCount(a: []const u8, b: []const u8) usize {
     var eql_ct: usize = 0;
     for (0..@min(a.len, b.len)) |i| {
         if (a[i] != b[i]) { 
@@ -58,12 +61,36 @@ pub fn equalCount(a: []const u8, b: []const u8) usize {
     return eql_ct;
 }
 
-pub inline fn substrR(str: []const u8, idx: usize) []const u8 {
-    return str[idx..];
+pub fn sameTail(a: []const u8, b: []const u8) bool {
+    if (a.len < b.len) {
+        const b_start = b.len - a.len;
+        const b_end = b[b_start..];
+        for (0..a.len) |i| {
+            if (a[i] != b_end[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+    else {
+        const a_start = a.len - b.len;
+        const a_end = a[a_start..];
+        for (0..b.len) |i| {
+            if (a_end[i] != b[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
 }
 
-pub inline fn substrL(str: []const u8, idx: usize) []const u8 {
-    return str[0..idx];
+pub inline fn sameHead(a: []const u8, b: []const u8) bool {
+    for (0..@min(a.len, b.len)) |i| {
+        if (a[i] != b[i]) {
+            return false;
+        }
+    }
+    return true;
 }
 
 pub inline fn findL(str: []const u8, token: u8) ?usize {
@@ -86,13 +113,13 @@ pub inline fn findR(str: []const u8, token: u8) ?usize {
 }
 
 // TODO: generalized copy
-pub inline fn copy(str: []const u8, allocator: *mem6.Allocator) ![]u8 {
+pub inline fn copy(str: []const u8, allocator: *kmem.Allocator) ![]u8 {
     var new_str: []u8 = try allocator.alloc(u8, str.len);
     @memcpy(new_str[0..str.len], str[0..str.len]);
     return new_str;
 }
 
-pub fn copyLower(str: []const u8, allocator: *mem6.Allocator) ![]u8 {
+pub fn copyLower(str: []const u8, allocator: *kmem.Allocator) ![]u8 {
     var new_str: []u8 = try allocator.alloc(u8, str.len);
     for (0..str.len) |i| {
         if (str[i] >= 'A' and str[i] <= 'Z') {
@@ -109,7 +136,7 @@ pub inline fn copyToBuffer(str: []const u8, buffer: []u8) StringError!void {
     if (buffer.len < str.len) {
         return StringError.BufferTooShort;
     }
-    else @memcpy(buffer[0..str.len], str[0..str.len]);
+    @memcpy(buffer[0..str.len], str[0..str.len]);
 }
 
 pub fn copyLowerToBuffer(str: []const u8, buffer: []u8) StringError!void {
@@ -126,7 +153,7 @@ pub fn copyLowerToBuffer(str: []const u8, buffer: []u8) StringError!void {
     }
 }
 
-pub inline fn free(str: []u8, allocator: *mem6.Allocator) void {
+pub inline fn free(str: []u8, allocator: *kmem.Allocator) void {
     allocator.free(str);
 }
 
@@ -142,6 +169,6 @@ const StringError = error{
     BufferTooShort,
 };
 
-const to_lower_diff: u8 = 'a' - 'A';
+const to_lower_diff: comptime_int = 'a' - 'A';
 const std = @import("std");
-const mem6 = @import("mem6.zig");
+const kmem = @import("mem.zig");

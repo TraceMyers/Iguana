@@ -1,5 +1,5 @@
 // TODO: better error handling
-// TODO: implement mem6 as vk allocator
+// TODO: implement kmem as vk allocator
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- config
@@ -12,7 +12,7 @@ var render_method = RenderMethod.Direct;
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub fn init(method: RenderMethod) !void {
-    allocator = mem6.Allocator.fromEnclave(mem6.Enclave.RenderCPU);
+    allocator = kmem.Allocator.fromEnclave(kmem.Enclave.RenderCPU);
 
     var t = ScopeTimer.start("Vulkan Init", getScopeTimerID());
     defer t.stop();
@@ -176,16 +176,16 @@ fn updateUniformBuffer(current_image: u32) !void {
     // const timestamp_seconds: f64 = convert.nano100ToBase(@intToFloat(f64, now.timestamp)) * 6.0;
     test_rotation += 2e-4;
 
-    mvp.model = gmath.fMat4x4.modelNoScale(
+    mvp.model = kmath.fMat4x4.modelNoScale(
         fVec3.init(.{0.0, 0.0, 1.0}), 
-        gmath.fQuat.fromAxisAngle(fVec3.z_axis, @floatCast(f32, test_rotation))
+        kmath.fQuat.fromAxisAngle(fVec3.z_axis, @floatCast(f32, test_rotation))
     );
-    mvp.view = gmath.fMat4x4.lookAt(
+    mvp.view = kmath.fMat4x4.lookAt(
         fVec3.fromScalar(2.0), 
         fVec3.fromScalar(0.0), 
         fVec3.init(.{0.0, 0.0, 1.0})
     );
-    mvp.projection = gmath.fMat4x4.projectionPerspective(
+    mvp.projection = kmath.fMat4x4.projectionPerspective(
         std.math.pi * 0.25, 
         @intToFloat(f32, swapchain.extent.width) / @intToFloat(f32, swapchain.extent.height), 
         0.1, 
@@ -2196,7 +2196,7 @@ const gfx_frame_timer_print_rate: u16 = 200;
 
 var test_rotation: f64 = 0.0;
 
-var allocator: mem6.Allocator = undefined;
+var allocator: kmem.Allocator = undefined;
 
 const alloc_cb = c.VkAllocationCallbacks{
     .pUserData = null,
@@ -2272,21 +2272,21 @@ const std = @import("std");
 const array = @import("array.zig");
 const window = @import("window.zig");
 const benchmark = @import("benchmark.zig");
-const gmath = @import("gmath.zig");
-const gfxtypes = @import("gfxtypes.zig");
+const kmath = @import("math.zig");
+const gfx = @import("graphics.zig");
 const convert = @import("convert.zig");
-const mem6 = @import("mem6.zig");
+const kmem = @import("mem.zig");
 
 const print = std.debug.print;
-const c = gfxtypes.c;
+const c = gfx.c;
 const LocalArray = array.LocalArray;
 const ScopeTimer = benchmark.ScopeTimer;
 const getScopeTimerID = benchmark.getScopeTimerID;
-const Vertex = gfxtypes.Vertex;
-const fVec2 = gmath.fVec2;
-const fVec3 = gmath.fVec3;
-const RGBA32 = gfxtypes.RGBA32;
-const fMVP = gfxtypes.fMVP;
+const Vertex = gfx.Vertex;
+const fVec2 = gfx.fVec2;
+const fVec3 = gfx.fVec3;
+const RGBA32 = gfx.RGBA32;
+const fMVP = gfx.fMVP;
 
 const VkResult = c.VkResult;
 const VK_SUCCESS = c.VK_SUCCESS;

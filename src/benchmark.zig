@@ -177,8 +177,8 @@ fn logEndTime(id: usize, time_ns: u64) void {
 
 const std = @import("std");
 const print = std.debug.print;
-const zarray = @import("array.zig");
-const LocalArray = zarray.LocalArray;
+const array = @import("array.zig");
+const LocalArray = array.LocalArray;
 const assert = std.debug.assert;
 const time = std.time;
 const RandGen = std.rand.DefaultPrng;

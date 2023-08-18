@@ -5,9 +5,7 @@
 
 // TODO: bmp size verification before reads, in as few steps / in as few places as possible
 
-pub fn init() !void {
-
-}
+pub fn init() !void {}
 
 pub fn loadImage(file_path: []const u8, img_type: ImageType, img: *Image, allocator: anytype) !void {
     var file = try std.fs.cwd().openFile(file_path, .{});
@@ -18,23 +16,25 @@ pub fn loadImage(file_path: []const u8, img_type: ImageType, img: *Image, alloca
         if (extension_idx == null) {
             return ImageError.NoFileExtension;
         }
+
         extension_idx.? += 1;
         const extension_len = file_path.len - extension_idx.?;
         if (extension_len > 4 or extension_len < 3) {
             return ImageError.InvalidFileExtension;
         }
-        const extension: []const u8 = str.substrR(file_path, extension_idx.?);
-        var extension_lower_buf: [4]u8 = undefined;
-        try str.copyLowerToBuffer(extension, &extension_lower_buf);
-        var extension_lower = extension_lower_buf[0..extension.len];
 
-        if (str.equal(extension_lower, "bmp") or str.equal(extension_lower, "dib")) {
+        const extension: []const u8 = file_path[extension_idx.?..];
+        var extension_lower_buf = LocalStringBuffer(4).new();
+        try extension_lower_buf.appendLower(extension);
+        const extension_lower = extension_lower_buf.string();
+
+        if (str.same(extension_lower, "bmp") or str.same(extension_lower, "dib")) {
             try loadBmp(file, img, allocator);
         }
-        else if (str.equal(extension_lower, "jpg") or str.equal(extension_lower, "jpeg")) {
+        else if (str.same(extension_lower, "jpg") or str.same(extension_lower, "jpeg")) {
             try loadJpg(file, img, allocator);
         }
-        else if (str.equal(extension_lower, "png")) {
+        else if (str.same(extension_lower, "png")) {
             try loadPng(file, img, allocator);
         }
         else {
@@ -43,7 +43,7 @@ pub fn loadImage(file_path: []const u8, img_type: ImageType, img: *Image, alloca
         return;
     }
 
-    switch(img_type) {
+    switch (img_type) {
         .Bmp => try loadBmp(file, img, allocator),
         .Jpg => try loadJpg(file, img, allocator),
         .Png => try loadPng(file, img, allocator),
@@ -53,7 +53,7 @@ pub fn loadImage(file_path: []const u8, img_type: ImageType, img: *Image, alloca
 
 fn loadImageFromDisk(file: std.fs.File, allocator: anytype, min_sz: usize) ![]u8 {
     const stat = try file.stat();
-    if (stat.size > mem6.MAX_SZ) {
+    if (stat.size > kMem.MAX_SZ) {
         return ImageError.TooLarge;
     }
 
@@ -132,24 +132,51 @@ fn bmpFillV5HeaderInfo(buffer: []u8, info: *BitmapInfo) void {
 
 fn bmpGetColorTable(buffer: []u8, info: *const BitmapInfo, table_buffer: *[256]RGB24) ![]RGB24 {
     var buffer_casted = @ptrCast([*]RGB24, @alignCast(@alignOf(RGB24), &buffer[26]));
-    return switch(info.color_depth) {
-        24 => blk: {
+    return switch (info.color_depth) {
+        32, 24, 16 => blk: {
+            if (info.color_ct > 0) {
+                if (info.color_ct <= 256) {
+                    @memcpy(table_buffer.*[0..info.color_ct], buffer_casted[0..info.color_ct]);
+                    break :blk table_buffer.*[0..info.color_ct];
+                }
+                else {
+                    break :blk ImageError.BmpInvalidColorCount;
+                }
+            }
             break :blk table_buffer.*[0..0];
         },
         8 => blk: {
-            // do stuff
+            if (info.color_ct > 0) {
+                if (info.color_ct <= 256) {
+                    @memcpy(table_buffer.*[0..info.color_ct], buffer_casted[0..info.color_ct]);
+                    break :blk table_buffer.*[0..info.color_ct];
+                }
+                else {
+                    break :blk ImageError.BmpInvalidColorCount;
+                }
+            }
             @memcpy(table_buffer.*[0..256], buffer_casted[0..256]);
             break :blk table_buffer.*[0..256];
         },
         4 => blk: {
-            // do stuff
+            if (info.color_ct > 0) {
+                if (info.color_ct <= 16) {
+                    @memcpy(table_buffer.*[0..info.color_ct], buffer_casted[0..info.color_ct]);
+                    break :blk table_buffer.*[0..info.color_ct];
+                }
+                else {
+                    break :blk ImageError.BmpInvalidColorCount;
+                }
+            }
             @memcpy(table_buffer.*[0..16], buffer_casted[0..16]);
             break :blk table_buffer.*[0..16];
         },
         1 => blk: {
-            // do stuff   
-            @memcpy(table_buffer.*[0..2], buffer_casted[0..2]);
-            break :blk table_buffer.*[0..2];
+            if (info.color_ct == 0 or info.color_ct == 2) {
+                @memcpy(table_buffer.*[0..2], buffer_casted[0..2]);
+                break :blk table_buffer.*[0..2];
+            }
+            break :blk ImageError.BmpInvalidColorCount;
         },
         else => ImageError.BmpInvalidColorDepth,
     };
@@ -157,13 +184,13 @@ fn bmpGetColorTable(buffer: []u8, info: *const BitmapInfo, table_buffer: *[256]R
 
 pub fn loadBmp(file: std.fs.File, img: *Image, allocator: anytype) !void {
     _ = img;
-    
+
     var buffer: []u8 = try loadImageFromDisk(file, allocator, MIN_SZ_BMP);
     defer allocator.free(buffer);
 
     const identity = buffer[0..2];
 
-    if (!str.equal(identity, "BM")) {
+    if (!str.same(identity, "BM")) {
         return ImageError.BmpInvalidIdentifier;
     }
 
@@ -177,14 +204,16 @@ pub fn loadBmp(file: std.fs.File, img: *Image, allocator: anytype) !void {
         return ImageError.BmpInvalidBytesInFileHeader;
     }
 
+    print("buffer len: {}\n", .{buffer.len});
+
     // offset to image data from 0
-    info.data_offset = @intCast(u8, std.mem.readIntNative(u32, buffer[10..14]));
+    info.data_offset = std.mem.readIntNative(u32, buffer[10..14]);
 
     // --- A Forest of different headers beyond this point (this captures about half of them) ---
     // sz of the info (not file) header, including these 4 bytes
-    info.header_sz = @intCast(u8, std.mem.readIntNative(u32, buffer[14..18]));
+    info.header_sz = std.mem.readIntNative(u32, buffer[14..18]);
 
-    switch(info.header_sz) {
+    switch (info.header_sz) {
         12 => bmpFillCoreHeaderInfo(buffer, &info, file_sz),
         40 => bmpFillV1HeaderInfo(buffer, &info),
         108 => bmpFillV4HeaderInfo(buffer, &info),
@@ -192,26 +221,33 @@ pub fn loadBmp(file: std.fs.File, img: *Image, allocator: anytype) !void {
         else => return ImageError.BmpInvalidHeaderSizeOrFormatUnsupported, // try converting to a newer format
     }
 
+    print("{any}\n", .{info});
+
     if (info.data_offset + info.size != buffer.len) {
-        return ImageError.BmpInvalidSizeInfo;
+        if (info.size != 0) {
+            return ImageError.BmpInvalidSizeInfo;
+        }
+        else {
+            // infer data size
+        }
     }
 
-    if (info.header_type == BitmapHeaderType.Core) {
-        const color_table: []RGB24 = try bmpGetColorTable(buffer, &info, &color_table_buffer);
-        print("{any}\n", .{color_table});
-    }
+    const color_table: []RGB24 = try bmpGetColorTable(buffer, &info, &color_table_buffer);
+    print("color table {any}\n", .{color_table});
+    // if (info.color_depth == BitmapHeaderType.Core) {
+    // }
 
     if (info.header_type == BitmapHeaderType.V1 
         and (info.compression == BitmapCompression.BITFIELDS or info.compression == BitmapCompression.ALPHABITFIELDS)
     ) {
 
     }
-    print("{any}\n", .{info.header_type});
 
     // inline for (std.meta.fields(@TypeOf(info))) |f| {
     //     const value = @as(f.type, @field(info, f.name));
     //     print("{s}: {any}\n", .{f.name, value});
     // }
+    print("\n// ------------------ //\n\n", .{});
 }
 
 pub fn loadJpg(file: std.fs.File, img: *Image, allocator: anytype) !void {
@@ -228,12 +264,7 @@ pub fn loadPng(file: std.fs.File, img: *Image, allocator: anytype) !void {
     print("loading png\n", .{});
 }
 
-pub const ImageType = enum {
-    Infer,
-    Bmp,
-    Jpg,
-    Png
-};
+pub const ImageType = enum { Infer, Bmp, Jpg, Png };
 
 pub const Image = struct {
     width: u32 = 0,
@@ -241,7 +272,7 @@ pub const Image = struct {
     pixels: []RGBA32 = undefined,
 };
 
-const ImageError = error {
+const ImageError = error{
     NoFileExtension,
     InvalidFileExtension,
     TooLarge,
@@ -254,27 +285,12 @@ const ImageError = error {
     BmpInvalidSizeInfo,
     BmpInvalidPlaneCt,
     BmpInvalidColorDepth,
+    BmpInvalidColorCount,
 };
 
-const BitmapHeaderType = enum(u8) {
-    Core,
-    V1,
-    V4,
-    V5,
-};
+const BitmapHeaderType = enum(u8) { Core, V1, V4, V5 };
 
-const BitmapCompression = enum(u32) {
-    RGB,
-    RLE8,
-    RLE4,
-    BITFIELDS,
-    JPEG,
-    PNG,
-    ALPHABITFIELDS,
-    CMYK,
-    CMYKRLE8,
-    CMYKRLE4
-};
+const BitmapCompression = enum(u32) { RGB, RLE8, RLE4, BITFIELDS, JPEG, PNG, ALPHABITFIELDS, CMYK, CMYKRLE8, CMYKRLE4 };
 
 const BitmapColorSpace = enum(u32) {
     CalibratedRGB = 0x0,
@@ -303,8 +319,8 @@ const CieXYZTriple = extern struct {
 };
 
 const BitmapInfo = extern struct {
-    data_offset: u8 = undefined,
-    header_sz: u8 = undefined,
+    data_offset: u32 = undefined,
+    header_sz: u32 = undefined,
     header_type: BitmapHeaderType = undefined,
     width: i32 = undefined,
     height: i32 = undefined,
@@ -328,40 +344,43 @@ const BitmapInfo = extern struct {
 pub const MIN_SZ_BMP = 36;
 
 // pub fn LoadImageTest() !void {
-test "Load Image Bitmap" {
-    try mem6.autoStartup();
-    defer mem6.shutdown();
-    const allocator = mem6.Allocator(mem6.Enclave.Game);
+test "Load Bitmap image" {
+    try kMem.autoStartup();
+    defer kMem.shutdown();
+    const allocator = kMem.Allocator(kMem.Enclave.Game);
 
-    var test_img = Image{}; 
+    var test_img = Image{};
     print("\n", .{});
 
     try loadImage("test/images/puppy.bmp", ImageType.Infer, &test_img, allocator);
 
-    var path_buf = LocalStringBuffer(2048).new();
+    var path_buf = LocalStringBuffer(128).new();
     try path_buf.append("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/");
 
-    var test_dir = try std.fs.openIterableDirAbsolute(
-        path_buf.string(), 
-        .{.access_sub_paths=false}
-    );
+    var test_dir = try std.fs.openIterableDirAbsolute(path_buf.string(), .{ .access_sub_paths = false });
     var dir_it = test_dir.iterate();
 
-    while (try dir_it.next()) |entry| {
-        try path_buf.append(entry.name);
-        // print("file: {s}\n", .{path_buf.string()});
-        try loadImage(path_buf.string(), ImageType.Infer, &test_img, allocator);
-        path_buf.setToPreviousLength();
-    }
+    var filename_lower = LocalStringBuffer(128).new();
 
+    while (try dir_it.next()) |entry| {
+        try filename_lower.appendLower(entry.name);
+        defer filename_lower.setToPrevLen();
+        if (!str.sameTail(filename_lower.string(), "bmp") and !str.sameTail(filename_lower.string(), "dib")) {
+            continue;
+        }
+
+        try path_buf.append(entry.name);
+        defer path_buf.setToPrevLen();
+
+        try loadImage(path_buf.string(), ImageType.Infer, &test_img, allocator);
+    }
 }
 
-const gfxtypes = @import("gfxtypes.zig");
-const RGBA32 = gfxtypes.RGBA32;
-const RGB24 = gfxtypes.RGB24;
+const gfx = @import("graphics.zig");
+const RGBA32 = gfx.RGBA32;
+const RGB24 = gfx.RGB24;
 const std = @import("std");
 const str = @import("string.zig");
 const print = std.debug.print;
-const mem6 = @import("mem6.zig");
+const kMem = @import("mem.zig");
 const LocalStringBuffer = str.LocalStringBuffer;
-

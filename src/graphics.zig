@@ -54,10 +54,10 @@ pub const fMVP = struct {
     projection: fMat4x4 align(16) = undefined,
 };
 
-const gm = @import("gmath.zig");
-const fMat4x4 = gm.fMat4x4;
-const fVec2 = gm.fVec2;
-const fVec3 = gm.fVec3;
+const kmath = @import("math.zig");
+const fMat4x4 = kmath.fMat4x4;
+const fVec2 = kmath.fVec2;
+const fVec3 = kmath.fVec3;
 const LocalArray = @import("array.zig").LocalArray;
 
 pub const c = @cImport({

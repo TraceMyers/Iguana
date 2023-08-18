@@ -380,11 +380,11 @@ inline fn smallSizeBracket(alloc_sz: usize) usize {
 }
 
 inline fn mediumSizeBracket(alloc_sz: usize) usize {
-    return gm.ceilExp2(alloc_sz) - MEDIUM_MIN_EXP2;
+    return kmath.ceilExp2(alloc_sz) - MEDIUM_MIN_EXP2;
 }
 
 inline fn largeSizeBracket(alloc_sz: usize) usize {
-    return gm.ceilExp2(alloc_sz) - LARGE_MIN_EXP2;
+    return kmath.ceilExp2(alloc_sz) - LARGE_MIN_EXP2;
 }
 
 fn allocSmall(small_pool: *SmallPool, sm_idx: usize, alignment: usize) ?[]u8 {
@@ -1332,6 +1332,6 @@ const expect = std.testing.expect;
 const benchmark = @import("benchmark.zig");
 const ScopeTimer = benchmark.ScopeTimer;
 const getScopeTimerID = benchmark.getScopeTimerID;
-const gm = @import("gmath.zig");
-const c = @import("gfxtypes.zig").c;
+const kmath = @import("math.zig");
+const c = @import("graphics.zig").c;
 const builtin = @import("builtin");
