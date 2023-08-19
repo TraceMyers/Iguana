@@ -48,6 +48,19 @@ pub const RGB24 = extern struct {
     b: u8 = 0,
 };
 
+pub const BGR24 = extern struct {
+    b: u8 = 0,
+    g: u8 = 0,
+    r: u8 = 0,
+};
+
+pub const BGR32 = extern struct {
+    b: u8 = 0,
+    g: u8 = 0,
+    r: u8 = 0,
+    reserved: u8 = 0,
+};
+
 pub const fMVP = struct {
     model: fMat4x4 align(16) = undefined,
     view: fMat4x4 align(16) = undefined,
