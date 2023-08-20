@@ -125,163 +125,174 @@ pub inline fn shutdown() void {
     windows.VirtualFree(address_space, 0, windows.MEM_RELEASE);
 }
 
-pub fn Allocator(comptime e: Enclave) type {
+pub const Allocator = struct {
 
-    const enclave_idx: usize = @enumToInt(e);
-    const small_pool: *SmallPool = &small_pools[enclave_idx];
-    const medium_pool: *MediumPool = &medium_pools[enclave_idx];
-    const large_pool: *LargePool = &large_pools[enclave_idx];
-    const giant_pool: *GiantPool = &giant_pools[enclave_idx];
-    const lock_memory: bool = lock_memory_rules[enclave_idx];
+    enclave_idx: usize,
 
-    return struct {
+    pub inline fn new(comptime e: Enclave) Allocator {
+        return Allocator { .enclave_idx = @enumToInt(e) };
+    }
 
-        // allocate with alignment to type
-        pub inline fn alloc(comptime Type: type, ct: usize) Mem6Error![]Type {
-            const alignment = @alignOf(Type);
-            return allocExplicitAlign(Type, ct, alignment);
+    // allocate with alignment to type
+    pub inline fn alloc(self: *const Allocator, comptime Type: type, ct: usize) Mem6Error![]Type {
+        const alignment = @alignOf(Type);
+        return self.allocExplicitAlign(Type, ct, alignment);
+    }
+
+    // allocate providing the alignment
+    pub fn allocExplicitAlign(
+        self: *const Allocator,
+        comptime Type: type, 
+        ct: usize, 
+        alignment: usize
+    ) Mem6Error![]Type {
+        const alloc_sz: usize = ct * @sizeOf(Type);
+        assert(alloc_sz > 0 and alignment > 0);
+
+        var data: []u8 = undefined;
+        var division: usize = undefined;
+        var align_sz: usize = undefined;
+
+        if (alloc_sz <= SMALL_ALLOC_MAX_SZ) {
+            const sz_mod_min = alloc_sz % SMALL_ALLOC_MIN_SZ;
+            const sz_mod_min_eq_0 = sz_mod_min == 0;
+
+            if (std.math.isPowerOfTwo(alignment) or sz_mod_min_eq_0) {
+                const sz_div_min = @intCast(usize, @divTrunc(alloc_sz, SMALL_ALLOC_MIN_SZ));
+                division = sz_div_min - @intCast(usize, @boolToInt(sz_mod_min_eq_0));
+                data = allocSmall(&small_pools[self.enclave_idx], division, alignment) 
+                    orelse return Mem6Error.OutOfMemory;
+            }
+            else {
+                align_sz = alloc_sz + alignment - 1;
+                if (align_sz <= SMALL_ALLOC_MAX_SZ) {
+                    const align_sz_div_min = @intCast(usize, @divTrunc(align_sz, SMALL_ALLOC_MIN_SZ));
+                    const align_sz_mod_min_eq_0 = (align_sz % SMALL_ALLOC_MIN_SZ == 0);
+                    division = align_sz_div_min - @intCast(usize, @boolToInt(align_sz_mod_min_eq_0));
+                    data = allocSmall(&small_pools[self.enclave_idx], division, alignment) 
+                        orelse return Mem6Error.OutOfMemory;
+                }
+                else {
+                    division = mediumSizeBracket(align_sz);
+                    data = allocMedium(&medium_pools[self.enclave_idx], division, alignment) 
+                        orelse return Mem6Error.OutOfMemory;
+                }
+            }
         }
-
-        // allocate providing the alignment
-        pub fn allocExplicitAlign(
-            comptime Type: type, 
-            ct: usize, 
-            alignment: usize
-        ) Mem6Error![]Type {
-            const alloc_sz: usize = ct * @sizeOf(Type);
-            assert(alloc_sz > 0 and alignment > 0);
-
-            var data: []u8 = undefined;
-            var division: usize = undefined;
-            var align_sz: usize = undefined;
-
-            if (alloc_sz <= SMALL_ALLOC_MAX_SZ) {
-                const sz_mod_min = alloc_sz % SMALL_ALLOC_MIN_SZ;
-                const sz_mod_min_eq_0 = sz_mod_min == 0;
-
-                if (std.math.isPowerOfTwo(alignment) or sz_mod_min_eq_0) {
-                    const sz_div_min = @intCast(usize, @divTrunc(alloc_sz, SMALL_ALLOC_MIN_SZ));
-                    division = sz_div_min - @intCast(usize, @boolToInt(sz_mod_min_eq_0));
-                    data = allocSmall(small_pool, division, alignment) orelse return Mem6Error.OutOfMemory;
-                }
-                else {
-                    align_sz = alloc_sz + alignment - 1;
-                    if (align_sz <= SMALL_ALLOC_MAX_SZ) {
-                        const align_sz_div_min = @intCast(usize, @divTrunc(align_sz, SMALL_ALLOC_MIN_SZ));
-                        const align_sz_mod_min_eq_0 = (align_sz % SMALL_ALLOC_MIN_SZ == 0);
-                        division = align_sz_div_min - @intCast(usize, @boolToInt(align_sz_mod_min_eq_0));
-                        data = allocSmall(small_pool, division, alignment) orelse return Mem6Error.OutOfMemory;
-                    }
-                    else {
-                        division = mediumSizeBracket(align_sz);
-                        data = allocMedium(medium_pool, division, alignment) orelse return Mem6Error.OutOfMemory;
-                    }
-                }
+        else if (alloc_sz <= MEDIUM_ALLOC_MAX_SZ) {
+            if (std.math.isPowerOfTwo(alignment)) {
+                division = mediumSizeBracket(alloc_sz);
+                data = allocMedium(&medium_pools[self.enclave_idx], division, alignment) 
+                    orelse return Mem6Error.OutOfMemory;
             }
-            else if (alloc_sz <= MEDIUM_ALLOC_MAX_SZ) {
-                if (std.math.isPowerOfTwo(alignment)) {
-                    division = mediumSizeBracket(alloc_sz);
-                    data = allocMedium(medium_pool, division, alignment) orelse return Mem6Error.OutOfMemory;
+            else {
+                align_sz = alloc_sz + alignment - 1;
+                if (align_sz <= MEDIUM_ALLOC_MAX_SZ) {
+                    division = mediumSizeBracket(align_sz);
+                    data = allocMedium(&medium_pools[self.enclave_idx], division, alignment) 
+                        orelse return Mem6Error.OutOfMemory;
                 }
                 else {
-                    align_sz = alloc_sz + alignment - 1;
-                    if (align_sz <= MEDIUM_ALLOC_MAX_SZ) {
-                        division = mediumSizeBracket(align_sz);
-                        data = allocMedium(medium_pool, division, alignment) orelse return Mem6Error.OutOfMemory;
-                    }
-                    else {
-                        division = largeSizeBracket(align_sz);
-                        data = allocLarge(large_pool, division, align_sz, alignment, lock_memory) orelse return Mem6Error.OutOfMemory;
-                    }
-                }
-            }
-            else if (alloc_sz <= LARGE_ALLOC_MAX_SZ) {
-                if (std.math.isPowerOfTwo(alignment)) {
-                    division = largeSizeBracket(alloc_sz);
-                    data = allocLarge(large_pool, division, alloc_sz, alignment, lock_memory) orelse return Mem6Error.OutOfMemory;
-                }
-                else {
-                    align_sz = alloc_sz + alignment - 1;
                     division = largeSizeBracket(align_sz);
-                    data = allocLarge(large_pool, division, align_sz, alignment, lock_memory) orelse return Mem6Error.OutOfMemory;
+                    data = allocLarge(
+                        &large_pools[self.enclave_idx], division, align_sz, alignment, lock_memory_rules[self.enclave_idx]
+                    ) orelse return Mem6Error.OutOfMemory;
                 }
             }
-            else {
-                return Mem6Error.OutOfMemory;
-            }
-
-            return mem.bytesAsSlice(Type, @alignCast(@alignOf(Type), data[0..alloc_sz]));
         }
-
-        pub inline fn free(data_in: anytype) void {
-            freeOpaque(&data_in[0]);
-        }
-
-        pub fn freeOpaque(data_in: *anyopaque) void {
-            const data_address = @ptrToInt(data_in);
-            if (data_address < @ptrToInt(medium_pool.bytes)) {
-                const sm_idx = (data_address - @ptrToInt(small_pool.bytes)) / SMALL_DIVISION_SZ;
-                freeSmall(small_pool, @ptrCast(*u8, data_in), sm_idx);
-            }
-            else if (data_address < @ptrToInt(large_pool.bytes)) {
-                const md_idx = (data_address - @ptrToInt(medium_pool.bytes)) / MEDIUM_DIVISION_SZ;
-                freeMedium(medium_pool, @ptrCast(*u8, data_in), md_idx);
-            }
-            else if (data_address < @ptrToInt(giant_pool.bytes)) {
-                const lg_idx = (data_address - @ptrToInt(large_pool.bytes)) / LARGE_DIVISION_SZ;
-                freeLarge(large_pool, @ptrCast(*u8, data_in), lg_idx, lock_memory);
+        else if (alloc_sz <= LARGE_ALLOC_MAX_SZ) {
+            if (std.math.isPowerOfTwo(alignment)) {
+                division = largeSizeBracket(alloc_sz);
+                data = allocLarge(
+                    &large_pools[self.enclave_idx], division, alloc_sz, alignment, lock_memory_rules[self.enclave_idx]
+                ) orelse return Mem6Error.OutOfMemory;
             }
             else {
-                print("fuck address is {d}\n", .{data_address});
+                align_sz = alloc_sz + alignment - 1;
+                division = largeSizeBracket(align_sz);
+                data = allocLarge(
+                    &large_pools[self.enclave_idx], division, align_sz, alignment, lock_memory_rules[self.enclave_idx]
+                ) orelse return Mem6Error.OutOfMemory;
             }
         }
-
-        pub inline fn enclave() Enclave {
-            return e;
+        else {
+            return Mem6Error.OutOfMemory;
         }
 
-        pub inline fn enclaveIndex() usize {
-            return enclave_idx;
-        }
+        return mem.bytesAsSlice(Type, @alignCast(@alignOf(Type), data[0..alloc_sz]));
+    }
 
-        pub inline fn smallPoolAddress() usize {
-            return @ptrToInt(@ptrCast(*u8, small_pool.bytes));
-        }
+    pub inline fn free(self: *const Allocator, data_in: anytype) void {
+        self.freeOpaque(&data_in[0]);
+    }
 
-        pub inline fn mediumPoolAddress() usize {
-            return @ptrToInt(@ptrCast(*u8, medium_pool.bytes));
+    pub fn freeOpaque(self: *const Allocator, data_in: *anyopaque) void {
+        const data_address = @ptrToInt(data_in);
+        if (data_address < @ptrToInt(medium_pools[self.enclave_idx].bytes)) {
+            const small_pool: *SmallPool = &small_pools[self.enclave_idx];
+            const sm_idx = (data_address - @ptrToInt(small_pool.bytes)) / SMALL_DIVISION_SZ;
+            freeSmall(small_pool, @ptrCast(*u8, data_in), sm_idx);
         }
-
-        pub inline fn largePoolAddress() usize {
-            return @ptrToInt(@ptrCast(*u8, large_pool.bytes));
+        else if (data_address < @ptrToInt(large_pools[self.enclave_idx].bytes)) {
+            const medium_pool: *MediumPool = &medium_pools[self.enclave_idx];
+            const md_idx = (data_address - @ptrToInt(medium_pool.bytes)) / MEDIUM_DIVISION_SZ;
+            freeMedium(medium_pool, @ptrCast(*u8, data_in), md_idx);
         }
-
-        pub inline fn giantPoolAddress() usize {
-            return @ptrToInt(@ptrCast(*u8, giant_pool.bytes));
+        else if (data_address < @ptrToInt(giant_pools[self.enclave_idx].bytes)) {
+            const large_pool: *LargePool = &large_pools[self.enclave_idx];
+            const lg_idx = (data_address - @ptrToInt(large_pool.bytes)) / LARGE_DIVISION_SZ;
+            freeLarge(large_pool, @ptrCast(*u8, data_in), lg_idx, lock_memory_rules[self.enclave_idx]);
         }
-
-        pub inline fn locksMemory() bool {
-            return lock_memory;
+        else {
+            print("fuck address is {d}\n", .{data_address});
         }
+    }
 
-        pub inline fn smallPoolPageCt(division: usize) u32 {
-            return small_pool.page_lists[division].page_ct;
-        }
+    pub inline fn enclave(self: *const Allocator) Enclave {
+        return @intToEnum(Enclave, self.enclave_idx);
+    }
 
-        pub inline fn mediumPoolPageCt(division: usize) u32 {
-            return medium_pool.page_lists[division].page_ct;
-        }
+    pub inline fn enclaveIndex(self: *const Allocator) usize {
+        return self.enclave_idx;
+    }
 
-        pub inline fn smallPoolFreeBlockCt(division: usize, page: usize) u32 {
-            return small_pool.page_lists[division].pages[page].free_block_ct;
-        }
+    pub inline fn smallPoolAddress(self: *const Allocator) usize {
+        return @ptrToInt(@ptrCast(*u8, small_pools[self.enclave_idx].bytes));
+    }
 
-        pub inline fn mediumPoolFreeBlockCt(division: usize, page: usize) u32 {
-            return medium_pool.page_lists[division].pages[page].free_block_ct;
-        }
+    pub inline fn mediumPoolAddress(self: *const Allocator) usize {
+        return @ptrToInt(@ptrCast(*u8, medium_pools[self.enclave_idx].bytes));
+    }
 
-    };
-}
+    pub inline fn largePoolAddress(self: *const Allocator) usize {
+        return @ptrToInt(@ptrCast(*u8, large_pools[self.enclave_idx].bytes));
+    }
+
+    pub inline fn giantPoolAddress(self: *const Allocator) usize {
+        return @ptrToInt(@ptrCast(*u8, giant_pools[self.enclave_idx].bytes));
+    }
+
+    pub inline fn locksMemory(self: *const Allocator) bool {
+        return lock_memory_rules[self.enclave_idx];
+    }
+
+    pub inline fn smallPoolPageCt(self: *const Allocator, division: usize) u32 {
+        return small_pools[self.enclave_idx].page_lists[division].page_ct;
+    }
+
+    pub inline fn mediumPoolPageCt(self: *const Allocator, division: usize) u32 {
+        return medium_pools[self.enclave_idx].page_lists[division].page_ct;
+    }
+
+    pub inline fn smallPoolFreeBlockCt(self: *const Allocator, division: usize, page: usize) u32 {
+        return small_pools[self.enclave_idx].page_lists[division].pages[page].free_block_ct;
+    }
+
+    pub inline fn mediumPoolFreeBlockCt(self: *const Allocator, division: usize, page: usize) u32 {
+        return medium_pools[self.enclave_idx].page_lists[division].pages[page].free_block_ct;
+    }
+
+};
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- init
@@ -965,7 +976,7 @@ const NO_BLOCK: u32 = 0xffffffff;
 test "Single Allocation" {
     try startup(5);
     defer shutdown();
-    const allocator = Allocator(@intToEnum(Enclave, 0));
+    const allocator = Allocator.new(@intToEnum(Enclave, 0));
 
     var sm1: []u8 = try allocator.alloc(u8, 54);
     for (0..sm1.len) |i| {
@@ -982,7 +993,7 @@ test "Single Allocation" {
 test "Small Allocation Aliasing" {
     try startup(6);
     defer shutdown();
-    const allocator = Allocator(@intToEnum(Enclave, 2));
+    const allocator = Allocator.new(@intToEnum(Enclave, 2));
 
     var small_1: []u8 = try allocator.alloc(u8, 4);
     allocator.free(small_1);
@@ -1078,7 +1089,7 @@ test "Small Allocation Aliasing" {
 test "Small Allocation Multi-Page" {
     try startup(7);
     defer shutdown();
-    const allocator = Allocator(@intToEnum(Enclave, 2));
+    const allocator = Allocator.new(@intToEnum(Enclave, 2));
 
     const alloc_ct: usize = 4097;
     var allocations: [alloc_ct][]u8 = undefined;
@@ -1101,7 +1112,7 @@ test "Small Allocation Multi-Page" {
 test "Perf vs GPA" {
 // pub fn perfMicroRun () !void {
     try startup(8);
-    const allocator = Allocator(@intToEnum(Enclave, 0));
+    const allocator = Allocator.new(@intToEnum(Enclave, 0));
 
     for (0..100_000) |i| {
         var t = ScopeTimer.start("m6 SMALL alloc/free x5", getScopeTimerID());
@@ -1275,7 +1286,7 @@ test "Perf vs GPA" {
 test "Medium Alloc" {
 // pub fn MediumAllocTest() !void {
     try startup(8);
-    const allocator = Allocator(@intToEnum(Enclave, 0));
+    const allocator = Allocator.new(@intToEnum(Enclave, 0));
     defer shutdown();
 
     var testalloc = try allocator.alloc(u8, 100);
@@ -1295,7 +1306,7 @@ test "Medium Alloc" {
 // pub fn largeAlloc() !void {
 test "Large Alloc" {
     try startup(2);
-    const allocator = Allocator(@intToEnum(Enclave, 1));
+    const allocator = Allocator.new(@intToEnum(Enclave, 1));
     defer shutdown();
 
     for (0..1_000) |i| {

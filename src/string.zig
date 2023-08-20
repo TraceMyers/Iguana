@@ -144,11 +144,12 @@ pub fn copyLowerToBuffer(str: []const u8, buffer: []u8) StringError!void {
         return StringError.BufferTooShort;
     }
     for (0..str.len) |i| {
-        if (str[i] >= 'A' and str[i] <= 'Z') {
-            buffer[i] = str[i] + to_lower_diff;
+        const char = str[i];
+        if (char >= 'A' and char <= 'Z') {
+            buffer[i] = char + to_lower_diff;
         }
         else {
-            buffer[i] = str[i];
+            buffer[i] = char;
         }
     }
 }
