@@ -1,6 +1,6 @@
-// /////////// For loading and interpreting two-dimensional images. 
-// // Image //
-// ///////////
+// ::::::::::: For loading two-dimensional images from disk, into a basic standardized format.
+// :: Image ::
+// :::::::::::
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- load
@@ -128,7 +128,12 @@ pub fn loadBmp(file: *std.fs.File, allocator: kMem.Allocator) !Image {
     print("type: {any}\n", .{info.header_type});
     print("color space: {any}\n", .{info.color_space});
 
-    var image = Image{.width=info.width, .height=info.height, ._type=image_type, .allocator=allocator};
+    var image = Image{
+        .width=@intCast(u32, try std.math.absInt(info.width)), 
+        .height=@intCast(u32, try std.math.absInt(info.height)), 
+        ._type=image_type, 
+        .allocator=allocator
+    };
     try bmpCreateImage(buffer, &image, &info, &color_table);
 
     print("\n// ------------------ //\n\n", .{});
@@ -284,6 +289,7 @@ fn bmpGetColorTable(
                 }
             }
             else {
+                color_table.length = 0;
                 return;
             }
         },
@@ -334,9 +340,19 @@ fn bmpGetColorTable(
 
 fn bmpCreateImage(buffer: []u8, image: *Image, info: *const BitmapInfo, color_table: *const BitmapColorTable) !void {
     _ = buffer;
-    _ = image;
-    _ = info;
     _ = color_table;
+
+    const read_direction = @intToEnum(BitmapReadDirection, @intCast(u8, @boolToInt(info.height < 0)));
+    var out_row: usize = undefined;
+    var out_row_increment: usize = undefined;
+    if (read_direction == .BottomUp) {
+        out_row = image.height - 1;
+        out_row_increment = -1;
+    }
+    else {
+        out_row = 0;
+        out_row_increment = 1;
+    }
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -348,9 +364,9 @@ const bmp_info_header_sz_core = 12;
 const bmp_info_header_sz_v1 = 40;
 const bmp_info_header_sz_v4 = 108;
 const bmp_info_header_sz_v5 = 124;
-const bmp_min_color_table_sz = 6;
-const bmp_min_pixel_data_sz = 4;
-pub const bmp_min_sz = bmp_file_header_sz + bmp_info_header_sz_core + bmp_min_color_table_sz + bmp_min_pixel_data_sz;
+const bmp_min_pixel_data_sz = 4; // bmp pixel rows pad to 4 bytes
+// the smallest bmp is a core header type, full color (no color table) bmp with a single 6-byte pixel.
+pub const bmp_min_sz = bmp_file_header_sz + bmp_info_header_sz_core + bmp_min_pixel_data_sz * 2;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------- pub enums
@@ -366,7 +382,7 @@ pub const ImageType = enum { None, RGB, RGBA };
 
 const BitmapColorTableType = enum { None, BGR24, BGR32 };
 
-const BitmapHeaderType = enum(u8) { None, Core, V1, V4, V5 };
+const BitmapHeaderType = enum(u32) { None, Core, V1, V4, V5 };
 
 const BitmapCompression = enum(u32) { 
     RGB, RLE8, RLE4, BITFIELDS, JPEG, PNG, ALPHABITFIELDS, CMYK, CMYKRLE8, CMYKRLE4, None=std.math.maxInt(u32) 
@@ -380,6 +396,8 @@ const BitmapColorSpace = enum(u32) {
     sRGB = 0x73524742,
     None = 0xffffffff,
 };
+
+const BitmapReadDirection = enum(u8) { BottomUp=0, TopDown=1 };
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------- pub types
