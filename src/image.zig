@@ -117,21 +117,12 @@ pub fn loadBmp(file: *std.fs.File, allocator: kMem.Allocator) !Image {
         }
     }
 
-    var image_type: ImageType = undefined;
-    if (info.alpha_mask != 0x0) {
-        image_type = ImageType.RGBA;
-    }
-    else {
-        image_type = ImageType.RGB;
-    }
-
-    print("type: {any}\n", .{info.header_type});
-    print("color space: {any}\n", .{info.color_space});
+    // print("type: {any}\n", .{info.header_type});
+    // print("color space: {any}\n", .{info.color_space});
 
     var image = Image{
         .width=@intCast(u32, try std.math.absInt(info.width)), 
         .height=@intCast(u32, try std.math.absInt(info.height)), 
-        ._type=image_type, 
         .allocator=allocator
     };
     try bmpCreateImage(buffer, &image, &info, &color_table);
@@ -339,19 +330,122 @@ fn bmpGetColorTable(
 }
 
 fn bmpCreateImage(buffer: []u8, image: *Image, info: *const BitmapInfo, color_table: *const BitmapColorTable) !void {
-    _ = buffer;
-    _ = color_table;
+    // get row length in bytes as a multiple of 4 (rows are padded to 4 byte increments)
+    const row_length = ((image.width * info.color_depth + 31) & ~@as(u32, 31)) >> 3;    
+    if (buffer.len < info.data_offset + row_length * image.height) {
+        print("buffer len: {}, end of pixels: {}", .{buffer.len, info.data_offset + row_length * image.height});
+        // return ImageError.UnexpectedEOF;
+        return;
+    }
 
+    // just cores for now
+    if (info.header_type != BitmapHeaderType.Core) {
+        return;
+    }
+
+    const pixel_buf = buffer[info.data_offset..];
+    image.pixels = try image.allocator.?.alloc(gfx.RGBA32, image.width * image.height);
+
+    if (info.color_depth <= 8 and color_table.length > 0) {
+        if (color_table._type == .None) {
+            return ImageError.BmpInvalidColorTable;
+        }
+        switch(info.color_depth) {
+            1 => {
+                if (color_table._type == .BGR24) {
+                    try bmpProcessColorTableImage(
+                        u1, gfx.BGR24, pixel_buf, info, color_table, image, row_length
+                    );
+                }
+                else {
+                    try bmpProcessColorTableImage(
+                        u1, gfx.BGR32, pixel_buf, info, color_table, image, row_length
+                    );
+                }
+            },
+            4 => {
+                if (color_table._type == .BGR24) {
+                    try bmpProcessColorTableImage(
+                        u4, gfx.BGR24, pixel_buf, info, color_table, image, row_length
+                    );
+                }
+                else {
+                    try bmpProcessColorTableImage(
+                        u4, gfx.BGR32, pixel_buf, info, color_table, image, row_length
+                    );
+                }
+            },
+            8 => {
+                if (color_table._type == .BGR24) {
+                    try bmpProcessColorTableImage(
+                        u8, gfx.BGR24, pixel_buf, info, color_table, image, row_length
+                    );
+                }
+                else {
+                    try bmpProcessColorTableImage(
+                        u8, gfx.BGR32, pixel_buf, info, color_table, image, row_length
+                    );
+                }
+            },
+            else => unreachable,
+        }
+    }
+    else {
+
+    }
+
+}
+
+fn bmpProcessColorTableImage(
+    comptime PixelType: type, 
+    comptime ColorType: type,
+    pixel_buf: []const u8, 
+    info: *const BitmapInfo,
+    color_table: *const BitmapColorTable, 
+    image: *Image, 
+    row_len_bytes: usize
+) !void {
+
+    // bitmaps are read bottom to top unless the height is negative. we always read top to bottom and write depending.
     const read_direction = @intToEnum(BitmapReadDirection, @intCast(u8, @boolToInt(info.height < 0)));
-    var out_row: usize = undefined;
-    var out_row_increment: usize = undefined;
+    var out_row_start: usize = undefined;
+    var out_row_increment: i32 = undefined;
     if (read_direction == .BottomUp) {
-        out_row = image.height - 1;
+        out_row_start = image.height - 1;
         out_row_increment = -1;
     }
     else {
-        out_row = 0;
+        out_row_start = 0;
         out_row_increment = 1;
+    }
+
+    const colors = @ptrCast(
+        [*]const ColorType, @alignCast(@alignOf(ColorType), &color_table.buffer[0])
+    )[0..color_table.length];
+
+    var px_row_start: usize = 0;
+    var img_row_start = (out_row_start + 1) * image.width;
+    const img_row_increment = @intCast(i32, image.width) * out_row_increment;
+    const idx_max = (@as(u32, 1) << @intCast(u5, (info.color_depth))) - 1;
+
+    for (0..image.height) |i| {
+        _ = i;
+        img_row_start = @intCast(u32, @intCast(i32, img_row_start) + img_row_increment); 
+        const img_row_end = img_row_start + image.width;
+        var index_row_ptr = @ptrCast([*]const PixelType, @alignCast(@alignOf(PixelType), &pixel_buf[px_row_start]));
+        var index_row = index_row_ptr[img_row_start..img_row_end];
+        var image_row = image.pixels.?[img_row_start..img_row_end];
+
+        // TODO: should flip color tables from bgr to rgb
+        for (0..image.width) |j| {
+            const idx: usize = index_row[j];
+            if (idx > idx_max) {
+                return ImageError.BmpInvalidColorTableIndex;
+            }
+            const bgr_color = colors[idx];
+            image_row[j] = gfx.RGBA32 { .r=bgr_color.r, .g=bgr_color.g, .b=bgr_color.b, .a=1 };
+        }
+        px_row_start += row_len_bytes;
     }
 }
 
@@ -364,9 +458,9 @@ const bmp_info_header_sz_core = 12;
 const bmp_info_header_sz_v1 = 40;
 const bmp_info_header_sz_v4 = 108;
 const bmp_info_header_sz_v5 = 124;
-const bmp_min_pixel_data_sz = 4; // bmp pixel rows pad to 4 bytes
-// the smallest bmp is a core header type, full color (no color table) bmp with a single 6-byte pixel.
-pub const bmp_min_sz = bmp_file_header_sz + bmp_info_header_sz_core + bmp_min_pixel_data_sz * 2;
+const bmp_row_align = 4; // bmp pixel rows pad to 4 bytes
+// the smallest bmp is a core header type, full color () bmp with a single 6-byte pixel.
+pub const bmp_min_sz = bmp_file_header_sz + bmp_info_header_sz_core + bmp_row_align * 2;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------- pub enums
@@ -406,33 +500,12 @@ const BitmapReadDirection = enum(u8) { BottomUp=0, TopDown=1 };
 pub const Image = struct {
     width: u32 = 0,
     height: u32 = 0,
-    bytes: ?[]u8 = null,
-    _type: ImageType = .None,
+    pixels: ?[]gfx.RGBA32 = null,
     allocator: ?kMem.Allocator = null,
 
-    pub inline fn pixelsRGB(self: *const Image) ?[]RGB24 {
-        std.debug.assert(self._type == ImageType.RGB);
-        if (self.bytes == null) {
-            return null;
-        }
-        return @ptrCast([*]RGB24, @alignCast(@alignOf(RGB24), &self.bytes[0]))[0..self.width*self.height];
-    }
-
-    pub inline fn pixelsRGBA(self: *const Image) ?[]RGBA32 {
-        std.debug.assert(self._type == ImageType.RGBA);
-        if (self.bytes == null) {
-            return null;
-        }
-        return @ptrCast([*]RGBA32, @alignCast(@alignOf(RGBA32), &self.bytes[0]))[0..self.width*self.height];
-    }
-
-    pub inline fn getType(self: *const Image) ImageType {
-        return self._type;
-    }
-
     pub inline fn clear(self: *Image) void {
-        std.debug.assert(self.allocator != null and self.bytes != null);
-        self.allocator.free(self.bytes);
+        std.debug.assert(self.allocator != null and self.pixels != null);
+        self.allocator.free(self.pixels);
         self.* = Image{};
     }
 };
@@ -457,6 +530,7 @@ const ImageError = error{
     BmpInvalidColorDepth,
     BmpInvalidColorCount,
     BmpInvalidColorTable,
+    BmpInvalidColorTableIndex,
     BmpColorProfilesUnsupported,
 };
 
@@ -469,7 +543,7 @@ const BitmapColorTable = struct {
         return switch(self._type) {
             .BGR24 => 3,
             .BGR32 => 4,
-            else => @panic("bitmap color table's color size not set!"),
+            else => @panic("bitmap color table's type not set!"),
         };
     }
 };
