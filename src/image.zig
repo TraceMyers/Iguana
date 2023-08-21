@@ -1,7 +1,13 @@
+// /////////// For loading and interpreting two-dimensional images. 
+// // Image //
+// ///////////
+
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- load
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// load an image from disk. format is optionally inferrable via the file extension.
+// !! Warning !! calling this function may require up to 1.5KB free stack memory.
 pub fn loadImage(file_path: []const u8, format: ImageFormat, allocator: kMem.Allocator) !Image {
     var file = try std.fs.cwd().openFile(file_path, .{});
     defer file.close();
@@ -49,12 +55,24 @@ pub fn loadImage(file_path: []const u8, format: ImageFormat, allocator: kMem.All
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub fn loadBmp(file: *std.fs.File, allocator: kMem.Allocator) !Image {
-    var buffer: []u8 = try loadImageFromDisk(file, allocator, min_sz_bmp);
+    var buffer: []u8 = try loadImageFromDisk(file, allocator, bmp_min_sz);
     defer allocator.free(buffer);
 
     const identity = buffer[0..2];
     if (!str.same(identity, "BM")) {
-        return ImageError.BmpInvalidBytesInFileHeader;
+        // identity strings acceptable for (very old) OS/2 bitmaps. microsoft shouldered-out IBM and took over the
+        // format during windows 3.1 times.
+        if (str.same(identity, "BA")
+            or str.same(identity, "CI")
+            or str.same(identity, "CP")
+            or str.same(identity, "IC")
+            or str.same(identity, "PT")
+        ) {
+            return ImageError.BmpOS2FlavorUnsupported;
+        }
+        else {
+            return ImageError.BmpInvalidBytesInFileHeader;
+        }
     }
 
     // -- OG file header
@@ -85,6 +103,11 @@ pub fn loadBmp(file: *std.fs.File, allocator: kMem.Allocator) !Image {
     }
     // -- end headers and color table data
 
+    if (info.color_space == BitmapColorSpace.ProfileEmbedded or info.color_space == BitmapColorSpace.ProfileLinked) {
+        // TODO: support color profiles? (and note the next block would change, too)
+        return ImageError.BmpColorProfilesUnsupported;
+    }
+
     if (info.data_offset + info.data_size != buffer.len) {
         if (info.data_size != 0) {
             return ImageError.BmpInvalidSizeInfo;
@@ -94,16 +117,19 @@ pub fn loadBmp(file: *std.fs.File, allocator: kMem.Allocator) !Image {
         }
     }
 
-    if (buffer_pos != info.data_offset) {
-        return ImageError.BmpInvalidSizeInfo;
+    var image_type: ImageType = undefined;
+    if (info.alpha_mask != 0x0) {
+        image_type = ImageType.RGBA;
+    }
+    else {
+        image_type = ImageType.RGB;
     }
 
+    print("type: {any}\n", .{info.header_type});
     print("color space: {any}\n", .{info.color_space});
 
-    var image = Image{};
-    if (info.header_type == .Core) {
-        try bmpCreateImage(buffer, &image, &info, &color_table);
-    }
+    var image = Image{.width=info.width, .height=info.height, ._type=image_type, .allocator=allocator};
+    try bmpCreateImage(buffer, &image, &info, &color_table);
 
     print("\n// ------------------ //\n\n", .{});
     return image;
@@ -317,13 +343,14 @@ fn bmpCreateImage(buffer: []u8, image: *Image, info: *const BitmapInfo, color_ta
 // ----------------------------------------------------------------------------------------------------------- constants
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub const min_sz_bmp = 36;
-
 const bmp_file_header_sz = 14;
 const bmp_info_header_sz_core = 12;
 const bmp_info_header_sz_v1 = 40;
 const bmp_info_header_sz_v4 = 108;
 const bmp_info_header_sz_v5 = 124;
+const bmp_min_color_table_sz = 6;
+const bmp_min_pixel_data_sz = 4;
+pub const bmp_min_sz = bmp_file_header_sz + bmp_info_header_sz_core + bmp_min_color_table_sz + bmp_min_pixel_data_sz;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------- pub enums
@@ -403,6 +430,7 @@ const ImageError = error{
     InvalidSizeForFormat,
     PartialRead,
     UnexpectedEOF,
+    BmpOS2FlavorUnsupported,
     BmpInvalidBytesInFileHeader,
     BmpInvalidHeaderSizeOrVersionUnsupported,
     BmpInvalidDataOffset,
@@ -411,6 +439,7 @@ const ImageError = error{
     BmpInvalidColorDepth,
     BmpInvalidColorCount,
     BmpInvalidColorTable,
+    BmpColorProfilesUnsupported,
 };
 
 const BitmapColorTable = struct {
