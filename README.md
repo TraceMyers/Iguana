@@ -1,5 +1,8 @@
 # Kochi Engine
-A game engine written in zig that will be as portable as I can handle.
+
+![Alt text](img/FirstTextureRender.jpg?raw=true "First Texture")
+
+A game engine written in zig.
 
 Current zig version is an old dev version (0.11.0-dev.3105+e46d7a369). I'll be more responsible with versioning as the engine really starts to take shape.
 
