@@ -48,6 +48,13 @@ pub const RGB24 = extern struct {
     b: u8 = 0,
 };
 
+pub const RGB32 = extern struct {
+    r: u8 = 0,
+    g: u8 = 0,
+    b: u8 = 0,
+    reserved: u8 = 0,
+};
+
 pub const BGR24 = extern struct {
     b: u8 = 0,
     g: u8 = 0,
@@ -74,7 +81,7 @@ const fVec3 = kmath.fVec3;
 const LocalArray = @import("array.zig").LocalArray;
 
 pub const c = @cImport({
-    // @cInclude("glfwvulk.h");
-    // @cInclude("vk_mem_alloc.h");
+    @cInclude("glfwvulk.h");
+    @cInclude("vk_mem_alloc.h");
     @cInclude("memoryapi.h");
 });

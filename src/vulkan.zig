@@ -12,8 +12,6 @@ var render_method = RenderMethod.Direct;
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub fn init(method: RenderMethod) !void {
-    allocator = kmem.Allocator.fromEnclave(kmem.Enclave.RenderCPU);
-
     var t = ScopeTimer.start("Vulkan Init", getScopeTimerID());
     defer t.stop();
 
@@ -996,28 +994,29 @@ fn createCommandPools() !void {
 }
 
 fn createTextureImage() !void {
-    direct_image = try HeapArray(RGBA32).new(&allocator, 16);
-    for (0..direct_image.?.items.len) |i| {
-        const j = i / 4;
-        if (j % 2 == 0) {
-            if (i % 2 == 0) {
-                direct_image.?.items[i].r = 255;
-            }
-            else {
-                direct_image.?.items[i].b = 255;
-            }
-        }
-        else {
-            if (i % 2 == 0) {
-                direct_image.?.items[i].b = 255;
-            }
-            else {
-                direct_image.?.items[i].r = 255;
-            }
-        }
-    }
+    var texture = try kimg.loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/pal8os2.bmp", kimg.ImageFormat.Infer, allocator);
+    // direct_image = try HeapArray(RGBA32).new(&allocator, 16);
+    // for (0..direct_image.?.items.len) |i| {
+    //     const j = i / 4;
+    //     if (j % 2 == 0) {
+    //         if (i % 2 == 0) {
+    //             direct_image.?.items[i].r = 255;
+    //         }
+    //         else {
+    //             direct_image.?.items[i].b = 255;
+    //         }
+    //     }
+    //     else {
+    //         if (i % 2 == 0) {
+    //             direct_image.?.items[i].b = 255;
+    //         }
+    //         else {
+    //             direct_image.?.items[i].r = 255;
+    //         }
+    //     }
+    // }
 
-    const image_sz: c.VkDeviceSize = direct_image.?.items.len * 4;
+    const image_sz: c.VkDeviceSize = texture.height * texture.width * @sizeOf(RGBA32);
 
     var staging_buffer: VkBuffer = undefined;
     var staging_buffer_memory: c.VkDeviceMemory = undefined;
@@ -1028,12 +1027,12 @@ fn createTextureImage() !void {
 
     var image_data: ?[*]RGBA32 = null;
     _ = c.vkMapMemory(vk_logical, staging_buffer_memory, 0, image_sz, 0, @ptrCast([*c]?*anyopaque, &image_data));
-    @memcpy(image_data.?[0..direct_image.?.items.len], direct_image.?.items[0..direct_image.?.items.len]);
+    @memcpy(image_data.?[0..texture.pixels.?.len], texture.pixels.?[0..texture.pixels.?.len]);
     c.vkUnmapMemory(vk_logical, staging_buffer_memory);
 
     try createImage(
-        4, 
-        4, 
+        texture.width, 
+        texture.height, 
         c.VK_FORMAT_R8G8B8A8_SRGB,
         c.VK_IMAGE_TILING_OPTIMAL,
         c.VK_IMAGE_USAGE_TRANSFER_DST_BIT | c.VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -1048,7 +1047,7 @@ fn createTextureImage() !void {
         c.VK_IMAGE_LAYOUT_UNDEFINED, 
         c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
     );
-    copyBufferToImage(staging_buffer, texture_image_host, 4, 4);
+    copyBufferToImage(staging_buffer, texture_image_host, texture.width, texture.height);
     try transitionImageLayout(
         texture_image_host, 
         c.VK_FORMAT_R8G8B8A8_SRGB,
@@ -2196,7 +2195,7 @@ const gfx_frame_timer_print_rate: u16 = 200;
 
 var test_rotation: f64 = 0.0;
 
-var allocator: kmem.Allocator = undefined;
+const allocator = kmem.Allocator.new(kmem.Enclave.RenderCPU);
 
 const alloc_cb = c.VkAllocationCallbacks{
     .pUserData = null,
@@ -2276,6 +2275,7 @@ const kmath = @import("math.zig");
 const gfx = @import("graphics.zig");
 const convert = @import("convert.zig");
 const kmem = @import("mem.zig");
+const kimg = @import("image.zig");
 
 const print = std.debug.print;
 const c = gfx.c;
@@ -2283,8 +2283,8 @@ const LocalArray = array.LocalArray;
 const ScopeTimer = benchmark.ScopeTimer;
 const getScopeTimerID = benchmark.getScopeTimerID;
 const Vertex = gfx.Vertex;
-const fVec2 = gfx.fVec2;
-const fVec3 = gfx.fVec3;
+const fVec2 = kmath.fVec2;
+const fVec3 = kmath.fVec3;
 const RGBA32 = gfx.RGBA32;
 const fMVP = gfx.fMVP;
 

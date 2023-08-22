@@ -8,6 +8,8 @@
 
 // load an image from disk. format is optionally inferrable via the file extension.
 // !! Warning !! calling this function may require up to 1.5KB free stack memory.
+// !! Warning !! some OS/2 BMPs are compatible, except their width and height entries are interpreted as signed integers
+// (rather than the OS/2 standard for core headers, unsigned), which may lead to a failed read or row-inverted image.
 pub fn loadImage(file_path: []const u8, format: ImageFormat, allocator: kMem.Allocator) !Image {
     var file = try std.fs.cwd().openFile(file_path, .{});
     defer file.close();
@@ -60,8 +62,8 @@ pub fn loadBmp(file: *std.fs.File, allocator: kMem.Allocator) !Image {
 
     const identity = buffer[0..2];
     if (!str.same(identity, "BM")) {
-        // identity strings acceptable for (very old) OS/2 bitmaps. microsoft shouldered-out IBM and took over the
-        // format during windows 3.1 times.
+        // identity strings acceptable for (very old) OS/2 bitmaps. microsoft shouldered-out IBM and started taking over
+        // the format during windows 3.1 times.
         if (str.same(identity, "BA")
             or str.same(identity, "CI")
             or str.same(identity, "CP")
@@ -127,7 +129,6 @@ pub fn loadBmp(file: *std.fs.File, allocator: kMem.Allocator) !Image {
     };
     try bmpCreateImage(buffer, &image, &info, &color_table);
 
-    print("\n// ------------------ //\n\n", .{});
     return image;
 }
 
@@ -180,16 +181,16 @@ fn bmpGetCoreInfo(buffer: []u8, info: *BitmapInfo, file_sz: u32, color_table: *B
     info.height = @intCast(i32, std.mem.readIntNative(i16, buffer[20..22]));
     info.color_depth = @intCast(u32, std.mem.readIntNative(u16, buffer[24..26]));
     info.data_size = file_sz - info.data_offset;
-    color_table._type = BitmapColorTableType.BGR24;
+    color_table._type = BitmapColorTableType.RGB24;
     const table_offset = bmp_file_header_sz + bmp_info_header_sz_core;
-    try bmpGetColorTable(buffer[table_offset..], info, color_table, gfx.BGR24);
-    return table_offset + color_table.length * @sizeOf(gfx.BGR24);
+    try bmpGetColorTable(buffer[table_offset..], info, color_table, gfx.RGB24);
+    return table_offset + color_table.length * @sizeOf(gfx.RGB24);
 }
 
 fn bmpGetV1Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !usize {
     info.header_type = BitmapHeaderType.V1;
     bmpFillV1HeaderPart(buffer, info);
-    color_table._type = BitmapColorTableType.BGR32;
+    color_table._type = BitmapColorTableType.RGB32;
     var mask_offset: usize = 0;
     if (info.compression == BitmapCompression.BITFIELDS) {
         bmpGetColorMasks(buffer, info, false);
@@ -200,18 +201,18 @@ fn bmpGetV1Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable)
         mask_offset = 16;
     }
     const table_offset = bmp_file_header_sz + bmp_info_header_sz_v1 + mask_offset;
-    try bmpGetColorTable(buffer[table_offset..], info, color_table, gfx.BGR32);
-    return table_offset + color_table.length * @sizeOf(gfx.BGR32);
+    try bmpGetColorTable(buffer[table_offset..], info, color_table, gfx.RGB32);
+    return table_offset + color_table.length * @sizeOf(gfx.RGB32);
 }
 
 fn bmpGetV4Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !usize {
     info.header_type = BitmapHeaderType.V4;
     bmpFillV1HeaderPart(buffer, info);
     bmpFillV4HeaderPart(buffer, info);
-    color_table._type = BitmapColorTableType.BGR32;
+    color_table._type = BitmapColorTableType.RGB32;
     const table_offset = bmp_file_header_sz + bmp_info_header_sz_v4;
-    try bmpGetColorTable(buffer[table_offset..], info, color_table, gfx.BGR32);
-    return table_offset + color_table.length * @sizeOf(gfx.BGR32);
+    try bmpGetColorTable(buffer[table_offset..], info, color_table, gfx.RGB32);
+    return table_offset + color_table.length * @sizeOf(gfx.RGB32);
 }
 
 fn bmpGetV5Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !usize {
@@ -219,10 +220,10 @@ fn bmpGetV5Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable)
     bmpFillV1HeaderPart(buffer, info);
     bmpFillV4HeaderPart(buffer, info);
     bmpFillV5HeaderPart(buffer, info);
-    color_table._type = BitmapColorTableType.BGR32;
+    color_table._type = BitmapColorTableType.RGB32;
     const table_offset = bmp_file_header_sz + bmp_info_header_sz_v5;
-    try bmpGetColorTable(buffer[table_offset..], info, color_table, gfx.BGR32);
-    return table_offset + color_table.length * @sizeOf(gfx.BGR32);
+    try bmpGetColorTable(buffer[table_offset..], info, color_table, gfx.RGB32);
+    return table_offset + color_table.length * @sizeOf(gfx.RGB32);
 }
 
 inline fn bmpFillV1HeaderPart(buffer: []u8, info: *BitmapInfo) void {
@@ -326,6 +327,12 @@ fn bmpGetColorTable(
     }
     else {
         @memcpy(table_buffer[0..color_table.length], data_casted[0..color_table.length]);
+        // bgr -> rgb
+        for (0..color_table.length) |i| {
+            const b = table_buffer[i].r;
+            table_buffer[i].r = table_buffer[i].b;
+            table_buffer[i].b = b;
+        }
     }
 }
 
@@ -346,44 +353,44 @@ fn bmpCreateImage(buffer: []u8, image: *Image, info: *const BitmapInfo, color_ta
     const pixel_buf = buffer[info.data_offset..];
     image.pixels = try image.allocator.?.alloc(gfx.RGBA32, image.width * image.height);
 
-    if (info.color_depth <= 8 and color_table.length > 0) {
-        if (color_table._type == .None) {
+    if (info.color_depth <= 8) {
+        if (color_table._type == .None or color_table.length < 2) {
             return ImageError.BmpInvalidColorTable;
         }
         switch(info.color_depth) {
             1 => {
-                if (color_table._type == .BGR24) {
+                if (color_table._type == .RGB24) {
                     try bmpProcessColorTableImage(
-                        u1, gfx.BGR24, pixel_buf, info, color_table, image, row_length
+                        u1, gfx.RGB24, pixel_buf, info, color_table, image, row_length
                     );
                 }
                 else {
                     try bmpProcessColorTableImage(
-                        u1, gfx.BGR32, pixel_buf, info, color_table, image, row_length
+                        u1, gfx.RGB32, pixel_buf, info, color_table, image, row_length
                     );
                 }
             },
             4 => {
-                if (color_table._type == .BGR24) {
+                if (color_table._type == .RGB24) {
                     try bmpProcessColorTableImage(
-                        u4, gfx.BGR24, pixel_buf, info, color_table, image, row_length
+                        u4, gfx.RGB24, pixel_buf, info, color_table, image, row_length
                     );
                 }
                 else {
                     try bmpProcessColorTableImage(
-                        u4, gfx.BGR32, pixel_buf, info, color_table, image, row_length
+                        u4, gfx.RGB32, pixel_buf, info, color_table, image, row_length
                     );
                 }
             },
             8 => {
-                if (color_table._type == .BGR24) {
+                if (color_table._type == .RGB24) {
                     try bmpProcessColorTableImage(
-                        u8, gfx.BGR24, pixel_buf, info, color_table, image, row_length
+                        u8, gfx.RGB24, pixel_buf, info, color_table, image, row_length
                     );
                 }
                 else {
                     try bmpProcessColorTableImage(
-                        u8, gfx.BGR32, pixel_buf, info, color_table, image, row_length
+                        u8, gfx.RGB32, pixel_buf, info, color_table, image, row_length
                     );
                 }
             },
@@ -405,18 +412,18 @@ fn bmpProcessColorTableImage(
     image: *Image, 
     row_len_bytes: usize
 ) !void {
-
-    // bitmaps are read bottom to top unless the height is negative. we always read top to bottom and write depending.
-    const read_direction = @intToEnum(BitmapReadDirection, @intCast(u8, @boolToInt(info.height < 0)));
-    var out_row_start: usize = undefined;
+    // bitmaps are stored bottom to top, meaning the top-left corner of the image is idx 0 of the last row, unless the
+    // height param is negative. we always read top to bottom and write up or down depending.
+    const write_direction = @intToEnum(BitmapReadDirection, @intCast(u8, @boolToInt(info.height < 0)));
+    var out_row_begin: i32 = undefined;
     var out_row_increment: i32 = undefined;
-    if (read_direction == .BottomUp) {
-        out_row_start = image.height - 1;
-        out_row_increment = -1;
+    if (write_direction == .BottomUp) {
+        out_row_begin = (@intCast(i32, image.height) - 1) * @intCast(i32, image.width);
+        out_row_increment = -@intCast(i32, image.width);
     }
     else {
-        out_row_start = 0;
-        out_row_increment = 1;
+        out_row_begin = 0;
+        out_row_increment = @intCast(i32, image.width);
     }
 
     const colors = @ptrCast(
@@ -424,29 +431,30 @@ fn bmpProcessColorTableImage(
     )[0..color_table.length];
 
     var px_row_start: usize = 0;
-    var img_row_start = (out_row_start + 1) * image.width;
-    const img_row_increment = @intCast(i32, image.width) * out_row_increment;
     const idx_max = (@as(u32, 1) << @intCast(u5, (info.color_depth))) - 1;
 
     for (0..image.height) |i| {
-        _ = i;
-        img_row_start = @intCast(u32, @intCast(i32, img_row_start) + img_row_increment); 
-        const img_row_end = img_row_start + image.width;
-        var index_row_ptr = @ptrCast([*]const PixelType, @alignCast(@alignOf(PixelType), &pixel_buf[px_row_start]));
-        var index_row = index_row_ptr[img_row_start..img_row_end];
-        var image_row = image.pixels.?[img_row_start..img_row_end];
+        const row_start = @intCast(usize, out_row_begin + out_row_increment * @intCast(i32, i));
+        const row_end = row_start + image.width;
 
-        // TODO: should flip color tables from bgr to rgb
+        // 'pixels' in a color table-based image are indices to the color table
+        var index_row_ptr = @ptrCast([*]const PixelType, @alignCast(@alignOf(PixelType), &pixel_buf[px_row_start]));
+        var index_row = index_row_ptr[0..image.width];
+        var image_row = image.pixels.?[row_start..row_end];
+
         for (0..image.width) |j| {
             const idx: usize = index_row[j];
             if (idx > idx_max) {
                 return ImageError.BmpInvalidColorTableIndex;
             }
-            const bgr_color = colors[idx];
-            image_row[j] = gfx.RGBA32 { .r=bgr_color.r, .g=bgr_color.g, .b=bgr_color.b, .a=1 };
+            @memcpy(@ptrCast([*]u8, &image_row[j].r)[0..3], @ptrCast([*]const u8, &colors[idx].r)[0..3]);
+            image_row[j].a = 255;
         }
+        // print("row: {any}\n", .{image_row});
         px_row_start += row_len_bytes;
     }
+
+    print("image processed\n", .{});
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -474,7 +482,7 @@ pub const ImageType = enum { None, RGB, RGBA };
 // --------------------------------------------------------------------------------------------------------------- enums
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const BitmapColorTableType = enum { None, BGR24, BGR32 };
+const BitmapColorTableType = enum { None, RGB24, RGB32 };
 
 const BitmapHeaderType = enum(u32) { None, Core, V1, V4, V5 };
 
@@ -535,14 +543,14 @@ const ImageError = error{
 };
 
 const BitmapColorTable = struct {
-    buffer: [256 * @sizeOf(gfx.BGR32)]u8 = undefined,
+    buffer: [256 * @sizeOf(gfx.RGBA32)]u8 = undefined,
     length: usize = 0,
     _type: BitmapColorTableType = .None,
 
     pub fn colorSize(self: *const BitmapColorTable) usize {
         return switch(self._type) {
-            .BGR24 => 3,
-            .BGR32 => 4,
+            .RGB24 => 3,
+            .RGB32 => 4,
             else => @panic("bitmap color table's type not set!"),
         };
     }
@@ -638,7 +646,11 @@ test "Load Bitmap image" {
         try path_buf.append(entry.name);
         defer path_buf.setToPrevLen();
 
-        _ = try loadImage(path_buf.string(), ImageFormat.Infer, allocator);
+        var image: Image = try loadImage(path_buf.string(), ImageFormat.Infer, allocator);
+        if (image.pixels != null) {
+            print("{s} processed.", .{filename_lower.string()});
+        }
+        print("\n// ------------------ //\n\n", .{});
     }
 }
 
