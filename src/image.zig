@@ -70,7 +70,7 @@ pub fn loadBmp(file: *std.fs.File, allocator: kMem.Allocator) !Image {
             or str.same(identity, "IC")
             or str.same(identity, "PT")
         ) {
-            return ImageError.BmpOS2FlavorUnsupported;
+            return ImageError.BmpFlavorUnsupported;
         }
         else {
             return ImageError.BmpInvalidBytesInFileHeader;
@@ -105,6 +105,10 @@ pub fn loadBmp(file: *std.fs.File, allocator: kMem.Allocator) !Image {
     }
     // -- end headers and color table data
 
+    if (!bmpCompressionSupported(&info)) {
+        return ImageError.BmpCompressionUnsupported;
+    }
+
     if (info.color_space == BitmapColorSpace.ProfileEmbedded or info.color_space == BitmapColorSpace.ProfileLinked) {
         // TODO: support color profiles? (and note the next block would change, too)
         return ImageError.BmpColorProfilesUnsupported;
@@ -118,9 +122,6 @@ pub fn loadBmp(file: *std.fs.File, allocator: kMem.Allocator) !Image {
             info.data_size = @intCast(u32, buffer.len) - info.data_offset;
         }
     }
-
-    // print("type: {any}\n", .{info.header_type});
-    // print("color space: {any}\n", .{info.color_space});
 
     var image = Image{
         .width=@intCast(u32, try std.math.absInt(info.width)), 
@@ -181,6 +182,7 @@ fn bmpGetCoreInfo(buffer: []u8, info: *BitmapInfo, file_sz: u32, color_table: *B
     info.height = @intCast(i32, std.mem.readIntNative(i16, buffer[20..22]));
     info.color_depth = @intCast(u32, std.mem.readIntNative(u16, buffer[24..26]));
     info.data_size = file_sz - info.data_offset;
+    info.compression = BitmapCompression.RGB;
     color_table._type = BitmapColorTableType.RGB24;
     const table_offset = bmp_file_header_sz + bmp_info_header_sz_core;
     try bmpGetColorTable(buffer[table_offset..], info, color_table, gfx.RGB24);
@@ -265,15 +267,17 @@ inline fn bmpGetColorMasks(buffer: []u8, info: *BitmapInfo, alpha: bool) void {
 }
 
 fn bmpGetColorTable(
-    buffer: []u8, info: *const BitmapInfo, color_table: *BitmapColorTable, comptime table_type: type
+    buffer: []u8, info: *const BitmapInfo, color_table: *BitmapColorTable, comptime ColorType: type
 ) !void {
-    var data_casted = @ptrCast([*]table_type, @alignCast(@alignOf(table_type), &buffer[0]));
-    var table_buffer = @ptrCast([*]table_type, @alignCast(@alignOf(table_type), &color_table.buffer[0]));
+    var data_casted = @ptrCast([*]ColorType, @alignCast(@alignOf(ColorType), &buffer[0]));
+    var table_buffer = @ptrCast([*]ColorType, @alignCast(@alignOf(ColorType), &color_table.buffer[0]));
 
     switch (info.color_depth) {
         32, 24, 16 => {
             if (info.color_ct > 0) {
-                if (info.color_ct <= 256) {
+                // (nowadays typical) large color depths might have a color table in order to support 256 bit
+                // video adapters. currently this function will retrieve the table, but it goes unused.
+                if (info.color_ct >= 2 and info.color_ct <= 256) {
                     color_table.length = info.color_ct;
                 }
                 else {
@@ -287,7 +291,7 @@ fn bmpGetColorTable(
         },
         8 => {
             if (info.color_ct > 0) {
-                if (info.color_ct <= 256) {
+                if (info.color_ct >= 2 and info.color_ct <= 256) {
                     color_table.length = info.color_ct;
                 }
                 else {
@@ -300,7 +304,7 @@ fn bmpGetColorTable(
         },
         4 => {
             if (info.color_ct > 0) {
-                if (info.color_ct <= 16) {
+                if (info.color_ct >= 2 and info.color_ct <= 16) {
                     color_table.length = info.color_ct;
                 }
                 else {
@@ -322,32 +326,51 @@ fn bmpGetColorTable(
         else => return ImageError.BmpInvalidColorDepth,
     }
 
-    if (buffer.len <= color_table.length * @sizeOf(table_type)) {
+    if (buffer.len <= color_table.length * @sizeOf(ColorType)) {
         return ImageError.UnexpectedEOF;
     }
     else {
-        @memcpy(table_buffer[0..color_table.length], data_casted[0..color_table.length]);
-        // bgr -> rgb
-        for (0..color_table.length) |i| {
-            const b = table_buffer[i].r;
-            table_buffer[i].r = table_buffer[i].b;
-            table_buffer[i].b = b;
+        for (0.. color_table.length) |i| {
+            const table_color: *ColorType = &table_buffer[i];
+            const buffer_color: *const ColorType = &data_casted[i];
+            // convert format's bgr to standard rgb
+            table_color.b = buffer_color.r;
+            table_color.g = buffer_color.g;
+            table_color.r = buffer_color.b;
         }
     }
+}
+
+inline fn bmpCompressionSupported(info: *const BitmapInfo) bool {
+    return switch(info.compression) {
+        .RGB => true,
+        .RLE8 => false,
+        .RLE4 => false,
+        .BITFIELDS => false,
+        .JPEG => false,
+        .PNG => false,
+        .ALPHABITFIELDS => false,
+        .CMYK => false,
+        .CMYKRLE8 => false,
+        .CMYKRLE4 => false,
+        .None => false,
+    };
 }
 
 fn bmpCreateImage(buffer: []u8, image: *Image, info: *const BitmapInfo, color_table: *const BitmapColorTable) !void {
     // get row length in bytes as a multiple of 4 (rows are padded to 4 byte increments)
     const row_length = ((image.width * info.color_depth + 31) & ~@as(u32, 31)) >> 3;    
     if (buffer.len < info.data_offset + row_length * image.height) {
-        print("buffer len: {}, end of pixels: {}", .{buffer.len, info.data_offset + row_length * image.height});
-        // return ImageError.UnexpectedEOF;
-        return;
-    }
-
-    // just cores for now
-    if (info.header_type != BitmapHeaderType.Core) {
-        return;
+        if (info.compression == .RLE8 
+            or info.compression == .RLE4 
+            or info.compression == .CMYKRLE8 
+            or info.compression == .CMYKRLE4
+        ) {
+            return;
+        }
+        else {
+            return ImageError.UnexpectedEOF;
+        }
     }
 
     const pixel_buf = buffer[info.data_offset..];
@@ -360,48 +383,43 @@ fn bmpCreateImage(buffer: []u8, image: *Image, info: *const BitmapInfo, color_ta
         switch(info.color_depth) {
             1 => {
                 if (color_table._type == .RGB24) {
-                    try bmpProcessColorTableImage(
-                        u1, gfx.RGB24, pixel_buf, info, color_table, image, row_length
-                    );
+                    try bmpProcessColorTableImage(u1, gfx.RGB24, pixel_buf, info, color_table, image, row_length);
                 }
                 else {
-                    try bmpProcessColorTableImage(
-                        u1, gfx.RGB32, pixel_buf, info, color_table, image, row_length
-                    );
+                    try bmpProcessColorTableImage(u1, gfx.RGB32, pixel_buf, info, color_table, image, row_length);
                 }
             },
             4 => {
                 if (color_table._type == .RGB24) {
-                    try bmpProcessColorTableImage(
-                        u4, gfx.RGB24, pixel_buf, info, color_table, image, row_length
-                    );
+                    try bmpProcessColorTableImage(u4, gfx.RGB24, pixel_buf, info, color_table, image, row_length);
                 }
                 else {
-                    try bmpProcessColorTableImage(
-                        u4, gfx.RGB32, pixel_buf, info, color_table, image, row_length
-                    );
+                    try bmpProcessColorTableImage(u4, gfx.RGB32, pixel_buf, info, color_table, image, row_length);
                 }
             },
             8 => {
                 if (color_table._type == .RGB24) {
-                    try bmpProcessColorTableImage(
-                        u8, gfx.RGB24, pixel_buf, info, color_table, image, row_length
-                    );
+                    try bmpProcessColorTableImage(u8, gfx.RGB24, pixel_buf, info, color_table, image, row_length);
                 }
                 else {
-                    try bmpProcessColorTableImage(
-                        u8, gfx.RGB32, pixel_buf, info, color_table, image, row_length
-                    );
+                    try bmpProcessColorTableImage(u8, gfx.RGB32, pixel_buf, info, color_table, image, row_length);
                 }
             },
             else => unreachable,
         }
     }
-    else {
-
+    else switch(info.color_depth) {
+        1 => try bmpProcessInlinePixelImage(u1, pixel_buf, info, image, row_length),
+        4 => try bmpProcessInlinePixelImage(u4, pixel_buf, info, image, row_length),
+        8 => try bmpProcessInlinePixelImage(u8, pixel_buf, info, image, row_length),
+        16 => try bmpProcessInlinePixelImage(u16, pixel_buf, info, image, row_length),
+        24 => try bmpProcessInlinePixelImage(u24, pixel_buf, info, image, row_length),
+        32 => try bmpProcessInlinePixelImage(u32, pixel_buf, info, image, row_length),
+        else => unreachable,
     }
-
 }
+
+// fn greater()
 
 fn bmpProcessColorTableImage(
     comptime PixelType: type, 
@@ -431,7 +449,6 @@ fn bmpProcessColorTableImage(
     )[0..color_table.length];
 
     var px_row_start: usize = 0;
-    const idx_max = (@as(u32, 1) << @intCast(u5, (info.color_depth))) - 1;
 
     for (0..image.height) |i| {
         const row_start = @intCast(usize, out_row_begin + out_row_increment * @intCast(i32, i));
@@ -443,18 +460,37 @@ fn bmpProcessColorTableImage(
         var image_row = image.pixels.?[row_start..row_end];
 
         for (0..image.width) |j| {
-            const idx: usize = index_row[j];
-            if (idx > idx_max) {
+            // the zig compiler needs to interpret idx as a larger size when comparing to another, larger number.
+            // However, the current implementation *refuses* to make a copy at this point, and instead just reinterprets
+            // the raw buffer bytes, but only for the comparison. annoying. the u16 cast appears to patch the issue.
+            const idx: PixelType = index_row[j];
+            if (idx >= @intCast(u16, color_table.length)) {
                 return ImageError.BmpInvalidColorTableIndex;
             }
-            @memcpy(@ptrCast([*]u8, &image_row[j].r)[0..3], @ptrCast([*]const u8, &colors[idx].r)[0..3]);
-            image_row[j].a = 255;
+            const image_pixel: *RGBA32 = &image_row[j];
+            const color: *const ColorType = &colors[idx];
+            image_pixel.r = color.r;
+            image_pixel.g = color.g;
+            image_pixel.b = color.b;
+            image_pixel.a = std.math.maxInt(u8);
         }
-        // print("row: {any}\n", .{image_row});
         px_row_start += row_len_bytes;
     }
+}
 
-    print("image processed\n", .{});
+fn bmpProcessInlinePixelImage(
+    comptime PixelType: type,
+    pixel_buf: []const u8,
+    info: *const BitmapInfo,
+    image: *Image,
+    row_len_bytes: usize
+) !void {
+    _ = PixelType;
+    _ = pixel_buf;
+    _ = info;
+    _ = image;
+    _ = row_len_bytes;
+    return ImageError.BmpFlavorUnsupported;
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -487,7 +523,7 @@ const BitmapColorTableType = enum { None, RGB24, RGB32 };
 const BitmapHeaderType = enum(u32) { None, Core, V1, V4, V5 };
 
 const BitmapCompression = enum(u32) { 
-    RGB, RLE8, RLE4, BITFIELDS, JPEG, PNG, ALPHABITFIELDS, CMYK, CMYKRLE8, CMYKRLE4, None=std.math.maxInt(u32) 
+    RGB, RLE8, RLE4, BITFIELDS, JPEG, PNG, ALPHABITFIELDS, CMYK, CMYKRLE8, CMYKRLE4, None 
 };
 
 const BitmapColorSpace = enum(u32) {
@@ -513,7 +549,7 @@ pub const Image = struct {
 
     pub inline fn clear(self: *Image) void {
         std.debug.assert(self.allocator != null and self.pixels != null);
-        self.allocator.free(self.pixels);
+        self.allocator.?.free(self.pixels.?);
         self.* = Image{};
     }
 };
@@ -529,7 +565,7 @@ const ImageError = error{
     InvalidSizeForFormat,
     PartialRead,
     UnexpectedEOF,
-    BmpOS2FlavorUnsupported,
+    BmpFlavorUnsupported,
     BmpInvalidBytesInFileHeader,
     BmpInvalidHeaderSizeOrVersionUnsupported,
     BmpInvalidDataOffset,
@@ -540,6 +576,7 @@ const ImageError = error{
     BmpInvalidColorTable,
     BmpInvalidColorTableIndex,
     BmpColorProfilesUnsupported,
+    BmpCompressionUnsupported,
 };
 
 const BitmapColorTable = struct {
@@ -646,10 +683,16 @@ test "Load Bitmap image" {
         try path_buf.append(entry.name);
         defer path_buf.setToPrevLen();
 
-        var image: Image = try loadImage(path_buf.string(), ImageFormat.Infer, allocator);
+        print("loading {s}\n", .{filename_lower.string()});
+
+        var image = loadImage(path_buf.string(), ImageFormat.Infer, allocator) 
+            catch |e| blk: {print("load error {any}\n", .{e}); break :blk Image{};};
+
         if (image.pixels != null) {
-            print("{s} processed.", .{filename_lower.string()});
+            print("*** processed ***\n", .{});
+            image.clear();
         }
+
         print("\n// ------------------ //\n\n", .{});
     }
 }
