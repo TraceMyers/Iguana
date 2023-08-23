@@ -29,6 +29,7 @@ pub fn main() !void {
     }
 
     benchmark.printAllScopeTimers();
+    // try img.LoadImageTest();
 }
 
 var frame_timer = benchmark.WindowTimer(4).new();

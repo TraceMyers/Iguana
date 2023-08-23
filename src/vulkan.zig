@@ -994,28 +994,7 @@ fn createCommandPools() !void {
 }
 
 fn createTextureImage() !void {
-    var texture = try kimg.loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/pal8os2.bmp", kimg.ImageFormat.Infer, allocator);
-    // direct_image = try HeapArray(RGBA32).new(&allocator, 16);
-    // for (0..direct_image.?.items.len) |i| {
-    //     const j = i / 4;
-    //     if (j % 2 == 0) {
-    //         if (i % 2 == 0) {
-    //             direct_image.?.items[i].r = 255;
-    //         }
-    //         else {
-    //             direct_image.?.items[i].b = 255;
-    //         }
-    //     }
-    //     else {
-    //         if (i % 2 == 0) {
-    //             direct_image.?.items[i].b = 255;
-    //         }
-    //         else {
-    //             direct_image.?.items[i].r = 255;
-    //         }
-    //     }
-    // }
-
+    var texture = try kimg.loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/pal4gs.bmp", kimg.ImageFormat.Infer, allocator);
     const image_sz: c.VkDeviceSize = texture.height * texture.width * @sizeOf(RGBA32);
 
     var staging_buffer: VkBuffer = undefined;
@@ -2193,7 +2172,7 @@ var gfx_frame_timer = benchmark.WindowTimer(8).new();
 var gfx_frame_timer_print_ctr: u16 = 0;
 const gfx_frame_timer_print_rate: u16 = 200;
 
-var test_rotation: f64 = 0.0;
+var test_rotation: f64 = std.math.pi / 4.0;
 
 const allocator = kmem.Allocator.new(kmem.Enclave.RenderCPU);
 

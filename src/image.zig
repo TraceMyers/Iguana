@@ -419,7 +419,18 @@ fn bmpCreateImage(buffer: []u8, image: *Image, info: *const BitmapInfo, color_ta
     }
 }
 
-// fn greater()
+fn bmpSetColorTablePixel(
+    comptime ColorType: type, image_pixel: *RGBA32, idx: u8, idx_top: usize, colors: []const ColorType
+) !void {
+    if (idx >= idx_top) {
+        return ImageError.BmpInvalidColorTableIndex;
+    }
+    const color = colors[idx];
+    image_pixel.r = color.r;
+    image_pixel.g = color.g;
+    image_pixel.b = color.b;
+    image_pixel.a = std.math.maxInt(u8);
+}
 
 fn bmpProcessColorTableImage(
     comptime PixelType: type, 
@@ -449,30 +460,55 @@ fn bmpProcessColorTableImage(
     )[0..color_table.length];
 
     var px_row_start: usize = 0;
-
     for (0..image.height) |i| {
         const row_start = @intCast(usize, out_row_begin + out_row_increment * @intCast(i32, i));
         const row_end = row_start + image.width;
 
         // 'pixels' in a color table-based image are indices to the color table
-        var index_row_ptr = @ptrCast([*]const PixelType, @alignCast(@alignOf(PixelType), &pixel_buf[px_row_start]));
-        var index_row = index_row_ptr[0..image.width];
+        var index_row = pixel_buf[px_row_start..px_row_start + row_len_bytes];
         var image_row = image.pixels.?[row_start..row_end];
 
-        for (0..image.width) |j| {
-            // the zig compiler needs to interpret idx as a larger size when comparing to another, larger number.
-            // However, the current implementation *refuses* to make a copy at this point, and instead just reinterprets
-            // the raw buffer bytes, but only for the comparison. annoying. the u16 cast appears to patch the issue.
-            const idx: PixelType = index_row[j];
-            if (idx >= @intCast(u16, color_table.length)) {
-                return ImageError.BmpInvalidColorTableIndex;
-            }
-            const image_pixel: *RGBA32 = &image_row[j];
-            const color: *const ColorType = &colors[idx];
-            image_pixel.r = color.r;
-            image_pixel.g = color.g;
-            image_pixel.b = color.b;
-            image_pixel.a = std.math.maxInt(u8);
+        switch(PixelType) {
+            u1 => {
+                var byte: usize = 0;
+                var img_idx: usize = 0;
+                while (true) : (byte += 1) {
+                    const idx_byte = index_row[byte];
+                    const remainder = image.width - img_idx;
+                    const last_iter = remainder <= 8;
+                    const iter_ct = if (last_iter) remainder else 8;
+                    for (0..iter_ct) |j| {
+                        const idx: u8 = (idx_byte & (@as(u8, 0x80) >> @intCast(u3, j))) >> @intCast(u3, 7-j);
+                        try bmpSetColorTablePixel(ColorType, &image_row[img_idx+j], idx, color_table.length, colors);
+                    }
+                    if (last_iter) {
+                        break;
+                    }
+                    img_idx += 8;
+                }
+            },
+            u4 => {
+                const iter_ct = image.width >> 1;
+                var img_idx: usize = 0;
+                for (0..iter_ct) |byte| {
+                    inline for(0..2) |k| {
+                        const idx: u8 = (index_row[byte] & (@as(u8, 0xf0) >> (k*4))) >> (4-(k*4));
+                        try bmpSetColorTablePixel(ColorType, &image_row[img_idx], idx, color_table.length, colors);
+                        img_idx += 1;
+                    }
+                }
+                if (iter_ct < row_len_bytes) {
+                    const idx: u8 = (index_row[iter_ct] & @as(u8, 0xf0)) >> 4;
+                    try bmpSetColorTablePixel(ColorType, &image_row[img_idx], idx, color_table.length, colors);
+                }
+            },
+            u8 => {
+                for (0..image.width) |j| {
+                    const idx: u8 = index_row[j];
+                    try bmpSetColorTablePixel(ColorType, &image_row[j], idx, color_table.length, colors);
+                }
+            },
+            else => unreachable,
         }
         px_row_start += row_len_bytes;
     }
@@ -672,6 +708,7 @@ test "Load Bitmap image" {
     var dir_it = test_dir.iterate();
 
     var filename_lower = LocalStringBuffer(128).new();
+    var passed_all: bool = true;
 
     while (try dir_it.next()) |entry| {
         try filename_lower.appendLower(entry.name);
@@ -692,9 +729,14 @@ test "Load Bitmap image" {
             print("*** processed ***\n", .{});
             image.clear();
         }
+        else {
+            passed_all = false;
+        }
 
         print("\n// ------------------ //\n\n", .{});
     }
+
+    // try std.testing.expect(passed_all);
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
