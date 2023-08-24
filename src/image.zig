@@ -62,34 +62,12 @@ pub fn loadBmp(file: *std.fs.File, allocator: kMem.Allocator) !Image {
     defer allocator.free(buffer);
 
     const identity = buffer[0..2];
-    if (!str.same(identity, "BM")) {
-        // identity strings acceptable for (very old) OS/2 bitmaps. microsoft shouldered-out IBM and started taking over
-        // the format during windows 3.1 times.
-        if (str.same(identity, "BA")
-            or str.same(identity, "CI")
-            or str.same(identity, "CP")
-            or str.same(identity, "IC")
-            or str.same(identity, "PT")
-        ) {
-            return ImageError.BmpFlavorUnsupported;
-        }
-        else {
-            return ImageError.BmpInvalidBytesInFileHeader;
-        }
-    }
-
-    // -- OG file header
-    const file_sz = std.mem.readIntNative(u32, buffer[2..6]);
-    const reserved_verify_zero = std.mem.readIntNative(u32, buffer[6..10]);
-    if (reserved_verify_zero != 0) {
-        return ImageError.BmpInvalidBytesInFileHeader;
-    }
+    try bmpValidateIdentity(identity); 
 
     var info = BitmapInfo{};
-    info.data_offset = std.mem.readIntNative(u32, buffer[10..14]);
-
-    // -- a forest of info headers beyond this point. we capture the headers you'd expect to see these days.
-    info.header_sz = std.mem.readIntNative(u32, buffer[14..18]);
+    if (!bmpReadInitial(buffer, &info)) {
+        return ImageError.BmpInvalidBytesInFileHeader;
+    }
 
     if (buffer.len <= info.header_sz + bmp_file_header_sz or buffer.len <= info.data_offset) {
         return ImageError.UnexpectedEOF;
@@ -100,31 +78,20 @@ pub fn loadBmp(file: *std.fs.File, allocator: kMem.Allocator) !Image {
     var color_table = BitmapColorTable{};
     var buffer_pos: usize = undefined;
     switch (info.header_sz) {
-        bmp_info_header_sz_core => buffer_pos = try bmpGetCoreInfo(buffer, &info, file_sz, &color_table),
+        bmp_info_header_sz_core => buffer_pos = try bmpGetCoreInfo(buffer, &info, &color_table),
         bmp_info_header_sz_v1 => buffer_pos = try bmpGetV1Info(buffer, &info, &color_table),
         bmp_info_header_sz_v4 => buffer_pos = try bmpGetV4Info(buffer, &info, &color_table),
         bmp_info_header_sz_v5 => buffer_pos = try bmpGetV5Info(buffer, &info, &color_table),
         else => return ImageError.BmpInvalidHeaderSizeOrVersionUnsupported, 
     }
-    // -- end headers and color table data
+
+    if (!bmpColorSpaceSupported(&info)) {
+        return ImageError.BmpColorSpaceUnsupported;
+    }
 
     if (!bmpCompressionSupported(&info)) {
         return ImageError.BmpCompressionUnsupported;
     }
-
-    if (info.color_space == BitmapColorSpace.ProfileEmbedded or info.color_space == BitmapColorSpace.ProfileLinked) {
-        // TODO: support color profiles? (and note the next block would change, too)
-        return ImageError.BmpColorProfilesUnsupported;
-    }
-
-    // if (info.data_offset + info.data_size != buffer.len) {
-    //     if (info.data_size != 0) {
-    //         return ImageError.BmpInvalidSizeInfo;
-    //     }
-    //     else {
-    //         info.data_size = @intCast(u32, buffer.len) - info.data_offset;
-    //     }
-    // }
 
     var image = Image{
         .width=@intCast(u32, try std.math.absInt(info.width)), 
@@ -214,12 +181,44 @@ fn bmpLoadFileRemainder(file: *std.fs.File, buffer: []u8, info: *BitmapInfo) !vo
     _ = try file.reader().read(data_buf);
 }
 
-fn bmpGetCoreInfo(buffer: []u8, info: *BitmapInfo, file_sz: u32, color_table: *BitmapColorTable) !usize {
+inline fn bmpReadInitial(buffer: []const u8, info: *BitmapInfo) bool {
+    // OG file header
+    info.file_sz = std.mem.readIntNative(u32, buffer[2..6]);
+    const reserved_verify_zero = std.mem.readIntNative(u32, buffer[6..10]);
+    if (reserved_verify_zero != 0) {
+        return false;
+    }
+    info.data_offset = std.mem.readIntNative(u32, buffer[10..14]);
+    // begin info headers
+    info.header_sz = std.mem.readIntNative(u32, buffer[14..18]);
+    return true;
+}
+
+
+fn bmpValidateIdentity(identity: []const u8) !void {
+    if (!str.same(identity, "BM")) {
+        // identity strings acceptable for forms of OS/2 bitmaps. microsoft shouldered-out IBM and started taking over
+        // the format during windows 3.1 times.
+        if (str.same(identity, "BA")
+            or str.same(identity, "CI")
+            or str.same(identity, "CP")
+            or str.same(identity, "IC")
+            or str.same(identity, "PT")
+        ) {
+            return ImageError.BmpFlavorUnsupported;
+        }
+        else {
+            return ImageError.BmpInvalidBytesInFileHeader;
+        }
+    }
+}
+
+fn bmpGetCoreInfo(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !usize {
     info.header_type = BitmapHeaderType.Core;
     info.width = @intCast(i32, std.mem.readIntNative(i16, buffer[18..20]));
     info.height = @intCast(i32, std.mem.readIntNative(i16, buffer[20..22]));
     info.color_depth = @intCast(u32, std.mem.readIntNative(u16, buffer[24..26]));
-    info.data_size = file_sz - info.data_offset;
+    info.data_size = info.file_sz - info.data_offset;
     info.compression = BitmapCompression.RGB;
     const table_offset = bmp_file_header_sz + bmp_info_header_sz_core;
     try bmpGetColorTable(buffer[table_offset..], info, color_table, gfx.RGB24);
@@ -375,6 +374,17 @@ fn bmpGetColorTable(
     }
 }
 
+inline fn bmpColorSpaceSupported(info: *const BitmapInfo) bool {
+    return switch(info.color_space) {
+        .CalibratedRGB => false,
+        .ProfileLinked => false,
+        .ProfileEmbedded => false,
+        .WindowsCS => true,
+        .sRGB => true,
+        .None => true,
+    };
+}
+
 inline fn bmpCompressionSupported(info: *const BitmapInfo) bool {
     return switch(info.compression) {
         .RGB => true,
@@ -401,7 +411,9 @@ fn bmpCreateImage(
     // get row length in bytes as a multiple of 4 (rows are padded to 4 byte increments)
     const row_length = ((image.width * info.color_depth + 31) & ~@as(u32, 31)) >> 3;    
     const pixel_buf = buffer[info.data_offset..];
+
     image.pixels = try image.allocator.?.alloc(gfx.RGBA32, image.width * image.height);
+    errdefer image.clear();
 
     try switch(info.compression) {
         .RGB => switch(info.color_depth) {
@@ -437,16 +449,16 @@ fn bmpCreateImage(
 
 // bitmaps are stored bottom to top, meaning the top-left corner of the image is idx 0 of the last row, unless the
 // height param is negative. we always read top to bottom and write up or down depending.
-inline fn bmpInitWrite(info: *const BitmapInfo, image: *const Image) BmpWrite {
+inline fn bmpInitWrite(info: *const BitmapInfo, image: *const Image) BmpWriteInfo {
     const write_direction = @intToEnum(BitmapReadDirection, @intCast(u8, @boolToInt(info.height < 0)));
     if (write_direction == .BottomUp) {
-        return BmpWrite {
+        return BmpWriteInfo {
             .begin = (@intCast(i32, image.height) - 1) * @intCast(i32, image.width),
             .increment = -@intCast(i32, image.width),
         };
     }
     else {
-        return BmpWrite {
+        return BmpWriteInfo {
             .begin = 0,
             .increment = @intCast(i32, image.width),
         };
@@ -561,15 +573,13 @@ fn bmpLoadInlinePixelImage(
     info: *const BitmapInfo,
     image: *Image,
     row_len_bytes: usize,
-    generate_masks: bool
+    standard_masks: bool
 ) !void {
     if (!bmpBufferLongEnough(pixel_buf, image, row_len_bytes)) {
         return ImageError.UnexpectedEOF;
     }
 
-    if (generate_masks) {
-
-    }
+    const mask = if (standard_masks) BitmapColorMask(PixelType){} else BitmapColorMask(PixelType).fromInfo(info);
 
     const write_info = bmpInitWrite(info, image);
 
@@ -582,25 +592,38 @@ fn bmpLoadInlinePixelImage(
             [*]const PixelType, @alignCast(@alignOf(PixelType), &pixel_buf[px_row_start])
         )[0..image.width];
         var image_row = image.pixels.?[row_start..row_end];
-        _ = image_row;
 
         switch(PixelType) {
-            u16 => {
-                _ = pixels;
-            },
-            u24 => {
-                _ = pixels;
+            u16, u24 => {
+                for (0..image.width) |j| {
+                    image_row[i].r = mask.red(pixels[j]);
+                    image_row[i].g = mask.green(pixels[j]);
+                    image_row[i].b = mask.blue(pixels[j]);
+                    image_row[i].a = 255;
+                }
             },
             u32 => {
-                _ = pixels;
+                if (info.compression == .ALPHABITFIELDS) {
+                    for (0..image.width) |j| {
+                        image_row[i].r = mask.red(pixels[j]);
+                        image_row[i].g = mask.green(pixels[j]);
+                        image_row[i].b = mask.blue(pixels[j]);
+                        image_row[i].a = mask.alpha(pixels[j]);
+                    }
+                }
+                else {
+                    for (0..image.width) |j| {
+                        image_row[i].r = mask.red(pixels[j]);
+                        image_row[i].g = mask.green(pixels[j]);
+                        image_row[i].b = mask.blue(pixels[j]);
+                        image_row[i].a = 255;
+                    }
+                }
             },
             else => unreachable,
         }
-
         px_row_start += row_len_bytes;
     }
-
-    return ImageError.BmpFlavorUnsupported;
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -686,7 +709,7 @@ const ImageError = error{
     BmpInvalidColorCount,
     BmpInvalidColorTable,
     BmpInvalidColorTableIndex,
-    BmpColorProfilesUnsupported,
+    BmpColorSpaceUnsupported,
     BmpCompressionUnsupported,
     BmpInvalidCompression,
 };
@@ -718,12 +741,85 @@ const CieXYZTriple = extern struct {
     blue: [3]FxPt2Dot30 = undefined,
 };
 
-const BmpWrite = struct {
+const BmpWriteInfo = struct {
     begin: i32,
     increment: i32,
 };
 
+fn BitmapColorMask(comptime IntType: type) type {
+    return struct {
+        const MaskType = @This();
+        m_red: IntType = switch(IntType) {
+            u16 => 0x7c00,
+            u24 => 0xff0000,
+            u32 => 0x00ff0000,
+            else => unreachable,
+        },
+        m_green: IntType = switch(IntType) {
+            u16 => 0x03e0,
+            u24 => 0x00ff00,
+            u32 => 0x0000ff00,
+            else => unreachable,
+        },
+        m_blue: IntType = switch(IntType) {
+            u16 => 0x001f,
+            u24 => 0x0000ff,
+            u32 => 0x000000ff,
+            else => unreachable,
+        },
+        m_alpha: IntType = switch(IntType) {
+            u32 => 0xff000000,
+            else => 0x0
+        },
+        red_shift: u8 = switch(IntType) {
+            u16 => 10,
+            u24, u32 => 16,
+            else => unreachable,
+        },
+        green_shift: u8 = switch(IntType) {
+            u16 => 5,
+            u24, u32 => 8,
+            else => unreachable,
+        },
+        blue_shift: u8 = 0,
+        alpha_shift: u8 = switch(IntType) {
+            u32 => 24,
+            else => 0,
+        },
+
+        inline fn fromInfo(info: *const BitmapInfo) MaskType {
+            return MaskType {
+                .m_red = @intCast(IntType, info.red_mask),
+                .m_green = @intCast(IntType, info.green_mask),
+                .m_blue = @intCast(IntType, info.blue_mask),
+                .m_alpha = @intCast(IntType, info.alpha_mask),
+                .red_shift = @ctz(info.red_mask),
+                .green_shift = @ctz(info.green_mask),
+                .blue_shift = @ctz(info.blue_mask),
+                .alpha_shift = @ctz(info.alpha_mask),
+            };
+        }
+
+        inline fn red(self: *const MaskType, pixel: IntType) u8 {
+            return @intCast(u8, (pixel & self.m_red) >> @intCast(u4, self.red_shift));
+        }
+
+        inline fn green(self: *const MaskType, pixel: IntType) u8 {
+            return @intCast(u8, (pixel & self.m_green) >> @intCast(u4, self.green_shift));
+        }
+
+        inline fn blue(self: *const MaskType, pixel: IntType) u8 {
+            return @intCast(u8, (pixel & self.m_blue) >> @intCast(u4, self.blue_shift));
+        }
+
+        inline fn alpha(self: *const MaskType, pixel: IntType) u8 {
+            return @intCast(u8, (pixel & self.m_alpha) >> @intCast(u4, self.alpha_shift));
+        }
+    };
+}
+
 const BitmapInfo = extern struct {
+    file_sz: u32 = 0,
     // offset from beginning of file to pixel data
     data_offset: u32 = 0,
     // size of the info header (comes after the file header)
