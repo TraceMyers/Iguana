@@ -2,6 +2,8 @@
 // :: Image ::
 // :::::::::::
 
+// TODO: return BmpInvalidColorMasks error if color masks are outside bit range or overlap
+
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- load
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -14,6 +16,8 @@ pub fn loadImage(file_path: []const u8, format: ImageFormat, allocator: kMem.All
     var file = try std.fs.cwd().openFile(file_path, .{});
     defer file.close();
 
+    var image = Image{};
+    
     if (format == ImageFormat.Infer) {
         var extension_idx: ?usize = str.findR(file_path, '.');
         if (extension_idx == null) {
@@ -32,43 +36,41 @@ pub fn loadImage(file_path: []const u8, format: ImageFormat, allocator: kMem.All
         const extension_lower = extension_lower_buf.string();
 
         if (str.same(extension_lower, "bmp") or str.same(extension_lower, "dib")) {
-            return try loadBmp(&file, allocator);
+            try loadBmp(&file, &image, allocator);
         }
         else if (str.same(extension_lower, "jpg") or str.same(extension_lower, "jpeg")) {
-            return try loadJpg(&file, allocator);
+            try loadJpg(&file, &image, allocator);
         }
         else if (str.same(extension_lower, "png")) {
-            return try loadPng(&file, allocator);
+            try loadPng(&file, &image, allocator);
         }
         else {
             return ImageError.InvalidFileExtension;
         }
     }
-    else return switch (format) {
-        .Bmp => try loadBmp(&file, allocator),
-        .Jpg => try loadJpg(&file, allocator),
-        .Png => try loadPng(&file, allocator),
+    else switch (format) {
+        .Bmp => try loadBmp(&file, &image, allocator),
+        .Jpg => try loadJpg(&file, &image, allocator),
+        .Png => try loadPng(&file, &image, allocator),
         else => unreachable,
-    };
+    }
+    return image;
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------- load by encoding
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub fn loadBmp(file: *std.fs.File, allocator: kMem.Allocator) !Image {
+pub fn loadBmp(file: *std.fs.File, image: *Image, allocator: kMem.Allocator) !void {
     var buffer: []u8 = try bmpLoadFileAndCoreHeaders(file, allocator, bmp_min_sz);
-    // var buffer: []u8 = try loadImageFromDisk(file, allocator, bmp_min_sz);
     defer allocator.free(buffer);
 
-    const identity = buffer[0..2];
-    try bmpValidateIdentity(identity); 
+    try bmpValidateIdentity(buffer); 
 
     var info = BitmapInfo{};
     if (!bmpReadInitial(buffer, &info)) {
         return ImageError.BmpInvalidBytesInFileHeader;
     }
-
     if (buffer.len <= info.header_sz + bmp_file_header_sz or buffer.len <= info.data_offset) {
         return ImageError.UnexpectedEOF;
     }
@@ -93,28 +95,21 @@ pub fn loadBmp(file: *std.fs.File, allocator: kMem.Allocator) !Image {
         return ImageError.BmpCompressionUnsupported;
     }
 
-    var image = Image{
-        .width=@intCast(u32, try std.math.absInt(info.width)), 
-        .height=@intCast(u32, try std.math.absInt(info.height)), 
-        .allocator=allocator
-    };
-    try bmpCreateImage(buffer, &image, &info, &color_table);
-
-    return image;
+    try bmpCreateImage(buffer, image, &info, &color_table, allocator);
 }
 
-pub fn loadJpg(file: *std.fs.File, enclave: kMem.Allocator) !Image {
+pub fn loadJpg(file: *std.fs.File, image: *Image, enclave: kMem.Allocator) !void {
     _ = file;
     _ = enclave;
+    _ = image;
     print("loading jpg\n", .{});
-    return Image{};
 }
 
-pub fn loadPng(file: *std.fs.File, enclave: kMem.Allocator) !Image {
+pub fn loadPng(file: *std.fs.File, image: *Image, enclave: kMem.Allocator) !void {
     _ = file;
     _ = enclave;
+    _ = image;
     print("loading png\n", .{});
-    return Image{};
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -195,7 +190,8 @@ inline fn bmpReadInitial(buffer: []const u8, info: *BitmapInfo) bool {
 }
 
 
-fn bmpValidateIdentity(identity: []const u8) !void {
+fn bmpValidateIdentity(buffer: []const u8) !void {
+    const identity = buffer[0..2];
     if (!str.same(identity, "BM")) {
         // identity strings acceptable for forms of OS/2 bitmaps. microsoft shouldered-out IBM and started taking over
         // the format during windows 3.1 times.
@@ -406,14 +402,21 @@ inline fn bmpBufferLongEnough(pixel_buf: []const u8, image: *const Image, row_le
 }
 
 fn bmpCreateImage(
-    buffer: []const u8, image: *Image, info: *const BitmapInfo, color_table: *const BitmapColorTable
+    buffer: []const u8, 
+    image: *Image, 
+    info: *const BitmapInfo, 
+    color_table: *const BitmapColorTable, 
+    allocator: kMem.Allocator
 ) !void {
+    image.width = @intCast(u32, try std.math.absInt(info.width));
+    image.height = @intCast(u32, try std.math.absInt(info.height));
+    image.allocator = allocator;
+    image.pixels = try image.allocator.?.alloc(gfx.RGBA32, image.width * image.height);
+    errdefer image.clear();
+
     // get row length in bytes as a multiple of 4 (rows are padded to 4 byte increments)
     const row_length = ((image.width * info.color_depth + 31) & ~@as(u32, 31)) >> 3;    
     const pixel_buf = buffer[info.data_offset..];
-
-    image.pixels = try image.allocator.?.alloc(gfx.RGBA32, image.width * image.height);
-    errdefer image.clear();
 
     try switch(info.compression) {
         .RGB => switch(info.color_depth) {
@@ -513,7 +516,8 @@ fn bmpLoadColorTableImage(
                 for (0..byte_iter_ct) |byte| {
                     const idx_byte = index_row[byte];
                     inline for (0..8) |j| {
-                        const col_idx: u8 = (idx_byte & (@as(u8, 0x80) >> @intCast(u3, j))) >> @intCast(u3, 7-j);
+                        const mask: comptime_int = @as(u8, 0x80) >> @intCast(u3, j);
+                        const col_idx: u8 = (idx_byte & mask) >> @intCast(u3, 7-j);
                         if (col_idx >= colors.len) {
                             return ImageError.BmpInvalidColorTableIndex;
                         }
@@ -524,7 +528,8 @@ fn bmpLoadColorTableImage(
                 if (row_remainder > 0) {
                     const idx_byte = index_row[byte_iter_ct];
                     for (0..row_remainder) |j| {
-                        const col_idx: u8 = (idx_byte & (@as(u8, 0x80) >> @intCast(u3, j))) >> @intCast(u3, 7-j);
+                        const mask = @as(u8, 0x80) >> @intCast(u3, j);
+                        const col_idx: u8 = (idx_byte & mask) >> @intCast(u3, 7-j);
                         if (col_idx >= colors.len) {
                             return ImageError.BmpInvalidColorTableIndex;
                         }
@@ -536,7 +541,8 @@ fn bmpLoadColorTableImage(
                 var img_idx: usize = 0;
                 for (0..byte_iter_ct) |byte| {
                     inline for(0..2) |j| {
-                        const col_idx: u8 = (index_row[byte] & (@as(u8, 0xf0) >> (j*4))) >> (4-(j*4));
+                        const mask: comptime_int = @as(u8, 0xf0) >> (j*4);
+                        const col_idx: u8 = (index_row[byte] & mask) >> (4-(j*4));
                         if (col_idx >= colors.len) {
                             return ImageError.BmpInvalidColorTableIndex;
                         }
@@ -575,53 +581,33 @@ fn bmpLoadInlinePixelImage(
     row_len_bytes: usize,
     standard_masks: bool
 ) !void {
+    const alpha_bitfields =  info.compression == .ALPHABITFIELDS;
+
+    if (alpha_bitfields and PixelType != u32) {
+        return ImageError.BmpInvalidPixelSizeForAlphaBitfields;
+    }
     if (!bmpBufferLongEnough(pixel_buf, image, row_len_bytes)) {
         return ImageError.UnexpectedEOF;
     }
-
-    const mask = if (standard_masks) BitmapColorMask(PixelType){} else BitmapColorMask(PixelType).fromInfo(info);
+    if (PixelType == u24 and !standard_masks) {
+        return ImageError.Bmp24BitCustomMasksUnsupported;
+    }
 
     const write_info = bmpInitWrite(info, image);
+    const mask_set = 
+        if (standard_masks) try BitmapColorMaskSet(PixelType).standard()
+        else try BitmapColorMaskSet(PixelType).fromInfo(info);
 
     var px_row_start: usize = 0;
     for (0..image.height) |i| {
-        const row_start = @intCast(usize, write_info.begin + write_info.increment * @intCast(i32, i));
-        const row_end = row_start + image.width;
+        const img_start = @intCast(usize, write_info.begin + write_info.increment * @intCast(i32, i));
+        const img_end = img_start + image.width;
 
-        var pixels = @ptrCast(
-            [*]const PixelType, @alignCast(@alignOf(PixelType), &pixel_buf[px_row_start])
-        )[0..image.width];
-        var image_row = image.pixels.?[row_start..row_end];
+        var image_row = image.pixels.?[img_start..img_end];
+        var pixel_row = pixel_buf[px_row_start..px_row_start + row_len_bytes];
 
-        switch(PixelType) {
-            u16, u24 => {
-                for (0..image.width) |j| {
-                    image_row[i].r = mask.red(pixels[j]);
-                    image_row[i].g = mask.green(pixels[j]);
-                    image_row[i].b = mask.blue(pixels[j]);
-                    image_row[i].a = 255;
-                }
-            },
-            u32 => {
-                if (info.compression == .ALPHABITFIELDS) {
-                    for (0..image.width) |j| {
-                        image_row[i].r = mask.red(pixels[j]);
-                        image_row[i].g = mask.green(pixels[j]);
-                        image_row[i].b = mask.blue(pixels[j]);
-                        image_row[i].a = mask.alpha(pixels[j]);
-                    }
-                }
-                else {
-                    for (0..image.width) |j| {
-                        image_row[i].r = mask.red(pixels[j]);
-                        image_row[i].g = mask.green(pixels[j]);
-                        image_row[i].b = mask.blue(pixels[j]);
-                        image_row[i].a = 255;
-                    }
-                }
-            },
-            else => unreachable,
-        }
+        mask_set.extractRow(image_row, pixel_row, alpha_bitfields);
+
         px_row_start += row_len_bytes;
     }
 }
@@ -711,7 +697,9 @@ const ImageError = error{
     BmpInvalidColorTableIndex,
     BmpColorSpaceUnsupported,
     BmpCompressionUnsupported,
+    Bmp24BitCustomMasksUnsupported,
     BmpInvalidCompression,
+    BmpInvalidPixelSizeForAlphaBitfields,
 };
 
 const BitmapColorTable = struct {
@@ -746,74 +734,145 @@ const BmpWriteInfo = struct {
     increment: i32,
 };
 
+const ShiftDirection = enum { Right, Left };
+
 fn BitmapColorMask(comptime IntType: type) type {
+
+    const ShiftType = switch(IntType) {
+        u16 => u4,
+        u24 => u5,
+        u32 => u5,
+        else => undefined
+    };
+
     return struct {
         const MaskType = @This();
-        m_red: IntType = switch(IntType) {
-            u16 => 0x7c00,
-            u24 => 0xff0000,
-            u32 => 0x00ff0000,
-            else => unreachable,
-        },
-        m_green: IntType = switch(IntType) {
-            u16 => 0x03e0,
-            u24 => 0x00ff00,
-            u32 => 0x0000ff00,
-            else => unreachable,
-        },
-        m_blue: IntType = switch(IntType) {
-            u16 => 0x001f,
-            u24 => 0x0000ff,
-            u32 => 0x000000ff,
-            else => unreachable,
-        },
-        m_alpha: IntType = switch(IntType) {
-            u32 => 0xff000000,
-            else => 0x0
-        },
-        red_shift: u8 = switch(IntType) {
-            u16 => 10,
-            u24, u32 => 16,
-            else => unreachable,
-        },
-        green_shift: u8 = switch(IntType) {
-            u16 => 5,
-            u24, u32 => 8,
-            else => unreachable,
-        },
-        blue_shift: u8 = 0,
-        alpha_shift: u8 = switch(IntType) {
-            u32 => 24,
-            else => 0,
-        },
 
-        inline fn fromInfo(info: *const BitmapInfo) MaskType {
-            return MaskType {
-                .m_red = @intCast(IntType, info.red_mask),
-                .m_green = @intCast(IntType, info.green_mask),
-                .m_blue = @intCast(IntType, info.blue_mask),
-                .m_alpha = @intCast(IntType, info.alpha_mask),
-                .red_shift = @ctz(info.red_mask),
-                .green_shift = @ctz(info.green_mask),
-                .blue_shift = @ctz(info.blue_mask),
-                .alpha_shift = @ctz(info.alpha_mask),
+        mask: IntType = 0,
+        rshift: ShiftType = 0,
+        lshift: ShiftType = 0,
+
+        fn new(in_mask: u32) !MaskType {
+            const type_bit_sz = @sizeOf(IntType) * 8;
+            const target_leading_zero_ct = type_bit_sz - 8;
+            const shr: i32 = @as(i32, target_leading_zero_ct) - @intCast(i32, @clz(@intCast(IntType, in_mask)));
+            if (shr > 0) {
+                return MaskType{ .mask=@intCast(IntType, in_mask), .rshift=@intCast(ShiftType, shr) };
+            }
+            else {
+                return MaskType{ .mask=@intCast(IntType, in_mask), .lshift=@intCast(ShiftType, try std.math.absInt(shr)) };
+            }
+        }
+
+        inline fn extractColor(self: *const MaskType, pixel: IntType) u8 {
+            return @intCast(u8, ((pixel & self.mask) >> self.rshift) << self.lshift);
+        }
+    };
+}
+
+fn BitmapColorMaskSet(comptime IntType: type) type {
+
+    return struct {
+        const SetType = @This();
+
+        red: BitmapColorMask(IntType) = BitmapColorMask(IntType){},
+        green: BitmapColorMask(IntType) = BitmapColorMask(IntType){},
+        blue: BitmapColorMask(IntType) = BitmapColorMask(IntType){},
+        alpha: BitmapColorMask(IntType) = BitmapColorMask(IntType){},
+
+        inline fn standard() !SetType {
+            return SetType {
+                .red = switch(IntType) {
+                    u16 => try BitmapColorMask(IntType).new(0x7c00),
+                    u24 => try BitmapColorMask(IntType).new(0),
+                    u32 => try BitmapColorMask(IntType).new(0x00ff0000),
+                    else => unreachable,
+                },
+                .green = switch(IntType) {
+                    u16 => try BitmapColorMask(IntType).new(0x03e0),
+                    u24 => try BitmapColorMask(IntType).new(0),
+                    u32 => try BitmapColorMask(IntType).new(0x0000ff00),
+                    else => unreachable,
+                },
+                .blue = switch(IntType) {
+                    u16 => try BitmapColorMask(IntType).new(0x001f),
+                    u24 => try BitmapColorMask(IntType).new(0),
+                    u32 => try BitmapColorMask(IntType).new(0x000000ff),
+                    else => unreachable,
+                },
+                .alpha = switch(IntType) {
+                    u16 => try BitmapColorMask(IntType).new(0),
+                    u24 => try BitmapColorMask(IntType).new(0),
+                    u32 => try BitmapColorMask(IntType).new(0xff000000),
+                    else => unreachable,
+                },
             };
         }
 
-        inline fn red(self: *const MaskType, pixel: IntType) u8 {
-            return @intCast(u8, (pixel & self.m_red) >> @intCast(u4, self.red_shift));
+        inline fn fromInfo(info: *const BitmapInfo) !SetType {
+            return SetType{
+                .red=try BitmapColorMask(IntType).new(info.red_mask),
+                .blue=try BitmapColorMask(IntType).new(info.blue_mask),
+                .green=try BitmapColorMask(IntType).new(info.green_mask),
+                .alpha=try BitmapColorMask(IntType).new(info.alpha_mask),
+            };
         }
 
-        inline fn green(self: *const MaskType, pixel: IntType) u8 {
-            return @intCast(u8, (pixel & self.m_green) >> @intCast(u4, self.green_shift));
+        inline fn extractRGBA(self: *const SetType, pixel: IntType) RGBA32 {
+            return RGBA32 {
+                .r = self.red.extractColor(pixel),
+                .g = self.green.extractColor(pixel),
+                .b = self.blue.extractColor(pixel),
+                .a = self.alpha.extractColor(pixel)
+            };
         }
 
-        inline fn blue(self: *const MaskType, pixel: IntType) u8 {
-            return @intCast(u8, (pixel & self.m_blue) >> @intCast(u4, self.blue_shift));
+        inline fn extractRGB(self: *const SetType, pixel: IntType, in_alpha: u8) RGBA32 {
+            return RGBA32 {
+                .r = self.red.extractColor(pixel),
+                .g = self.green.extractColor(pixel),
+                .b = self.blue.extractColor(pixel),
+                .a = in_alpha
+            };
         }
 
-        inline fn alpha(self: *const MaskType, pixel: IntType) u8 {
-            return @intCast(u8, (pixel & self.m_alpha) >> @intCast(u4, self.alpha_shift));
+        inline fn extractRow(self: *const SetType, image_row: []RGBA32, pixel_row: []const u8, mask_alpha: bool) void {
+            if (mask_alpha) {
+                self.extractRowRGBA(image_row, pixel_row);
+            }
+            else {
+                self.extractRowRGB(image_row, pixel_row);
+            }
+        }
+
+        inline fn extractRowRGB(self: *const SetType, image_row: []RGBA32, pixel_row: []const u8) void {
+            switch(IntType) {
+                u16, u32 => {
+                    var pixels = @ptrCast([*]const IntType, @alignCast(@alignOf(IntType), &pixel_row[0]))[0..image_row.len];
+                    for (0..image_row.len) |j| {
+                        image_row[j] = self.extractRGB(pixels[j], 255);
+                    }
+                },
+                u24 => {
+                    var byte: usize = 0;
+                    for (0..image_row.len) |j| {
+                        const image_pixel: *RGBA32 = &image_row[j];
+                        image_pixel.a = 255;
+                        image_pixel.b = pixel_row[byte];
+                        image_pixel.g = pixel_row[byte+1];
+                        image_pixel.r = pixel_row[byte+2];
+                        byte += 3;
+                    }
+                },
+                else => unreachable,
+            }
+        }
+
+        inline fn extractRowRGBA(self: *const SetType, image_row: []RGBA32, pixel_row: []const u8) void {
+            var pixels = @ptrCast([*]const IntType, @alignCast(@alignOf(IntType), &pixel_row[0]))[0..image_row.len];
+            for (0..image_row.len) |j| {
+                image_row[j] = self.extractRGBA(pixels[j]);
+            }
         }
     };
 }

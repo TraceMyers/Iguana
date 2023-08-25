@@ -994,7 +994,7 @@ fn createCommandPools() !void {
 }
 
 fn createTextureImage() !void {
-    var texture = try kimg.loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/pal1bg.bmp", kimg.ImageFormat.Infer, allocator);
+    var texture = try kimg.loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/rgb16-565.bmp", kimg.ImageFormat.Infer, allocator);
     const image_sz: c.VkDeviceSize = texture.height * texture.width * @sizeOf(RGBA32);
 
     var staging_buffer: VkBuffer = undefined;
