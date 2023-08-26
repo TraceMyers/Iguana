@@ -4,6 +4,7 @@ const std = @import("std");
 const string = @import("../string.zig");
 const memory = @import("../memory.zig");
 const imagef = @import("image.zig");
+const bench = @import("../benchmark.zig");
 
 const LocalStringBuffer = string.LocalStringBuffer;
 const RGBA32 = graphics.RGBA32;
@@ -321,6 +322,9 @@ fn createImage(
     image.pixels = try image.allocator.?.alloc(graphics.RGBA32, image.width * image.height);
     errdefer image.clear();
 
+    var t = bench.ScopeTimer.start("createImage (pre pixels)", bench.getScopeTimerID());
+    defer t.stop();
+
     // get row length in bytes as a multiple of 4 (rows are padded to 4 byte increments)
     const row_length = ((image.width * info.color_depth + 31) & ~@as(u32, 31)) >> 3;    
     const pixel_buf = buffer[info.data_offset..];
@@ -485,6 +489,19 @@ fn readColorTableImage(
     }
 }
 
+fn validColorMasks(comptime PixelType: type, info: *const BitmapInfo) bool {
+    const mask_intersection = info.red_mask & info.green_mask & info.blue_mask & info.alpha_mask;
+    if (mask_intersection > 0) {
+        return false;
+    }
+    const mask_union = info.red_mask | info.green_mask | info.blue_mask | info.alpha_mask;
+    const type_overflow = ((@as(u32, @sizeOf(u32)) << 3) - @clz(mask_union)) > (@as(u32, @sizeOf(PixelType)) << 3);
+    if (type_overflow) {
+        return false;
+    }
+    return true;
+}
+
 fn readInlinePixelImage(
     comptime PixelType: type,
     pixel_buf: []const u8,
@@ -501,8 +518,13 @@ fn readInlinePixelImage(
     if (!bufferLongEnough(pixel_buf, image, row_sz)) {
         return ImageError.UnexpectedEOF;
     }
-    if (PixelType == u24 and !standard_masks) {
-        return ImageError.Bmp24BitCustomMasksUnsupported;
+    if (!standard_masks) {
+        if (PixelType == u24) {
+            return ImageError.Bmp24BitCustomMasksUnsupported;
+        }
+        if (!validColorMasks(PixelType, info)) {
+            return ImageError.BmpInvalidColorMasks;
+        }
     }
 
     const write_info = initWrite(info, image);
@@ -689,12 +711,12 @@ fn BitmapColorMaskSet(comptime IntType: type) type {
             };
         }
 
-        inline fn extractRGB(self: *const SetType, pixel: IntType, in_alpha: u8) RGBA32 {
+        inline fn extractRGB(self: *const SetType, pixel: IntType) RGBA32 {
             return RGBA32 {
                 .r=self.r_mask.extractColor(pixel),
                 .g=self.g_mask.extractColor(pixel),
                 .b=self.b_mask.extractColor(pixel),
-                .a=in_alpha
+                .a=255
             };
         }
 
@@ -712,7 +734,7 @@ fn BitmapColorMaskSet(comptime IntType: type) type {
                 u16, u32 => {
                     var pixels = @ptrCast([*]const IntType, @alignCast(@alignOf(IntType), &pixel_row[0]))[0..image_row.len];
                     for (0..image_row.len) |j| {
-                        image_row[j] = self.extractRGB(pixels[j], 255);
+                        image_row[j] = self.extractRGB(pixels[j]);
                     }
                 },
                 u24 => {

@@ -25,6 +25,7 @@ pub const ImageError = error{
     Bmp24BitCustomMasksUnsupported,
     BmpInvalidCompression,
     BmpInvalidPixelSizeForAlphaBitfields,
+    BmpInvalidColorMasks,
 };
 
 const graphics = @import("../graphics.zig");
@@ -32,6 +33,7 @@ const std = @import("std");
 const string = @import("../string.zig");
 const memory = @import("../memory.zig");
 const bmp = @import("bmp.zig");
+const bench = @import("../benchmark.zig");
 
 const print = std.debug.print;
 const LocalStringBuffer = string.LocalStringBuffer;
@@ -45,6 +47,9 @@ const LocalStringBuffer = string.LocalStringBuffer;
 // !! Warning !! some OS/2 BMPs are compatible, except their width and height entries are interpreted as signed integers
 // (rather than the OS/2 standard for core headers, unsigned), which may lead to a failed read or row-inverted image.
 pub fn loadImage(file_path: []const u8, format: ImageFormat, allocator: memory.Allocator) !Image {
+    var t = bench.ScopeTimer.start("loadImage", bench.getScopeTimerID());
+    defer t.stop();
+
     var file = try std.fs.cwd().openFile(file_path, .{});
     defer file.close();
 
@@ -168,6 +173,7 @@ test "Load Bitmap image" {
         print("\n// ------------------ //\n\n", .{});
     }
 
+    bench.printAllScopeTimers();
     // try std.testing.expect(passed_all);
 }
 

@@ -994,7 +994,6 @@ fn createCommandPools() !void {
 }
 
 fn createTextureImage() !void {
-    // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/rgb16-565.bmp", ImageFormat.Infer, allocator);
     var texture = try loadImage("d:/projects/zig/core/test/images/puppy.bmp", ImageFormat.Infer, allocator);
     const image_sz: c.VkDeviceSize = texture.height * texture.width * @sizeOf(RGBA32);
 
