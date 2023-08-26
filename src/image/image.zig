@@ -24,8 +24,9 @@ pub const ImageError = error{
     BmpCompressionUnsupported,
     Bmp24BitCustomMasksUnsupported,
     BmpInvalidCompression,
-    BmpInvalidPixelSizeForAlphaBitfields,
     BmpInvalidColorMasks,
+    BmpRLECoordinatesOutOfBounds,
+    BmpInvalidRLEData,
 };
 
 const graphics = @import("../graphics.zig");

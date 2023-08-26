@@ -13,6 +13,29 @@ const print = std.debug.print;
 const Image = imagef.Image;
 const ImageError = imagef.ImageError;
 
+// calibration notes for when it becomes useful:
+
+// X = Sum_lambda=(380)^780 [S(lambda) xbar(lambda)]
+// Y = Sum_lambda=(380)^780 [S(lambda) ybar(lambda)]
+// Z = Sum_lambda=(380)^780 [S(lambda) zbar(lambda)]
+// the continuous version is the same, but integrated over lambda, 0 to inf. S(lambda) also called I(lambda)
+
+// ybar color-matching function == equivalent response of the human eye to range of of light on visible spectrum
+// Y is CIE Luminance, indicating overall intensity of light
+
+// Color Intensity = (Voltage + MonitorBlackLevel)^(Gamma)
+// where MonitorBlackLevel is ideally 0
+// for most monitors, g ~ 2.5
+// 0 to 255 ~ corresponds to voltage range of a pixel p
+
+// "Lightness" value, approximate to human perception...
+// L* = if (Y/Yn <= 0.008856) 903.3 * (Y/Yn);
+//      else 116 * (Y/Yn)^(1/3) - 16
+//      in (0, 100)
+// ... where each integral increment of L* corresponds to a perceivably change in lightness
+// ... and where Yn is a white level.
+
+
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ------------------------------------------------------------------------------------------------------- pub functions
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -51,6 +74,7 @@ pub fn load(file: *std.fs.File, image: *Image, allocator: memory.Allocator) !voi
     }
 
     try createImage(buffer, image, &info, &color_table, allocator);
+    print("{}\n", .{buffer[0]});
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -177,7 +201,7 @@ inline fn readV1HeaderPart(buffer: []u8, info: *BitmapInfo) void {
 fn readV4HeaderPart(buffer: []u8, info: *BitmapInfo) void {
     readColorMasks(buffer, info, true);
     info.color_space = @intToEnum(BitmapColorSpace, std.mem.readIntNative(u32, buffer[70..74]));
-    if (info.color_space == BitmapColorSpace.sRGB or info.color_space == BitmapColorSpace.WindowsCS) {
+    if (info.color_space != BitmapColorSpace.CalibratedRGB) {
         return;
     }
     var buffer_casted = @ptrCast([*]FxPt2Dot30, @alignCast(@alignOf(FxPt2Dot30), &buffer[72]));
@@ -204,9 +228,9 @@ inline fn readColorMasks(buffer: []u8, info: *BitmapInfo, alpha: bool) void {
 }
 
 fn readColorTable(
-    buffer: []u8, info: *const BitmapInfo, color_table: *BitmapColorTable, comptime ColorType: type
+    buffer: []const u8, info: *const BitmapInfo, color_table: *BitmapColorTable, comptime ColorType: type
 ) !void {
-    var data_casted = @ptrCast([*]ColorType, @alignCast(@alignOf(ColorType), &buffer[0]));
+    var data_casted = @ptrCast([*]const ColorType, @alignCast(@alignOf(ColorType), &buffer[0]));
 
     switch (info.color_depth) {
         32, 24, 16 => {
@@ -280,7 +304,9 @@ fn readColorTable(
 
 inline fn colorSpaceSupported(info: *const BitmapInfo) bool {
     return switch(info.color_space) {
-        .CalibratedRGB => false,
+        // calibration information is unused because it doesn't make sense to calibrate individual textures in a game engine
+        .CalibratedRGB => true, 
+        // I see no reason to support profiles. Seems like a local / printing thing
         .ProfileLinked => false,
         .ProfileEmbedded => false,
         .WindowsCS => true,
@@ -319,15 +345,13 @@ fn createImage(
     image.width = @intCast(u32, try std.math.absInt(info.width));
     image.height = @intCast(u32, try std.math.absInt(info.height));
     image.allocator = allocator;
-    image.pixels = try image.allocator.?.alloc(graphics.RGBA32, image.width * image.height);
-    errdefer image.clear();
-
-    var t = bench.ScopeTimer.start("createImage (pre pixels)", bench.getScopeTimerID());
-    defer t.stop();
 
     // get row length in bytes as a multiple of 4 (rows are padded to 4 byte increments)
     const row_length = ((image.width * info.color_depth + 31) & ~@as(u32, 31)) >> 3;    
-    const pixel_buf = buffer[info.data_offset..];
+    const pixel_buf = buffer[info.data_offset..buffer.len];
+
+    image.pixels = try image.allocator.?.alloc(graphics.RGBA32, image.width * image.height);
+    errdefer image.clear();
 
     try switch(info.compression) {
         .RGB => switch(info.color_depth) {
@@ -343,13 +367,20 @@ fn createImage(
             if (info.color_depth != 8) {
                 return ImageError.BmpInvalidCompression;
             }
-            return ImageError.BmpCompressionUnsupported;
+            if (color_table.length < 2) {
+                return ImageError.BmpInvalidColorTable;
+            }
+            try readRunLengthEncodedImage(@ptrCast([*]const u8, &pixel_buf[0]), info, color_table, image, row_length);
         },
         .RLE4 => {
             if (info.color_depth != 4) {
                 return ImageError.BmpInvalidCompression;
             }
+            if (color_table.length < 2) {
+                return ImageError.BmpInvalidColorTable;
+            }
             return ImageError.BmpCompressionUnsupported;
+            // try readRunLengthEncodedImage(u4, pixel_buf, info, color_table, image, row_length);
         },
         .BITFIELDS, .ALPHABITFIELDS => switch(info.color_depth) {
             16 => try readInlinePixelImage(u16, pixel_buf, info, image, row_length, false),
@@ -361,23 +392,7 @@ fn createImage(
     };
 }
 
-// bitmaps are stored bottom to top, meaning the top-left corner of the image is idx 0 of the last row, unless the
-// height param is negative. we always read top to bottom and write up or down depending.
-inline fn initWrite(info: *const BitmapInfo, image: *const Image) BmpWriteInfo {
-    const write_direction = @intToEnum(BitmapReadDirection, @intCast(u8, @boolToInt(info.height < 0)));
-    if (write_direction == .BottomUp) {
-        return BmpWriteInfo {
-            .begin = (@intCast(i32, image.height) - 1) * @intCast(i32, image.width),
-            .increment = -@intCast(i32, image.width),
-        };
-    }
-    else {
-        return BmpWriteInfo {
-            .begin = 0,
-            .increment = @intCast(i32, image.width),
-        };
-    }
-}
+
 
 fn readColorTableImage(
     comptime PixelType: type, 
@@ -394,7 +409,7 @@ fn readColorTableImage(
         return ImageError.UnexpectedEOF;
     }
     
-    const write_info = initWrite(info, image);
+    const direction_info = BitmapDirectionInfo.new(info, image.width, image.height);
 
     const byte_iter_ct = switch(PixelType) {
         u1 => image.width >> 3,
@@ -414,7 +429,7 @@ fn readColorTableImage(
     var px_row_start: usize = 0;
    
     for (0..image.height) |i| {
-        const row_start = @intCast(usize, write_info.begin + write_info.increment * @intCast(i32, i));
+        const row_start = @intCast(usize, direction_info.begin + direction_info.increment * @intCast(i32, i));
         const row_end = row_start + image.width;
 
         var index_row = pixel_buf[px_row_start..px_row_start + row_sz];
@@ -510,15 +525,12 @@ fn readInlinePixelImage(
     row_sz: usize,
     standard_masks: bool
 ) !void {
-    const alpha_bitfields =  info.compression == .ALPHABITFIELDS;
+    const alpha_mask_present = info.compression == .ALPHABITFIELDS or info.alpha_mask > 0;
 
-    if (alpha_bitfields and PixelType != u32) {
-        return ImageError.BmpInvalidPixelSizeForAlphaBitfields;
-    }
     if (!bufferLongEnough(pixel_buf, image, row_sz)) {
         return ImageError.UnexpectedEOF;
     }
-    if (!standard_masks) {
+    if (!standard_masks or alpha_mask_present) {
         if (PixelType == u24) {
             return ImageError.Bmp24BitCustomMasksUnsupported;
         }
@@ -527,23 +539,62 @@ fn readInlinePixelImage(
         }
     }
 
-    const write_info = initWrite(info, image);
+    const direction_info = BitmapDirectionInfo.new(info, image.width, image.height);
     const mask_set = 
-        if (standard_masks) try BitmapColorMaskSet(PixelType).standard()
+        if (standard_masks) try BitmapColorMaskSet(PixelType).standard(info)
         else try BitmapColorMaskSet(PixelType).fromInfo(info);
 
     var px_start: usize = 0;
+
     for (0..image.height) |i| {
-        const img_start = @intCast(usize, write_info.begin + write_info.increment * @intCast(i32, i));
+        const img_start = @intCast(usize, direction_info.begin + direction_info.increment * @intCast(i32, i));
         const img_end = img_start + image.width;
 
         var image_row = image.pixels.?[img_start..img_end];
         var file_buffer_row = pixel_buf[px_start..px_start + row_sz];
 
         // apply custom or standard rgb/rgba masks to each u16, u24 or u32 pixel in the row, store in RGBA32 image
-        mask_set.extractRow(image_row, file_buffer_row, alpha_bitfields);
+        mask_set.extractRow(image_row, file_buffer_row, alpha_mask_present);
 
         px_start += row_sz;
+    }
+}
+
+noinline fn readRunLengthEncodedImage(
+    pbuf: [*]const u8,
+    info: *const BitmapInfo,
+    color_table: *const BitmapColorTable,
+    image: *Image,
+    row_sz: usize
+) !void {
+    var reader = try RLEReader.new(info, image.width, image.height, @intCast(u32, row_sz));
+
+    var i: usize = 0;
+    const iter_max: usize = image.width * image.height;
+    const pixel_buf = pbuf[0..row_sz * image.height]; // this is a hack because the compiler is giving me garbage
+
+    while (i < iter_max) : (i += 1) {
+        const action = try reader.readAction(pixel_buf);
+        switch(action) {
+            .ReadPixels => {
+                try reader.readPixels(pixel_buf, color_table, image);
+            },
+            .RepeatPixels => {
+                try reader.repeatPixel(color_table, image);
+            },
+            .Move => {
+                try reader.moveImagePosition(pixel_buf);
+            },
+            .EndRow => {
+                try reader.incrementRow();
+            },
+            .EndImage => {
+                break;
+            },
+        }
+        if (reader.img_col > image.width) {
+            print("hey, listen\n", .{});
+        }
     }
 }
 
@@ -584,6 +635,14 @@ const BitmapColorSpace = enum(u32) {
     None = 0xffffffff,
 };
 
+const RLEAction = enum {
+    EndRow,
+    EndImage,
+    Move,
+    ReadPixels,
+    RepeatPixels
+};
+
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // --------------------------------------------------------------------------------------------------------------- types
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -594,6 +653,160 @@ const BitmapColorTable = struct {
 
     pub inline fn slice(self: *const BitmapColorTable) []const graphics.RGBA32 {
         return self.buffer[0..self.length];
+    }
+};
+
+const RLEReader = struct {
+    img_col: u32 = 0,
+    img_row_pos: u32 = 0,
+    img_width: u32 = 0,
+    img_height: u32 = 0,
+    img_max: u32 = 0,
+    byte_pos: u32 = 0,
+    byte_row_inc: i32 = 0,
+    buffer_max: u32 = 0,
+    action_bytes: [2]u8 = undefined,
+
+    pub fn new(info: *const BitmapInfo, image_width: u32, image_height: u32, row_sz: u32) !RLEReader {
+        const write_direction = @intToEnum(BitmapReadDirection, @intCast(u8, @boolToInt(info.height < 0)));
+        const byte_pos_signed = (@intCast(i32, image_height) - 1) * @intCast(i32, row_sz);
+        if (byte_pos_signed < 0) {
+            return ImageError.BmpInvalidRLEData;
+        }
+        if (write_direction == .BottomUp) {
+            return RLEReader{
+                .img_width=image_width, 
+                .img_height=image_height, 
+                .img_max=image_width * image_height,
+                .byte_pos=@intCast(u32, byte_pos_signed),
+                .byte_row_inc=-@intCast(i32, row_sz),
+                .buffer_max=row_sz * image_height,
+            };
+        }
+        else {
+            return RLEReader{
+                .img_width=image_width, 
+                .img_height=image_height, 
+                .img_max=image_width * image_height,
+                .byte_pos=0,
+                .byte_row_inc=@intCast(i32, row_sz),
+                .buffer_max=row_sz * image_height
+            };
+        }
+    }
+
+    pub fn readAction(self: *RLEReader, buffer: []const u8) !RLEAction {
+        if (self.byte_pos + 1 >= buffer.len) {
+            return ImageError.UnexpectedEOF;
+        }
+        self.action_bytes[0] = buffer[self.byte_pos];
+        self.action_bytes[1] = buffer[self.byte_pos+1];
+
+        if (self.action_bytes[0] > 0) {
+            return RLEAction.RepeatPixels;
+        }
+        else if (self.action_bytes[1] == 0) {
+            return RLEAction.EndRow;
+        }
+        else if (self.action_bytes[1] == 1) {
+            return RLEAction.EndImage;
+        }
+        else if (self.action_bytes[1] == 2) {
+            return RLEAction.Move;
+        }
+        else {
+            return RLEAction.ReadPixels;
+        }
+
+        self.byte_pos += 2;
+    }
+
+    pub fn repeatPixel(self: *RLEReader, color_table: *const BitmapColorTable, image: *Image) !void {
+        const repeat_ct = self.action_bytes[0];
+        const color_idx = self.action_bytes[1];
+        const col_write_end = self.img_col + repeat_ct;
+
+        if (color_idx >= color_table.length) {
+            return ImageError.BmpInvalidColorTableIndex;
+        }
+        if (self.img_row_pos + col_write_end > image.pixels.?.len) {
+            return ImageError.UnexpectedEOF;
+        }
+
+        const color = color_table.buffer[color_idx];
+        while (self.img_col < col_write_end) : (self.img_col += 1) {
+            image.pixels.?[self.imageIndex()] = color;
+        }
+
+        // ?
+        while (self.img_col > self.img_width) : (self.img_col -= self.img_width) {
+            self.img_row_pos += self.img_width;
+        }
+    }
+
+    pub fn readPixels(
+        self: *RLEReader, buffer: []const u8, color_table: *const BitmapColorTable, image: *Image
+    ) !void {
+        const read_ct = self.action_bytes[1];
+        const byte_read_end = self.byte_pos + read_ct; 
+        const col_write_end = self.img_col + read_ct;
+
+        if (byte_read_end >= self.buffer_max) {
+            return ImageError.UnexpectedEOF;
+        }
+        if (self.img_row_pos + col_write_end > image.pixels.?.len) {
+            return ImageError.UnexpectedEOF;
+        }
+
+        while (self.img_col < col_write_end) : (self.img_col += 1) {
+            const color_idx = buffer[self.byte_pos];
+            if (color_idx >= color_table.length) {
+                return ImageError.BmpInvalidColorTableIndex;
+            }
+            image.pixels.?[self.imageIndex()] = color_table.buffer[color_idx];
+            self.byte_pos += 1;
+        }
+
+        if ((read_ct >> @as(u3, 1)) * 2 != read_ct) {
+            self.byte_pos += 1;
+        }
+        
+        // ?
+        while (self.img_col > self.img_width) : (self.img_col -= self.img_width) {
+            self.img_row_pos += self.img_width;
+        }
+    }
+
+    pub inline fn imageIndex(self: *const RLEReader) u32 {
+        return self.img_row_pos + self.img_col;
+    }
+
+    pub fn moveImagePosition(self: *RLEReader, buffer: []const u8) !void {
+        if (self.byte_pos + 1 >= self.buffer_max) {
+            return ImageError.UnexpectedEOF;
+        }
+        const dx = buffer[self.byte_pos];
+        const dy = buffer[self.byte_pos + 1];
+        self.byte_pos += 2;
+
+        self.img_col += dx;
+        self.img_row_pos = (self.img_row_pos / self.img_width + dy) * self.img_width;
+    }
+
+    pub fn incrementRow(self: *RLEReader) !void {
+        self.img_col = 0;
+        self.img_row_pos += self.img_width;
+
+        const align_4byte_check = (self.byte_pos >> @as(u6, 2)) * 4;
+        if (align_4byte_check != self.byte_pos) {
+            self.byte_pos += 4 - (self.byte_pos - align_4byte_check);
+        }
+
+        const new_byte_pos_signed = @intCast(i32, self.byte_pos) + self.byte_row_inc;
+        if (new_byte_pos_signed < 0) {
+            return ImageError.BmpInvalidRLEData;
+        }
+        self.byte_pos = @intCast(u32, new_byte_pos_signed);
     }
 };
 
@@ -615,9 +828,27 @@ const CieXYZTriple = extern struct {
     blue: [3]FxPt2Dot30 = undefined,
 };
 
-const BmpWriteInfo = struct {
+const BitmapDirectionInfo = struct {
     begin: i32,
     increment: i32,
+
+    // bitmaps are stored bottom to top, meaning the top-left corner of the image is idx 0 of the last row, unless the
+    // height param is negative. we always read top to bottom and write up or down depending.
+    inline fn new(info: *const BitmapInfo, width: u32, height: u32) BitmapDirectionInfo {
+        const write_direction = @intToEnum(BitmapReadDirection, @intCast(u8, @boolToInt(info.height < 0)));
+        if (write_direction == .BottomUp) {
+            return BitmapDirectionInfo {
+                .begin = (@intCast(i32, height) - 1) * @intCast(i32, width),
+                .increment = -@intCast(i32, width),
+            };
+        }
+        else {
+            return BitmapDirectionInfo {
+                .begin = 0,
+                .increment = @intCast(i32, width),
+            };
+        }
+    }
 };
 
 fn BitmapColorMask(comptime IntType: type) type {
@@ -664,7 +895,7 @@ fn BitmapColorMaskSet(comptime IntType: type) type {
         b_mask: BitmapColorMask(IntType) = BitmapColorMask(IntType){},
         a_mask: BitmapColorMask(IntType) = BitmapColorMask(IntType){},
 
-        inline fn standard() !SetType {
+        inline fn standard(info: *const BitmapInfo) !SetType {
             return SetType {
                 .r_mask=switch(IntType) {
                     u16 => try BitmapColorMask(IntType).new(0x7c00),
@@ -685,9 +916,9 @@ fn BitmapColorMaskSet(comptime IntType: type) type {
                     else => unreachable,
                 },
                 .a_mask=switch(IntType) {
-                    u16 => try BitmapColorMask(IntType).new(0),
+                    u16 => try BitmapColorMask(IntType).new(info.alpha_mask),
                     u24 => try BitmapColorMask(IntType).new(0),
-                    u32 => try BitmapColorMask(IntType).new(0xff000000),
+                    u32 => try BitmapColorMask(IntType).new(info.alpha_mask),
                     else => unreachable,
                 },
             };

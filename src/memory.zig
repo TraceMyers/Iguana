@@ -149,6 +149,8 @@ pub const Allocator = struct {
         const alloc_sz: usize = ct * @sizeOf(Type);
         assert(alloc_sz > 0 and alignment > 0);
 
+        print("type: {any}, sizeof type: {}, ct: {}, alloc sz: {}\n", .{Type, @sizeOf(Type), ct, alloc_sz});
+
         var data: []u8 = undefined;
         var division: usize = undefined;
         var align_sz: usize = undefined;
