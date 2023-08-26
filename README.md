@@ -1,6 +1,6 @@
 # Kochi Engine
 
-![Alt text](img/FirstTextureRender.jpg?raw=true "First Texture")
+![Alt text](img/ReadmeImg.jpg?raw=true "First Texture")
 
 A game engine written in zig.
 

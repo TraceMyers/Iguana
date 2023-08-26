@@ -1,5 +1,13 @@
 // TODO: finish Array types
 
+const std = @import("std");
+const memory = @import("memory.zig");
+
+const print = std.debug.print;
+const assert = std.debug.assert;
+const expect = std.testing.expect;
+
+
 pub const ArrayType = enum {
     Local,
     Heap,
@@ -29,14 +37,14 @@ pub fn Array(comptime array_type: ArrayType, comptime ItemType: type, comptime l
         const Self = @This();
 
         items: if (is_local) [length]ItemType else []ItemType = undefined,
-        allocator: if (is_local) void else *const kMem.Allocator = undefined, 
+        allocator: if (is_local) void else *const memory.Allocator = undefined, 
         ct: usize = 0,
 
         inline fn newLocal() Self {
             return Self{};
         }
 
-        inline fn newHeap(allocator: *const kMem.Allocator, init_length: usize) !Self {
+        inline fn newHeap(allocator: *const memory.Allocator, init_length: usize) !Self {
             assert(init_length > 0);
             return Self{
                 .items = try allocator.alloc(ItemType, init_length),
@@ -44,7 +52,7 @@ pub fn Array(comptime array_type: ArrayType, comptime ItemType: type, comptime l
             };
         }
 
-        inline fn newResize(allocator: *const kMem.Allocator, init_length: usize) !Self {
+        inline fn newResize(allocator: *const memory.Allocator, init_length: usize) !Self {
             if (init_length > 0) {
                 return Self{
                     .items = try allocator.alloc(ItemType, init_length),
@@ -763,10 +771,3 @@ test "remove at" {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- import
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-const std = @import("std");
-const kMem = @import("mem.zig");
-const print = std.debug.print;
-const assert = std.debug.assert;
-const expect = std.testing.expect;
-

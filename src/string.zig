@@ -1,5 +1,8 @@
 // TODO: vector intrinsics
 
+const std = @import("std");
+const memory = @import("memory.zig");
+
 pub fn LocalStringBuffer(comptime sz: comptime_int) type {
 
     return struct {
@@ -113,13 +116,13 @@ pub inline fn findR(str: []const u8, token: u8) ?usize {
 }
 
 // TODO: generalized copy
-pub inline fn copy(str: []const u8, allocator: *kmem.Allocator) ![]u8 {
+pub inline fn copy(str: []const u8, allocator: *memory.Allocator) ![]u8 {
     var new_str: []u8 = try allocator.alloc(u8, str.len);
     @memcpy(new_str[0..str.len], str[0..str.len]);
     return new_str;
 }
 
-pub fn copyLower(str: []const u8, allocator: *kmem.Allocator) ![]u8 {
+pub fn copyLower(str: []const u8, allocator: *memory.Allocator) ![]u8 {
     var new_str: []u8 = try allocator.alloc(u8, str.len);
     for (0..str.len) |i| {
         if (str[i] >= 'A' and str[i] <= 'Z') {
@@ -154,7 +157,7 @@ pub fn copyLowerToBuffer(str: []const u8, buffer: []u8) StringError!void {
     }
 }
 
-pub inline fn free(str: []u8, allocator: *kmem.Allocator) void {
+pub inline fn free(str: []u8, allocator: *memory.Allocator) void {
     allocator.free(str);
 }
 
@@ -171,5 +174,3 @@ const StringError = error{
 };
 
 const to_lower_diff: comptime_int = 'a' - 'A';
-const std = @import("std");
-const kmem = @import("mem.zig");

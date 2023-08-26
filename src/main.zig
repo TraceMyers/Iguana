@@ -1,6 +1,6 @@
 pub fn main() !void {
-    defer kmem.shutdown();
-    try kmem.autoStartup();
+    defer memory.shutdown();
+    try memory.autoStartup();
 
     defer window.cleanup();
     try window.init(1024, 768, "yay");
@@ -43,9 +43,8 @@ const array = @import("array.zig");
 const LocalArray = array.LocalArray;
 const benchmark = @import("benchmark.zig");
 const ScopeTimer = benchmark.ScopeTimer;
-const kmem = @import("mem.zig");
+const memory = @import("memory.zig");
 const kmath = @import("math.zig");
 const window = @import("window.zig");
 const vk = @import("vulkan.zig");
 const str = @import("string.zig");
-const img = @import("image.zig");

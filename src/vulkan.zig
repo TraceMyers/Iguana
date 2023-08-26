@@ -174,16 +174,16 @@ fn updateUniformBuffer(current_image: u32) !void {
     // const timestamp_seconds: f64 = convert.nano100ToBase(@intToFloat(f64, now.timestamp)) * 6.0;
     test_rotation += 2e-4;
 
-    mvp.model = kmath.fMat4x4.modelNoScale(
+    mvp.model = math.fMat4x4.modelNoScale(
         fVec3.init(.{0.0, 0.0, 1.0}), 
-        kmath.fQuat.fromAxisAngle(fVec3.z_axis, @floatCast(f32, test_rotation))
+        math.fQuat.fromAxisAngle(fVec3.z_axis, @floatCast(f32, test_rotation))
     );
-    mvp.view = kmath.fMat4x4.lookAt(
+    mvp.view = math.fMat4x4.lookAt(
         fVec3.fromScalar(2.0), 
         fVec3.fromScalar(0.0), 
         fVec3.init(.{0.0, 0.0, 1.0})
     );
-    mvp.projection = kmath.fMat4x4.projectionPerspective(
+    mvp.projection = math.fMat4x4.projectionPerspective(
         std.math.pi * 0.25, 
         @intToFloat(f32, swapchain.extent.width) / @intToFloat(f32, swapchain.extent.height), 
         0.1, 
@@ -994,7 +994,8 @@ fn createCommandPools() !void {
 }
 
 fn createTextureImage() !void {
-    var texture = try kimg.loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/rgb16-565.bmp", kimg.ImageFormat.Infer, allocator);
+    // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/rgb16-565.bmp", ImageFormat.Infer, allocator);
+    var texture = try loadImage("d:/projects/zig/core/test/images/puppy.bmp", ImageFormat.Infer, allocator);
     const image_sz: c.VkDeviceSize = texture.height * texture.width * @sizeOf(RGBA32);
 
     var staging_buffer: VkBuffer = undefined;
@@ -2168,13 +2169,13 @@ var descriptor_sets: [MAX_FRAMES_IN_FLIGHT]c.VkDescriptorSet = undefined;
 
 var dbg_switch: bool = false;
 
-var gfx_frame_timer = benchmark.WindowTimer(8).new();
+var gfx_frame_timer = bench.WindowTimer(8).new();
 var gfx_frame_timer_print_ctr: u16 = 0;
 const gfx_frame_timer_print_rate: u16 = 200;
 
 var test_rotation: f64 = std.math.pi / 4.0;
 
-const allocator = kmem.Allocator.new(kmem.Enclave.RenderCPU);
+const allocator = memory.Allocator.new(memory.Enclave.RenderCPU);
 
 const alloc_cb = c.VkAllocationCallbacks{
     .pUserData = null,
@@ -2249,23 +2250,25 @@ const VkError = error {
 const std = @import("std");
 const array = @import("array.zig");
 const window = @import("window.zig");
-const benchmark = @import("benchmark.zig");
-const kmath = @import("math.zig");
-const gfx = @import("graphics.zig");
+const bench = @import("benchmark.zig");
+const math = @import("math.zig");
+const graphics = @import("graphics.zig");
 const convert = @import("convert.zig");
-const kmem = @import("mem.zig");
-const kimg = @import("image.zig");
+const memory = @import("memory.zig");
+const imagef = @import("image/image.zig");
 
+const loadImage = imagef.loadImage;
+const ImageFormat = imagef.ImageFormat;
 const print = std.debug.print;
-const c = gfx.c;
+const c = graphics.c;
 const LocalArray = array.LocalArray;
-const ScopeTimer = benchmark.ScopeTimer;
-const getScopeTimerID = benchmark.getScopeTimerID;
-const Vertex = gfx.Vertex;
-const fVec2 = kmath.fVec2;
-const fVec3 = kmath.fVec3;
-const RGBA32 = gfx.RGBA32;
-const fMVP = gfx.fMVP;
+const ScopeTimer = bench.ScopeTimer;
+const getScopeTimerID = bench.getScopeTimerID;
+const Vertex = graphics.Vertex;
+const fVec2 = math.fVec2;
+const fVec3 = math.fVec3;
+const RGBA32 = graphics.RGBA32;
+const fMVP = graphics.fMVP;
 
 const VkResult = c.VkResult;
 const VK_SUCCESS = c.VK_SUCCESS;
