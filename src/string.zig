@@ -30,6 +30,13 @@ pub fn LocalStringBuffer(comptime sz: comptime_int) type {
             self.len = new_len;
         }
 
+        pub inline fn replace(self: *LSBufType, replace_str: []const u8) StringError!void {
+            const new_len = replace_str.len;
+            try copyToBuffer(replace_str, self.bytes[0..new_len]);
+            self.prev_len = self.len;
+            self.len = new_len;
+        }
+
         pub inline fn setToPrevLen(self: *LSBufType) void {
             self.len = self.prev_len;
         }
@@ -37,6 +44,7 @@ pub fn LocalStringBuffer(comptime sz: comptime_int) type {
         pub inline fn string(self: *const LSBufType) []const u8 {
             return self.bytes[0..self.len];
         }
+
     };
 }
 

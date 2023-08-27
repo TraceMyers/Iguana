@@ -59,10 +59,10 @@ pub fn load(file: *std.fs.File, image: *Image, allocator: memory.Allocator) !voi
     var color_table = BitmapColorTable{};
     var buffer_pos: usize = undefined;
     switch (info.header_sz) {
-        bmp_info_header_sz_core => buffer_pos = try readCoreInfo(buffer, &info, &color_table),
-        bmp_info_header_sz_v1 => buffer_pos = try readV1Info(buffer, &info, &color_table),
-        bmp_info_header_sz_v4 => buffer_pos = try readV4Info(buffer, &info, &color_table),
-        bmp_info_header_sz_v5 => buffer_pos = try readV5Info(buffer, &info, &color_table),
+        bmp_info_header_sz_core =>  buffer_pos = try readCoreInfo(buffer, &info, &color_table),
+        bmp_info_header_sz_v1 =>    buffer_pos = try readV1Info(buffer, &info, &color_table),
+        bmp_info_header_sz_v4 =>    buffer_pos = try readV4Info(buffer, &info, &color_table),
+        bmp_info_header_sz_v5 =>    buffer_pos = try readV5Info(buffer, &info, &color_table),
         else => return ImageError.BmpInvalidHeaderSizeOrVersionUnsupported, 
     }
 
@@ -74,7 +74,6 @@ pub fn load(file: *std.fs.File, image: *Image, allocator: memory.Allocator) !voi
     }
 
     try createImage(buffer, image, &info, &color_table, allocator);
-    print("{}\n", .{buffer[0]});
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -146,7 +145,11 @@ fn readCoreInfo(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable)
     info.width = @intCast(i32, std.mem.readIntNative(i16, buffer[18..20]));
     info.height = @intCast(i32, std.mem.readIntNative(i16, buffer[20..22]));
     info.color_depth = @intCast(u32, std.mem.readIntNative(u16, buffer[24..26]));
-    info.data_size = info.file_sz - info.data_offset;
+    const data_size_signed = @intCast(i32, info.file_sz) - @intCast(i32, info.data_offset);
+    if (data_size_signed < 4) {
+        return ImageError.BmpInvalidBytesInInfoHeader;
+    }
+    info.data_size = @intCast(u32, data_size_signed);
     info.compression = BitmapCompression.RGB;
     const table_offset = bmp_file_header_sz + bmp_info_header_sz_core;
     try readColorTable(buffer[table_offset..], info, color_table, graphics.RGB24);
@@ -306,7 +309,7 @@ inline fn colorSpaceSupported(info: *const BitmapInfo) bool {
     return switch(info.color_space) {
         // calibration information is unused because it doesn't make sense to calibrate individual textures in a game engine
         .CalibratedRGB => true, 
-        // I see no reason to support profiles. Seems like a local / printing thing
+        // I see no reason to support profiles. Seems like a local machine and/or printing thing
         .ProfileLinked => false,
         .ProfileEmbedded => false,
         .WindowsCS => true,
@@ -319,7 +322,7 @@ inline fn compressionSupported(info: *const BitmapInfo) bool {
     return switch(info.compression) {
         .RGB => true,
         .RLE8 => true,
-        .RLE4 => true,
+        .RLE4 => false,
         .BITFIELDS => true,
         .JPEG => false,
         .PNG => false,
@@ -344,14 +347,19 @@ fn createImage(
 ) !void {
     image.width = @intCast(u32, try std.math.absInt(info.width));
     image.height = @intCast(u32, try std.math.absInt(info.height));
+    // basic check width & height information isn't corrupted
+    const remain_sz_div4 = (buffer.len - info.data_offset) >> @as(u5, 2);
+    if (image.width > remain_sz_div4 or image.height > remain_sz_div4) {
+        return ImageError.BmpInvalidSizeInfo;
+    }
+
     image.allocator = allocator;
+    image.pixels = try image.allocator.?.alloc(graphics.RGBA32, image.width * image.height);
+    errdefer image.clear();
 
     // get row length in bytes as a multiple of 4 (rows are padded to 4 byte increments)
     const row_length = ((image.width * info.color_depth + 31) & ~@as(u32, 31)) >> 3;    
     const pixel_buf = buffer[info.data_offset..buffer.len];
-
-    image.pixels = try image.allocator.?.alloc(graphics.RGBA32, image.width * image.height);
-    errdefer image.clear();
 
     try switch(info.compression) {
         .RGB => switch(info.color_depth) {
@@ -372,27 +380,14 @@ fn createImage(
             }
             try readRunLengthEncodedImage(@ptrCast([*]const u8, &pixel_buf[0]), info, color_table, image, row_length);
         },
-        .RLE4 => {
-            if (info.color_depth != 4) {
-                return ImageError.BmpInvalidCompression;
-            }
-            if (color_table.length < 2) {
-                return ImageError.BmpInvalidColorTable;
-            }
-            return ImageError.BmpCompressionUnsupported;
-            // try readRunLengthEncodedImage(u4, pixel_buf, info, color_table, image, row_length);
-        },
         .BITFIELDS, .ALPHABITFIELDS => switch(info.color_depth) {
             16 => try readInlinePixelImage(u16, pixel_buf, info, image, row_length, false),
-            24 => try readInlinePixelImage(u24, pixel_buf, info, image, row_length, false),
             32 => try readInlinePixelImage(u32, pixel_buf, info, image, row_length, false),
             else => return ImageError.BmpInvalidCompression,
         },
         else => return ImageError.BmpCompressionUnsupported,
     };
 }
-
-
 
 fn readColorTableImage(
     comptime PixelType: type, 
@@ -504,6 +499,7 @@ fn readColorTableImage(
     }
 }
 
+// valid masks don't intersect and can't overflow their type (ie 17 bits used w/ 16 bit color)
 fn validColorMasks(comptime PixelType: type, info: *const BitmapInfo) bool {
     const mask_intersection = info.red_mask & info.green_mask & info.blue_mask & info.alpha_mask;
     if (mask_intersection > 0) {
@@ -560,6 +556,8 @@ fn readInlinePixelImage(
     }
 }
 
+// bmps can have a form of compression, RLE, which does the simple trick of encoding repeating pixels via 
+// a number n (repeat ct) and pixel p in contiguous bytes. as of 8/26/23, only RLE8 is supported.
 noinline fn readRunLengthEncodedImage(
     pbuf: [*]const u8,
     info: *const BitmapInfo,
@@ -576,6 +574,7 @@ noinline fn readRunLengthEncodedImage(
     const pixel_buf = pbuf[0..row_sz * image.height]; 
 
     while (i < iter_max) : (i += 1) {
+        // the next action taken is encoded in the next two bytes every iteration (... unless data corrupted)
         const action = try reader.readAction(pixel_buf);
         switch(action) {
             .ReadPixels => {
@@ -608,7 +607,7 @@ const bmp_info_header_sz_v4 = 108;
 const bmp_info_header_sz_v5 = 124;
 const bmp_row_align = 4; // bmp pixel rows pad to 4 bytes
 const bmp_rgb24_sz = 3;
-// the smallest possible (hard disk) bmp has a core header, 1 bit px / 2 colors in table, width in [1,32] and height = 1
+// the smallest possible (hard disk) bmp has a core header, 1 bit px sz (2 colors in table), width in [1,32] and height = 1
 const bmp_min_sz = bmp_file_header_sz + bmp_info_header_sz_core + 2 * bmp_rgb24_sz + bmp_row_align;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -720,19 +719,22 @@ const RLEReader = struct {
     pub fn repeatPixel(self: *RLEReader, color_table: *const BitmapColorTable, image: *Image) !void {
         const repeat_ct = self.action_bytes[0];
         const color_idx = self.action_bytes[1];
-        const col_write_end = self.img_col + repeat_ct;
+        const col_end = self.img_col + repeat_ct;
+        const img_idx_end = self.img_row * self.img_width + col_end;
 
         if (color_idx >= color_table.length) {
             return ImageError.BmpInvalidColorTableIndex;
         }
-        if (self.img_row * self.img_width + col_write_end > image.pixels.?.len) {
+        if (img_idx_end > image.pixels.?.len) {
             return ImageError.UnexpectedEOF;
         }
 
+        var img_idx = self.imageIndex();
         const color = color_table.buffer[color_idx];
-        while (self.img_col < col_write_end) : (self.img_col += 1) {
-            image.pixels.?[self.imageIndex()] = color;
+        while (img_idx < img_idx_end) : (img_idx += 1) {
+            image.pixels.?[img_idx] = color;
         }
+        self.img_col = col_end;
     }
 
     pub fn readPixels(
@@ -740,24 +742,28 @@ const RLEReader = struct {
     ) !void {
         const read_ct = self.action_bytes[1];
         const byte_read_end = self.byte_pos + read_ct; 
-        const col_write_end = self.img_col + read_ct;
+        const col_end = self.img_col + read_ct;
+        const img_idx_end = self.img_row * self.img_width + col_end;
 
         if (byte_read_end >= self.buffer_max) {
             return ImageError.UnexpectedEOF;
         }
-        if (self.img_row * self.img_width + col_write_end > image.pixels.?.len) {
+        if (img_idx_end > image.pixels.?.len) {
             return ImageError.UnexpectedEOF;
         }
 
-        while (self.img_col < col_write_end) : (self.img_col += 1) {
+        var img_idx = self.imageIndex();
+        while (img_idx < img_idx_end) : (img_idx += 1) {
             const color_idx = buffer[self.byte_pos];
             if (color_idx >= color_table.length) {
                 return ImageError.BmpInvalidColorTableIndex;
             }
-            image.pixels.?[self.imageIndex()] = color_table.buffer[color_idx];
+            image.pixels.?[img_idx] = color_table.buffer[color_idx];
             self.byte_pos += 1;
         }
+        self.img_col = col_end;
 
+        // always read a multiple of two bytes
         if ((read_ct >> @as(u3, 1)) * 2 != read_ct) {
             self.byte_pos += 1;
         }
@@ -772,13 +778,21 @@ const RLEReader = struct {
             return ImageError.UnexpectedEOF;
         }
         self.img_col += buffer[self.byte_pos];
-        self.img_row += @intCast(u32, buffer[self.byte_pos + 1] * self.img_row_dir);
+        const new_row = buffer[self.byte_pos + 1] * self.img_row_dir;
+        if (new_row < 0) {
+            return ImageError.BmpInvalidRLEData;
+        }
+        self.img_row += @intCast(u32, new_row);
         self.byte_pos += 2;
     }
 
     pub fn incrementRow(self: *RLEReader) !void {
         self.img_col = 0;
-        self.img_row = @intCast(u32, @intCast(i32, self.img_row) + self.img_row_dir);
+        const new_row = @intCast(i32, self.img_row) + self.img_row_dir;
+        if (new_row < 0) {
+            return ImageError.BmpInvalidRLEData;
+        }
+        self.img_row = @intCast(u32, new_row);
     }
 };
 

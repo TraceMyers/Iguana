@@ -12,6 +12,7 @@ pub const ImageError = error{
     FormatUnsupported,
     BmpFlavorUnsupported,
     BmpInvalidBytesInFileHeader,
+    BmpInvalidBytesInInfoHeader,
     BmpInvalidHeaderSizeOrVersionUnsupported,
     BmpInvalidDataOffset,
     BmpInvalidSizeInfo,
@@ -132,47 +133,58 @@ test "Load Bitmap image" {
 
     print("\n", .{});
 
-    // try loadImage("test/images/puppy.bmp", ImageType.Infer, &test_img, allocator);
+    // 2.7 has coverage over core, v1, v4, and v5
+    // 0.9 is V1 only
 
     var path_buf = LocalStringBuffer(128).new();
-
-    // 2.7 has coverage over core, v1, v4, and v5
-    try path_buf.append("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/");
-
-    // 0.9 is V1 only
-    // try path_buf.append("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/");
-
-    var test_dir = try std.fs.openIterableDirAbsolute(path_buf.string(), .{ .access_sub_paths = false });
-    var dir_it = test_dir.iterate();
+    var valid_paths: [2][]const u8 = .{
+        "d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/",
+        "d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/",
+    };
 
     var filename_lower = LocalStringBuffer(128).new();
     var passed_all: bool = true;
+    var valid_total: u32 = 0;
+    var valid_supported: u32 = 0;
 
-    while (try dir_it.next()) |entry| {
-        try filename_lower.appendLower(entry.name);
-        defer filename_lower.setToPrevLen();
-        if (!string.sameTail(filename_lower.string(), "bmp") and !string.sameTail(filename_lower.string(), "dib")) {
-            continue;
+    inline for(0..2) |i| {
+        try path_buf.replace(valid_paths[i]);
+        var valid_dir = try std.fs.openIterableDirAbsolute(path_buf.string(), .{ .access_sub_paths = false });
+        var valid_it = valid_dir.iterate();
+
+        while (try valid_it.next()) |entry| {
+            try filename_lower.appendLower(entry.name);
+            defer filename_lower.setToPrevLen();
+            if (!string.sameTail(filename_lower.string(), "bmp") and !string.sameTail(filename_lower.string(), "dib")) {
+                continue;
+            }
+
+            try path_buf.append(entry.name);
+            defer path_buf.setToPrevLen();
+
+            // print("loading {s}\n", .{filename_lower.string()});
+            // print("load error {any}\n", .{e})
+            var image = loadImage(path_buf.string(), ImageFormat.Infer, allocator) 
+                catch Image{};
+
+            if (image.pixels != null) {
+                valid_supported += 1;
+                // print("*** processed ***\n", .{});
+                image.clear();
+            }
+            else {
+                passed_all = false;
+            }
+            valid_total += 1;
+            // print("\n// ------------------ //\n\n", .{});
         }
-
-        try path_buf.append(entry.name);
-        defer path_buf.setToPrevLen();
-
-        print("loading {s}\n", .{filename_lower.string()});
-
-        var image = loadImage(path_buf.string(), ImageFormat.Infer, allocator) 
-            catch |e| blk: {print("load error {any}\n", .{e}); break :blk Image{};};
-
-        if (image.pixels != null) {
-            print("*** processed ***\n", .{});
-            image.clear();
-        }
-        else {
-            passed_all = false;
-        }
-
-        print("\n// ------------------ //\n\n", .{});
+        path_buf.setToPrevLen();
     }
+
+    const valid_perc = @intToFloat(f32, valid_supported) / @intToFloat(f32, valid_total) * 100.0;
+    print("bmp test suite 0.9 and 2.7\n", .{});
+    print("valid\n", .{});
+    print("total: {}, passed: {}, passed percentage: {d:0.1}%\n", .{valid_total, valid_supported, valid_perc});
 
     bench.printAllScopeTimers();
     // try std.testing.expect(passed_all);

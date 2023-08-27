@@ -995,7 +995,8 @@ fn createCommandPools() !void {
 
 fn createTextureImage() !void {
     // var texture = try loadImage("d:/projects/zig/core/test/images/puppy.bmp", ImageFormat.Infer, allocator);
-    var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/pal8rle.bmp", ImageFormat.Infer, allocator);
+    // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/pal8rle.bmp", ImageFormat.Infer, allocator);
+    var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/q/rgba32abf.bmp", ImageFormat.Infer, allocator);
     const image_sz: c.VkDeviceSize = texture.height * texture.width * @sizeOf(RGBA32);
 
     var staging_buffer: VkBuffer = undefined;
