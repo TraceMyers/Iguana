@@ -571,7 +571,9 @@ noinline fn readRunLengthEncodedImage(
 
     var i: usize = 0;
     const iter_max: usize = image.width * image.height;
-    const pixel_buf = pbuf[0..row_sz * image.height]; // this is a hack because the compiler is giving me garbage
+    // this is a hack. getting a slice of the same data, same len, but it's not garbage! the compiler is giving me garbage
+    // on the passed-in pbuf and this is the only fix I found.
+    const pixel_buf = pbuf[0..row_sz * image.height]; 
 
     while (i < iter_max) : (i += 1) {
         const action = try reader.readAction(pixel_buf);
@@ -591,9 +593,6 @@ noinline fn readRunLengthEncodedImage(
             .EndImage => {
                 break;
             },
-        }
-        if (reader.img_col > image.width) {
-            print("hey, listen\n", .{});
         }
     }
 }
@@ -658,38 +657,36 @@ const BitmapColorTable = struct {
 
 const RLEReader = struct {
     img_col: u32 = 0,
-    img_row_pos: u32 = 0,
+    img_row: u32 = 0,
+    img_row_dir: i32 = 0,
     img_width: u32 = 0,
     img_height: u32 = 0,
     img_max: u32 = 0,
     byte_pos: u32 = 0,
-    byte_row_inc: i32 = 0,
     buffer_max: u32 = 0,
     action_bytes: [2]u8 = undefined,
 
     pub fn new(info: *const BitmapInfo, image_width: u32, image_height: u32, row_sz: u32) !RLEReader {
         const write_direction = @intToEnum(BitmapReadDirection, @intCast(u8, @boolToInt(info.height < 0)));
-        const byte_pos_signed = (@intCast(i32, image_height) - 1) * @intCast(i32, row_sz);
-        if (byte_pos_signed < 0) {
-            return ImageError.BmpInvalidRLEData;
-        }
         if (write_direction == .BottomUp) {
             return RLEReader{
+                .img_row=image_height-1,
+                .img_row_dir=-1,
                 .img_width=image_width, 
                 .img_height=image_height, 
                 .img_max=image_width * image_height,
-                .byte_pos=@intCast(u32, byte_pos_signed),
-                .byte_row_inc=-@intCast(i32, row_sz),
+                .byte_pos=0,
                 .buffer_max=row_sz * image_height,
             };
         }
         else {
             return RLEReader{
+                .img_row=0,
+                .img_row_dir=1,
                 .img_width=image_width, 
                 .img_height=image_height, 
                 .img_max=image_width * image_height,
                 .byte_pos=0,
-                .byte_row_inc=@intCast(i32, row_sz),
                 .buffer_max=row_sz * image_height
             };
         }
@@ -701,6 +698,7 @@ const RLEReader = struct {
         }
         self.action_bytes[0] = buffer[self.byte_pos];
         self.action_bytes[1] = buffer[self.byte_pos+1];
+        self.byte_pos += 2;
 
         if (self.action_bytes[0] > 0) {
             return RLEAction.RepeatPixels;
@@ -717,8 +715,6 @@ const RLEReader = struct {
         else {
             return RLEAction.ReadPixels;
         }
-
-        self.byte_pos += 2;
     }
 
     pub fn repeatPixel(self: *RLEReader, color_table: *const BitmapColorTable, image: *Image) !void {
@@ -729,18 +725,13 @@ const RLEReader = struct {
         if (color_idx >= color_table.length) {
             return ImageError.BmpInvalidColorTableIndex;
         }
-        if (self.img_row_pos + col_write_end > image.pixels.?.len) {
+        if (self.img_row * self.img_width + col_write_end > image.pixels.?.len) {
             return ImageError.UnexpectedEOF;
         }
 
         const color = color_table.buffer[color_idx];
         while (self.img_col < col_write_end) : (self.img_col += 1) {
             image.pixels.?[self.imageIndex()] = color;
-        }
-
-        // ?
-        while (self.img_col > self.img_width) : (self.img_col -= self.img_width) {
-            self.img_row_pos += self.img_width;
         }
     }
 
@@ -754,7 +745,7 @@ const RLEReader = struct {
         if (byte_read_end >= self.buffer_max) {
             return ImageError.UnexpectedEOF;
         }
-        if (self.img_row_pos + col_write_end > image.pixels.?.len) {
+        if (self.img_row * self.img_width + col_write_end > image.pixels.?.len) {
             return ImageError.UnexpectedEOF;
         }
 
@@ -770,43 +761,24 @@ const RLEReader = struct {
         if ((read_ct >> @as(u3, 1)) * 2 != read_ct) {
             self.byte_pos += 1;
         }
-        
-        // ?
-        while (self.img_col > self.img_width) : (self.img_col -= self.img_width) {
-            self.img_row_pos += self.img_width;
-        }
     }
 
     pub inline fn imageIndex(self: *const RLEReader) u32 {
-        return self.img_row_pos + self.img_col;
+        return self.img_row * self.img_width + self.img_col;
     }
 
     pub fn moveImagePosition(self: *RLEReader, buffer: []const u8) !void {
-        if (self.byte_pos + 1 >= self.buffer_max) {
+        if (self.byte_pos + 1 >= buffer.len) {
             return ImageError.UnexpectedEOF;
         }
-        const dx = buffer[self.byte_pos];
-        const dy = buffer[self.byte_pos + 1];
+        self.img_col += buffer[self.byte_pos];
+        self.img_row += @intCast(u32, buffer[self.byte_pos + 1] * self.img_row_dir);
         self.byte_pos += 2;
-
-        self.img_col += dx;
-        self.img_row_pos = (self.img_row_pos / self.img_width + dy) * self.img_width;
     }
 
     pub fn incrementRow(self: *RLEReader) !void {
         self.img_col = 0;
-        self.img_row_pos += self.img_width;
-
-        const align_4byte_check = (self.byte_pos >> @as(u6, 2)) * 4;
-        if (align_4byte_check != self.byte_pos) {
-            self.byte_pos += 4 - (self.byte_pos - align_4byte_check);
-        }
-
-        const new_byte_pos_signed = @intCast(i32, self.byte_pos) + self.byte_row_inc;
-        if (new_byte_pos_signed < 0) {
-            return ImageError.BmpInvalidRLEData;
-        }
-        self.byte_pos = @intCast(u32, new_byte_pos_signed);
+        self.img_row = @intCast(u32, @intCast(i32, self.img_row) + self.img_row_dir);
     }
 };
 
