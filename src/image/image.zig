@@ -10,6 +10,7 @@ pub const ImageError = error{
     PartialRead,
     UnexpectedEOF,
     FormatUnsupported,
+    DimensionTooLarge,
     BmpFlavorUnsupported,
     BmpInvalidBytesInFileHeader,
     BmpInvalidBytesInInfoHeader,
@@ -56,7 +57,7 @@ pub fn loadImage(file_path: []const u8, format: ImageFormat, allocator: memory.A
     defer file.close();
 
     var image = Image{};
-    
+
     if (format == ImageFormat.Infer) {
         var extension_idx: ?usize = string.findR(file_path, '.');
         if (extension_idx == null) {
@@ -76,18 +77,14 @@ pub fn loadImage(file_path: []const u8, format: ImageFormat, allocator: memory.A
 
         if (string.same(extension_lower, "bmp") or string.same(extension_lower, "dib")) {
             try bmp.load(&file, &image, allocator);
-        }
-        else if (string.same(extension_lower, "jpg") or string.same(extension_lower, "jpeg")) {
+        } else if (string.same(extension_lower, "jpg") or string.same(extension_lower, "jpeg")) {
             return ImageError.FormatUnsupported;
-        }
-        else if (string.same(extension_lower, "png")) {
+        } else if (string.same(extension_lower, "png")) {
             return ImageError.FormatUnsupported;
-        }
-        else {
+        } else {
             return ImageError.InvalidFileExtension;
         }
-    }
-    else switch (format) {
+    } else switch (format) {
         .Bmp => try bmp.load(&file, &image, allocator),
         .Jpg => return ImageError.FormatUnsupported,
         .Png => return ImageError.FormatUnsupported,
@@ -97,12 +94,21 @@ pub fn loadImage(file_path: []const u8, format: ImageFormat, allocator: memory.A
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// --------------------------------------------------------------------------------------------------------------- types
+// ----------------------------------------------------------------------------------------------------------- constants
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// --------------------------------------------------------------------------------------------------------------- enums
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub const ImageFormat = enum { Infer, Bmp, Jpg, Png };
 
 pub const ImageType = enum { None, RGB, RGBA };
+
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// --------------------------------------------------------------------------------------------------------------- types
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub const Image = struct {
     width: u32 = 0,
@@ -147,7 +153,7 @@ test "Load Bitmap image" {
     var valid_total: u32 = 0;
     var valid_supported: u32 = 0;
 
-    inline for(0..2) |i| {
+    inline for (0..2) |i| {
         try path_buf.replace(valid_paths[i]);
         var valid_dir = try std.fs.openIterableDirAbsolute(path_buf.string(), .{ .access_sub_paths = false });
         var valid_it = valid_dir.iterate();
@@ -164,15 +170,18 @@ test "Load Bitmap image" {
 
             // print("loading {s}\n", .{filename_lower.string()});
             // print("load error {any}\n", .{e})
-            var image = loadImage(path_buf.string(), ImageFormat.Infer, allocator) 
-                catch Image{};
+            // var image = loadImage(path_buf.string(), ImageFormat.Infer, allocator)
+            //     catch Image{};
+            var image = loadImage(path_buf.string(), ImageFormat.Infer, allocator) catch |e| blk: {
+                print("file {s} {any}\n", .{filename_lower.string(), e});
+                break :blk Image{};
+            };
 
             if (image.pixels != null) {
                 valid_supported += 1;
                 // print("*** processed ***\n", .{});
                 image.clear();
-            }
-            else {
+            } else {
                 passed_all = false;
             }
             valid_total += 1;
@@ -184,9 +193,8 @@ test "Load Bitmap image" {
     const valid_perc = @intToFloat(f32, valid_supported) / @intToFloat(f32, valid_total) * 100.0;
     print("bmp test suite 0.9 and 2.7\n", .{});
     print("valid\n", .{});
-    print("total: {}, passed: {}, passed percentage: {d:0.1}%\n", .{valid_total, valid_supported, valid_perc});
+    print("total: {}, passed: {}, passed percentage: {d:0.1}%\n", .{ valid_total, valid_supported, valid_perc });
 
     bench.printAllScopeTimers();
     // try std.testing.expect(passed_all);
 }
-
