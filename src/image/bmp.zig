@@ -322,7 +322,7 @@ inline fn compressionSupported(info: *const BitmapInfo) bool {
     return switch(info.compression) {
         .RGB => true,
         .RLE8 => true,
-        .RLE4 => false,
+        .RLE4 => true,
         .BITFIELDS => true,
         .JPEG => false,
         .PNG => false,
@@ -380,6 +380,15 @@ fn createImage(
             32 => try readInlinePixelImage(u32, pixel_buf, info, image, row_length, true),
             else => ImageError.BmpInvalidColorDepth,
         },
+        .RLE4 => {
+            if (info.color_depth != 4) {
+                return ImageError.BmpInvalidCompression;
+            }
+            if (color_table.length < 2) {
+                return ImageError.BmpInvalidColorTable;
+            }
+            try readRunLengthEncodedImage(u4, @ptrCast([*]const u8, &pixel_buf[0]), info, color_table, image);
+        },
         .RLE8 => {
             if (info.color_depth != 8) {
                 return ImageError.BmpInvalidCompression;
@@ -387,7 +396,7 @@ fn createImage(
             if (color_table.length < 2) {
                 return ImageError.BmpInvalidColorTable;
             }
-            try readRunLengthEncodedImage(@ptrCast([*]const u8, &pixel_buf[0]), info, color_table, image, row_length);
+            try readRunLengthEncodedImage(u8, @ptrCast([*]const u8, &pixel_buf[0]), info, color_table, image);
         },
         .BITFIELDS, .ALPHABITFIELDS => switch(info.color_depth) {
             16 => try readInlinePixelImage(u16, pixel_buf, info, image, row_length, false),
@@ -508,7 +517,8 @@ fn readColorTableImage(
     }
 }
 
-// valid masks don't intersect and can't overflow their type (ie 17 bits used w/ 16 bit color)
+// valid masks don't intersect, can't overflow their type (ie 17 bits used w/ 16 bit color), and according to the
+// standard, they should also be contiguous, but I don't see why that matters.
 fn validColorMasks(comptime PixelType: type, info: *const BitmapInfo) bool {
     const mask_intersection = info.red_mask & info.green_mask & info.blue_mask & info.alpha_mask;
     if (mask_intersection > 0) {
@@ -568,23 +578,22 @@ fn readInlinePixelImage(
 // bmps can have a form of compression, RLE, which does the simple trick of encoding repeating pixels via 
 // a number n (repeat ct) and pixel p in contiguous bytes. as of 8/26/23, only RLE8 is supported.
 noinline fn readRunLengthEncodedImage(
+    comptime PixelType: type,
     pbuf: [*]const u8,
     info: *const BitmapInfo,
     color_table: *const BitmapColorTable,
     image: *Image,
-    row_sz: usize
 ) !void {
-    _ = row_sz;
-    var reader = try RLEReader.new(image.width, image.height);
+    var reader = try RLEReader(PixelType).new(image.width, image.height);
 
     var i: usize = 0;
     const iter_max: usize = image.width * image.height;
-    // this is a hack. getting a slice of the same data, same len, but it's not garbage! the compiler is giving me garbage
-    // on the passed-in pbuf and this is the only fix I found.
+    // the compiler is giving me garbage on the passed-in pbuf and the only fix I found is to take a slice of pbuf
+    // s.t. the result is exactly what pbuf should be.
     const pixel_buf = pbuf[0..info.data_size]; 
 
     while (i < iter_max) : (i += 1) {
-        // the next action taken is encoded in the next two bytes every iteration (... unless data corrupted)
+        // the next action taken is encoded in the next two bytes we read
         const action = try reader.readAction(pixel_buf);
         switch(action) {
             .ReadPixels => {
@@ -597,9 +606,7 @@ noinline fn readRunLengthEncodedImage(
                 try reader.moveImagePosition(pixel_buf);
             },
             .EndRow => {
-                if(!reader.incrementRow()) {
-                    break;
-                }
+                reader.incrementRow();
             },
             .EndImage => {
                 break;
@@ -666,128 +673,210 @@ const BitmapColorTable = struct {
     }
 };
 
-const RLEReader = struct {
-    img_col: u32 = 0,
-    img_row: u32 = 0,
-    img_width: u32 = 0,
-    img_height: u32 = 0,
-    byte_pos: u32 = 0,
-    action_bytes: [2]u8 = undefined,
+fn RLEReader(comptime IntType: type) type {
 
-    pub fn new(image_width: u32, image_height: u32) !RLEReader {
-        return RLEReader{
-            .img_row=image_height-1,
-            .img_width=image_width, 
-            .img_height=image_height, 
-            .byte_pos=0,
+    return struct {
+        const RLEReaderType = @This();
+
+        img_col: u32 = 0,
+        img_row: u32 = 0,
+        img_width: u32 = 0,
+        img_height: u32 = 0,
+        byte_pos: u32 = 0,
+        img_write_end: bool = false,
+        action_bytes: [2]u8 = undefined,
+
+        const read_min_multiple: u8 = switch(IntType) {
+            u4 => 4,
+            u8 => 2,
+            else => unreachable,
         };
-    }
+        const read_min_shift: u8 = switch(IntType) {
+            u4 => 2,
+            u8 => 1,
+            else => unreachable,
+        };
 
-    pub fn readAction(self: *RLEReader, buffer: []const u8) !RLEAction {
-        if (self.byte_pos + 1 >= buffer.len) {
-            return ImageError.UnexpectedEOF;
-        }
-        self.action_bytes[0] = buffer[self.byte_pos];
-        self.action_bytes[1] = buffer[self.byte_pos+1];
-        self.byte_pos += 2;
-
-        if (self.action_bytes[0] > 0) {
-            return RLEAction.RepeatPixels;
-        }
-        else if (self.action_bytes[1] == 0) {
-            return RLEAction.EndRow;
-        }
-        else if (self.action_bytes[1] == 1) {
-            return RLEAction.EndImage;
-        }
-        else if (self.action_bytes[1] == 2) {
-            return RLEAction.Move;
-        }
-        else {
-            return RLEAction.ReadPixels;
-        }
-    }
-
-    pub fn repeatPixel(self: *RLEReader, color_table: *const BitmapColorTable, image: *Image) !void {
-        const repeat_ct = self.action_bytes[0];
-        const color_idx = self.action_bytes[1];
-        const col_end = self.img_col + repeat_ct;
-        const img_idx_end = self.img_row * self.img_width + col_end;
-
-        if (color_idx >= color_table.length) {
-            return ImageError.BmpInvalidColorTableIndex;
-        }
-        if (img_idx_end > image.pixels.?.len) {
-            return ImageError.UnexpectedEOF;
+        pub fn new(image_width: u32, image_height: u32) !RLEReaderType {
+            return RLEReaderType{
+                .img_row=image_height-1,
+                .img_width=image_width, 
+                .img_height=image_height, 
+                .byte_pos=0,
+            };
         }
 
-        var img_idx = self.imageIndex();
-        const color = color_table.buffer[color_idx];
-        while (img_idx < img_idx_end) : (img_idx += 1) {
-            image.pixels.?[img_idx] = color;
-        }
-        self.img_col = col_end;
-    }
-
-    pub fn readPixels(
-        self: *RLEReader, buffer: []const u8, color_table: *const BitmapColorTable, image: *Image
-    ) !void {
-        const read_ct = self.action_bytes[1];
-        const byte_read_end = self.byte_pos + read_ct; 
-        const col_end = self.img_col + read_ct;
-        const img_idx_end = self.img_row * self.img_width + col_end;
-
-        if (byte_read_end >= buffer.len) {
-            return ImageError.UnexpectedEOF;
-        }
-        if (img_idx_end > image.pixels.?.len) {
-            return ImageError.UnexpectedEOF;
-        }
-
-        var img_idx = self.imageIndex();
-        while (img_idx < img_idx_end) : (img_idx += 1) {
-            const color_idx = buffer[self.byte_pos];
-            if (color_idx >= color_table.length) {
-                return ImageError.BmpInvalidColorTableIndex;
+        pub fn readAction(self: *RLEReaderType, buffer: []const u8) !RLEAction {
+            if (self.byte_pos + 1 >= buffer.len) {
+                return ImageError.UnexpectedEOF;
             }
-            image.pixels.?[img_idx] = color_table.buffer[color_idx];
-            self.byte_pos += 1;
-        }
-        self.img_col = col_end;
+            self.action_bytes[0] = buffer[self.byte_pos];
+            self.action_bytes[1] = buffer[self.byte_pos+1];
 
-        // always read a multiple of two bytes
-        if ((read_ct >> @as(u3, 1)) * 2 != read_ct) {
-            self.byte_pos += 1;
-        }
-    }
+            if (self.img_write_end) {
+                if (self.action_bytes[0] == 0 and self.action_bytes[1] == 1) {
+                    return RLEAction.EndImage;
+                }
+                else {
+                    return ImageError.BmpInvalidRLEData;
+                }
+            }
+            self.byte_pos += 2;
 
-    pub inline fn imageIndex(self: *const RLEReader) u32 {
-        return self.img_row * self.img_width + self.img_col;
-    }
+            if (self.action_bytes[0] > 0) {
+                return RLEAction.RepeatPixels;
+            }
+            else if (self.action_bytes[1] == 0) {
+                return RLEAction.EndRow;
+            }
+            else if (self.action_bytes[1] == 1) {
+                return RLEAction.EndImage;
+            }
+            else if (self.action_bytes[1] == 2) {
+                return RLEAction.Move;
+            }
+            else {
+                return RLEAction.ReadPixels;
+            }
+        }
 
-    pub fn moveImagePosition(self: *RLEReader, buffer: []const u8) !void {
-        if (self.byte_pos + 1 >= buffer.len) {
-            return ImageError.UnexpectedEOF;
-        }
-        self.img_col += buffer[self.byte_pos];
-        const new_row = @intCast(i32, self.img_row) - @intCast(i32, buffer[self.byte_pos + 1]);
-        if (new_row < 0) {
-            return ImageError.BmpInvalidRLEData;
-        }
-        self.img_row = @intCast(u32, new_row);
-        self.byte_pos += 2;
-    }
+        pub fn repeatPixel(self: *RLEReaderType, color_table: *const BitmapColorTable, image: *Image) !void {
+            const repeat_ct = self.action_bytes[0];
+            const col_end = self.img_col + repeat_ct;
+            const img_idx_end = self.img_row * self.img_width + col_end;
 
-    pub fn incrementRow(self: *RLEReader) bool {
-        self.img_col = 0;
-        const new_row = @intCast(i32, self.img_row) - 1;
-        if (new_row < 0) {
-            return false;
+            if (img_idx_end > image.pixels.?.len) {
+                return ImageError.BmpInvalidRLEData;
+            }
+            var img_idx = self.imageIndex();
+
+            switch(IntType) {
+                u4 => {
+                    const color_indices: [2]u8 = .{(self.action_bytes[1] & 0xf0) >> 4, self.action_bytes[1] & 0x0f};
+                    if (color_indices[0] >= color_table.length or color_indices[1] >= color_table.length) {
+                        return ImageError.BmpInvalidColorTableIndex;
+                    }
+
+                    var color_idx: u8 = 0;
+                    const colors: [2]RGBA32 = .{color_table.buffer[color_indices[0]], color_table.buffer[color_indices[1]]};
+                    while (img_idx < img_idx_end) : (img_idx += 1) {
+                        image.pixels.?[img_idx] = colors[color_idx];
+                        color_idx = if (color_idx == 0) 1 else 0;
+                    }
+                },
+                u8 => {
+                    const color_idx = self.action_bytes[1];
+                    if (color_idx >= color_table.length) {
+                        return ImageError.BmpInvalidColorTableIndex;
+                    }
+
+                    const color = color_table.buffer[color_idx];
+                    while (img_idx < img_idx_end) : (img_idx += 1) {
+                        image.pixels.?[img_idx] = color;
+                    }
+                },
+                else => unreachable,
+            }
+            self.img_col = col_end;
         }
-        self.img_row = @intCast(u32, new_row);
-        return true;
-    }
-};
+
+        pub fn readPixels(
+            self: *RLEReaderType, buffer: []const u8, color_table: *const BitmapColorTable, image: *Image
+        ) !void {
+            const read_ct = self.action_bytes[1];
+            const col_end = self.img_col + read_ct;
+            const img_idx_end = self.img_row * self.img_width + col_end;
+            if (img_idx_end > image.pixels.?.len) {
+                return ImageError.BmpInvalidRLEData;
+            }
+
+            const word_read_ct = read_ct >> read_min_shift;
+            const word_leveled_read_ct = word_read_ct << read_min_shift;
+            const words_used_entirely = word_leveled_read_ct == read_ct;
+
+            var byte_read_end: u32 = self.byte_pos + read_ct / read_min_shift;
+            if (!words_used_entirely) {
+                byte_read_end += read_min_multiple - (read_ct - word_leveled_read_ct);
+            }
+            if (byte_read_end >= buffer.len) {
+                return ImageError.UnexpectedEOF;
+            }
+            var img_idx = self.imageIndex();
+ 
+            switch (IntType) {
+                u4 => {
+                    var alternator: u8 = 0;
+                    while (img_idx < img_idx_end) : (img_idx += 1) {
+                        const color_idx = switch(alternator) {
+                            0 => blk: {
+                                const idx = (buffer[self.byte_pos] & 0xf0) >> 4;
+                                alternator = 1;
+                                break :blk idx;
+                            },
+                            1 => blk: {
+                                const idx = buffer[self.byte_pos] & 0x0f;
+                                alternator = 0;
+                                self.byte_pos += 1;
+                                break :blk idx;
+                            },
+                            else => unreachable,
+                        };
+                        if (color_idx >= color_table.length) {
+                            return ImageError.BmpInvalidColorTableIndex;
+                        }
+                        image.pixels.?[img_idx] = color_table.buffer[color_idx];
+                    }
+                },
+                u8 => {
+                    while (img_idx < img_idx_end) : (img_idx += 1) {
+                        const color_idx = buffer[self.byte_pos];
+                        if (color_idx >= color_table.length) {
+                            return ImageError.BmpInvalidColorTableIndex;
+                        }
+                        image.pixels.?[img_idx] = color_table.buffer[color_idx];
+                        self.byte_pos += 1;
+                    }
+
+                },
+                else => unreachable,
+            }
+            self.img_col = col_end;
+            self.byte_pos = byte_read_end;
+        }
+
+        pub inline fn imageIndex(self: *const RLEReaderType) u32 {
+            return self.img_row * self.img_width + self.img_col;
+        }
+
+        pub fn moveImagePosition(self: *RLEReaderType, buffer: []const u8) !void {
+            if (self.byte_pos + 1 >= buffer.len) {
+                return ImageError.UnexpectedEOF;
+            }
+            self.img_col += buffer[self.byte_pos];
+            const new_row = @intCast(i32, self.img_row) - @intCast(i32, buffer[self.byte_pos + 1]);
+            if (new_row < 0) {
+                // the next action should be end of image. if not, error.
+                self.img_write_end = true;
+            }
+            else {
+                self.img_row = @intCast(u32, new_row);
+            }
+            self.byte_pos += 2;
+        }
+
+        pub fn incrementRow(self: *RLEReaderType) void {
+            self.img_col = 0;
+            const new_row = @intCast(i32, self.img_row) - 1;
+            if (new_row < 0) {
+                // the next action should be end of image. if not, error.
+                self.img_write_end = true;
+            }
+            else {
+                self.img_row = @intCast(u32, new_row);
+            }
+        }
+    };
+}
 
 const FxPt2Dot30 = extern struct {
     data: u32,
