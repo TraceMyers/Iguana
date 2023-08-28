@@ -1000,7 +1000,7 @@ fn createTextureImage() !void {
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/rle8-encoded-320x240.bmp", ImageFormat.Infer, allocator);
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/rle8-delta-320x240.bmp", ImageFormat.Infer, allocator);
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/32bpp-101110-320x240.bmp", ImageFormat.Infer, allocator);
-    var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/rle4-absolute-320x240.bmp", ImageFormat.Infer, allocator);
+    var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/rle4-delta-320x240.bmp", ImageFormat.Infer, allocator);
     const image_sz: c.VkDeviceSize = texture.height * texture.width * @sizeOf(RGBA32);
 
     var staging_buffer: VkBuffer = undefined;

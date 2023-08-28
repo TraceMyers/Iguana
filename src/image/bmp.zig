@@ -712,6 +712,7 @@ fn RLEReader(comptime IntType: type) type {
             }
             self.action_bytes[0] = buffer[self.byte_pos];
             self.action_bytes[1] = buffer[self.byte_pos+1];
+            self.byte_pos += 2;
 
             if (self.img_write_end) {
                 if (self.action_bytes[0] == 0 and self.action_bytes[1] == 1) {
@@ -721,22 +722,15 @@ fn RLEReader(comptime IntType: type) type {
                     return ImageError.BmpInvalidRLEData;
                 }
             }
-            self.byte_pos += 2;
 
             if (self.action_bytes[0] > 0) {
                 return RLEAction.RepeatPixels;
             }
-            else if (self.action_bytes[1] == 0) {
-                return RLEAction.EndRow;
-            }
-            else if (self.action_bytes[1] == 1) {
-                return RLEAction.EndImage;
-            }
-            else if (self.action_bytes[1] == 2) {
-                return RLEAction.Move;
+            else if (self.action_bytes[1] > 2) {
+                return RLEAction.ReadPixels;
             }
             else {
-                return RLEAction.ReadPixels;
+                return @intToEnum(RLEAction, self.action_bytes[1]);
             }
         }
 
@@ -786,6 +780,7 @@ fn RLEReader(comptime IntType: type) type {
             const read_ct = self.action_bytes[1];
             const col_end = self.img_col + read_ct;
             const img_idx_end = self.img_row * self.img_width + col_end;
+
             if (img_idx_end > image.pixels.?.len) {
                 return ImageError.BmpInvalidRLEData;
             }
@@ -793,52 +788,27 @@ fn RLEReader(comptime IntType: type) type {
             const word_read_ct = read_ct >> read_min_shift;
             const word_leveled_read_ct = word_read_ct << read_min_shift;
             const words_used_entirely = word_leveled_read_ct == read_ct;
-
             var byte_read_end: u32 = self.byte_pos + read_ct / read_min_shift;
+
             if (!words_used_entirely) {
                 byte_read_end += read_min_multiple - (read_ct - word_leveled_read_ct);
             }
             if (byte_read_end >= buffer.len) {
                 return ImageError.UnexpectedEOF;
             }
-            var img_idx = self.imageIndex();
- 
-            switch (IntType) {
-                u4 => {
-                    var alternator: u8 = 0;
-                    while (img_idx < img_idx_end) : (img_idx += 1) {
-                        const color_idx = switch(alternator) {
-                            0 => blk: {
-                                const idx = (buffer[self.byte_pos] & 0xf0) >> 4;
-                                alternator = 1;
-                                break :blk idx;
-                            },
-                            1 => blk: {
-                                const idx = buffer[self.byte_pos] & 0x0f;
-                                alternator = 0;
-                                self.byte_pos += 1;
-                                break :blk idx;
-                            },
-                            else => unreachable,
-                        };
-                        if (color_idx >= color_table.length) {
-                            return ImageError.BmpInvalidColorTableIndex;
-                        }
-                        image.pixels.?[img_idx] = color_table.buffer[color_idx];
-                    }
-                },
-                u8 => {
-                    while (img_idx < img_idx_end) : (img_idx += 1) {
-                        const color_idx = buffer[self.byte_pos];
-                        if (color_idx >= color_table.length) {
-                            return ImageError.BmpInvalidColorTableIndex;
-                        }
-                        image.pixels.?[img_idx] = color_table.buffer[color_idx];
-                        self.byte_pos += 1;
-                    }
 
-                },
-                else => unreachable,
+            const idx_buffer: []const IntType = 
+                @ptrCast([*]const IntType, @alignCast(@alignOf(IntType), &buffer[self.byte_pos]))[0..read_ct];
+            var idx_index: usize = 0;
+            var img_idx = self.imageIndex();
+
+            while (img_idx < img_idx_end) : (img_idx += 1) {
+                const color_idx = idx_buffer[idx_index];
+                if (color_idx >= color_table.length) {
+                    return ImageError.BmpInvalidColorTableIndex;
+                }
+                image.pixels.?[img_idx] = color_table.buffer[color_idx];
+                idx_index += 1;
             }
             self.img_col = col_end;
             self.byte_pos = byte_read_end;
