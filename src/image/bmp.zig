@@ -97,6 +97,12 @@ fn loadFileAndCoreHeaders(file: *std.fs.File, allocator: anytype, min_sz: usize)
 
 fn loadRemainder(file: *std.fs.File, buffer: []u8, info: *BitmapInfo) !void {
     const cur_offset = bmp_file_header_sz + bmp_info_header_sz_core;
+    if (info.data_offset > bmp_file_header_sz + bmp_info_header_sz_v5 + @sizeOf(RGBA32)*256 + 4
+        or info.data_offset <= cur_offset
+    ) {
+        return ImageError.BmpInvalidBytesInInfoHeader;
+    }
+    
     for (cur_offset..info.data_offset) |i| {
         buffer[i] = try file.reader().readByte();
     }
@@ -158,7 +164,7 @@ fn readCoreInfo(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable)
 
 fn readV1Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !usize {
     info.header_type = BitmapHeaderType.V1;
-    readV1HeaderPart(buffer, info);
+    try readV1HeaderPart(buffer, info);
     var mask_offset: usize = 0;
     if (info.compression == BitmapCompression.BITFIELDS) {
         readColorMasks(buffer, info, false);
@@ -175,8 +181,8 @@ fn readV1Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !
 
 fn readV4Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !usize {
     info.header_type = BitmapHeaderType.V4;
-    readV1HeaderPart(buffer, info);
-    readV4HeaderPart(buffer, info);
+    try readV1HeaderPart(buffer, info);
+    try readV4HeaderPart(buffer, info);
     const table_offset = bmp_file_header_sz + bmp_info_header_sz_v4;
     try readColorTable(buffer[table_offset..], info, color_table, graphics.RGB32);
     return table_offset + color_table.length * @sizeOf(graphics.RGB32);
@@ -184,26 +190,39 @@ fn readV4Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !
 
 fn readV5Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !usize {
     info.header_type = BitmapHeaderType.V5;
-    readV1HeaderPart(buffer, info);
-    readV4HeaderPart(buffer, info);
+    try readV1HeaderPart(buffer, info);
+    try readV4HeaderPart(buffer, info);
     readV5HeaderPart(buffer, info);
     const table_offset = bmp_file_header_sz + bmp_info_header_sz_v5;
     try readColorTable(buffer[table_offset..], info, color_table, graphics.RGB32);
     return table_offset + color_table.length * @sizeOf(graphics.RGB32);
 }
 
-inline fn readV1HeaderPart(buffer: []u8, info: *BitmapInfo) void {
+fn readV1HeaderPart(buffer: []u8, info: *BitmapInfo) !void {
     info.width = std.mem.readIntNative(i32, buffer[18..22]);
     info.height = std.mem.readIntNative(i32, buffer[22..26]);
     info.color_depth = @intCast(u32, std.mem.readIntNative(u16, buffer[28..30]));
-    info.compression = @intToEnum(BitmapCompression, std.mem.readIntNative(u32, buffer[30..34]));
+    const compression_int = std.mem.readIntNative(u32, buffer[30..34]);
+    if (compression_int > 9) {
+        return ImageError.BmpInvalidBytesInInfoHeader;
+    }
+    info.compression = @intToEnum(BitmapCompression, compression_int);
     info.data_size = std.mem.readIntNative(u32, buffer[34..38]);
     info.color_ct = std.mem.readIntNative(u32, buffer[46..50]);
 }
 
-fn readV4HeaderPart(buffer: []u8, info: *BitmapInfo) void {
+fn readV4HeaderPart(buffer: []u8, info: *BitmapInfo) !void {
     readColorMasks(buffer, info, true);
-    info.color_space = @intToEnum(BitmapColorSpace, std.mem.readIntNative(u32, buffer[70..74]));
+    const color_space_int = std.mem.readIntNative(u32, buffer[70..74]);
+    if (color_space_int != 0 
+        and color_space_int != 0x4c494e4b 
+        and color_space_int != 0x4d424544 
+        and color_space_int != 0x57696e20
+        and color_space_int != 0x73524742
+    ) {
+        return ImageError.BmpInvalidBytesInInfoHeader;
+    }
+    info.color_space = @intToEnum(BitmapColorSpace, color_space_int);
     if (info.color_space != BitmapColorSpace.CalibratedRGB) {
         return;
     }
@@ -352,13 +371,15 @@ fn createImage(
     if (img_sz > memory.MAX_SZ) {
         return ImageError.TooLarge;
     }
-
     // basic check width & height information isn't corrupted
     const remain_sz_div4 = (buffer.len - info.data_offset) >> @as(u5, 2);
     if (image.width > remain_sz_div4 or image.height > remain_sz_div4) {
         if (info.compression != .RLE8 and info.compression != .RLE4) {
             return ImageError.BmpInvalidSizeInfo;
         }
+    }
+    if (image.width == 0 or image.height == 0) {
+        return ImageError.BmpInvalidSizeInfo;
     }
 
     image.allocator = allocator;
@@ -653,11 +674,11 @@ const BitmapColorSpace = enum(u32) {
 };
 
 const RLEAction = enum {
-    EndRow,
-    EndImage,
-    Move,
-    ReadPixels,
-    RepeatPixels
+    EndRow,         // 0
+    EndImage,       // 1
+    Move,           // 2
+    ReadPixels,     // 3
+    RepeatPixels    // 4
 };
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -696,6 +717,11 @@ fn RLEReader(comptime IntType: type) type {
             u8 => 1,
             else => unreachable,
         };
+        const byte_shift: u8 = switch(IntType) {
+            u4 => 1,
+            u8 => 0,
+            else => unreachable,
+        };
 
         pub fn new(image_width: u32, image_height: u32) !RLEReaderType {
             return RLEReaderType{
@@ -730,6 +756,7 @@ fn RLEReader(comptime IntType: type) type {
                 return RLEAction.ReadPixels;
             }
             else {
+                // 0 = EndRow, 1 = EndImage, 2 = Move
                 return @intToEnum(RLEAction, self.action_bytes[1]);
             }
         }
@@ -785,33 +812,56 @@ fn RLEReader(comptime IntType: type) type {
                 return ImageError.BmpInvalidRLEData;
             }
 
-            const word_read_ct = read_ct >> read_min_shift;
-            const word_leveled_read_ct = word_read_ct << read_min_shift;
-            const words_used_entirely = word_leveled_read_ct == read_ct;
-            var byte_read_end: u32 = self.byte_pos + read_ct / read_min_shift;
+            // read_ct = 3
+            const word_read_ct = read_ct >> read_min_shift; // 3 / 4 = 0 
+            const word_leveled_read_ct = word_read_ct << read_min_shift; // 0 * 4 = 0
+            const word_truncated = @intCast(u8, @boolToInt(word_leveled_read_ct != read_ct)); // true
+            const word_aligned_read_ct = @intCast(u32, word_leveled_read_ct) + read_min_multiple * word_truncated; // 0 + 4
+            const byte_read_end = self.byte_pos + (word_aligned_read_ct >> byte_shift); //  add 4
 
-            if (!words_used_entirely) {
-                byte_read_end += read_min_multiple - (read_ct - word_leveled_read_ct);
-            }
             if (byte_read_end >= buffer.len) {
                 return ImageError.UnexpectedEOF;
             }
 
-            const idx_buffer: []const IntType = 
-                @ptrCast([*]const IntType, @alignCast(@alignOf(IntType), &buffer[self.byte_pos]))[0..read_ct];
-            var idx_index: usize = 0;
             var img_idx = self.imageIndex();
-
-            while (img_idx < img_idx_end) : (img_idx += 1) {
-                const color_idx = idx_buffer[idx_index];
-                if (color_idx >= color_table.length) {
-                    return ImageError.BmpInvalidColorTableIndex;
-                }
-                image.pixels.?[img_idx] = color_table.buffer[color_idx];
-                idx_index += 1;
+            var byte_idx: usize = self.byte_pos;
+            switch(IntType) {
+                u4 => {
+                    var high_low: u1 = 0;
+                    while (img_idx < img_idx_end) : (img_idx += 1) {
+                        const color_idx = switch(high_low) {
+                            0 => blk: {
+                                const idx = (buffer[byte_idx] & 0xf0) >> 4;
+                                high_low = 1;
+                                break :blk idx;
+                            },
+                            1 => blk: {
+                                const idx = buffer[byte_idx] & 0x0f;
+                                high_low = 0;
+                                byte_idx += 1;
+                                break :blk idx;
+                            },
+                        };
+                        if (color_idx >= color_table.length) {
+                            return ImageError.BmpInvalidColorTableIndex;
+                        }
+                        image.pixels.?[img_idx] = color_table.buffer[color_idx];
+                    }
+                },
+                u8 => {
+                    while (img_idx < img_idx_end) : (img_idx += 1) {
+                        const color_idx: IntType = buffer[byte_idx];
+                        if (color_idx >= color_table.length) {
+                            return ImageError.BmpInvalidColorTableIndex;
+                        }
+                        image.pixels.?[img_idx] = color_table.buffer[color_idx];
+                        byte_idx += 1;
+                    }
+                },
+                else => unreachable,
             }
-            self.img_col = col_end;
             self.byte_pos = byte_read_end;
+            self.img_col = col_end;
         }
 
         pub inline fn imageIndex(self: *const RLEReaderType) u32 {

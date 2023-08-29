@@ -10,7 +10,7 @@ pub fn LocalStringBuffer(comptime sz: comptime_int) type {
 
         bytes: [sz]u8 = undefined,
         len: usize = 0,
-        prev_len: usize = 0,
+        anchor_len: usize = 0,
 
         pub inline fn new() LSBufType {
             return LSBufType{};
@@ -19,26 +19,108 @@ pub fn LocalStringBuffer(comptime sz: comptime_int) type {
         pub inline fn append(self: *LSBufType, append_str: []const u8) StringError!void {
             const new_len = self.len + append_str.len;
             try copyToBuffer(append_str, self.bytes[self.len..]);
-            self.prev_len = self.len;
             self.len = new_len;
         }
 
         pub inline fn appendLower(self: *LSBufType, append_str: []const u8) StringError!void {
             const new_len = self.len + append_str.len;
             try copyLowerToBuffer(append_str, self.bytes[self.len..]);
-            self.prev_len = self.len;
             self.len = new_len;
         }
 
         pub inline fn replace(self: *LSBufType, replace_str: []const u8) StringError!void {
             const new_len = replace_str.len;
             try copyToBuffer(replace_str, self.bytes[0..new_len]);
-            self.prev_len = self.len;
             self.len = new_len;
         }
 
-        pub inline fn setToPrevLen(self: *LSBufType) void {
-            self.len = self.prev_len;
+        pub inline fn replaceLower(self: *LSBufType, replace_str: []const u8) StringError!void {
+            const new_len = replace_str.len;
+            try copyLowerToBuffer(replace_str, self.bytes[0..new_len]);
+            self.len = new_len;
+        }
+
+        pub fn appendHex(self: *LSBufType, append_str: []const u8, byte_spaces: bool) StringError!void {
+            if (append_str.len == 0) {
+                return;
+            }
+            if (byte_spaces) {
+                const new_len = (self.len + append_str.len * 3) - 1;
+                if (new_len > self.bytes.len) {
+                    return StringError.BufferTooShort;
+                }
+            }
+            else {
+                const new_len = self.len + append_str.len * 2;
+                if (new_len > self.bytes.len) {
+                    return StringError.BufferTooShort;
+                }
+            }
+            
+            var buf_pos: usize = self.len;
+            for (0..append_str.len) |i| {
+                var nibbles: [2]u8 = .{ (append_str[i] & 0xf0) >> 4, append_str[i] & 0x0f };
+                inline for (0..2) |j| {
+                    if (nibbles[j] <= 9) {
+                        self.bytes[buf_pos] = nibbles[j] + to_numchar_diff;
+                    }
+                    else {
+                        self.bytes[buf_pos] = nibbles[j] + to_hexletter_diff;
+                    }
+                    buf_pos += 1;
+                }
+                if (i < append_str.len - 1 and byte_spaces) {
+                    self.bytes[buf_pos] = ' ';
+                    buf_pos += 1;
+                }
+            }
+            self.len = buf_pos;
+        }
+
+        // for now, assuming decimal
+        pub fn appendUnsignedNumber(self: *LSBufType, append_num: anytype) StringError!void {
+            // const negative = append_num < 0;
+            // append_num = std.math.absInt(append_num);
+            var reverse_buf: [21]u8 = undefined;
+            var i: usize = 20;
+            var num = append_num;
+            while (i >= 0) : (i -= 1) {
+                var remainder = num % 10;
+                var next_num = num / 10;
+                if (next_num > 0) {
+                    reverse_buf[i] = @intCast(u8, remainder) + to_numchar_diff;
+                }
+                else {
+                    reverse_buf[i] = @intCast(u8, num) + to_numchar_diff;
+                    break;
+                }
+                num = next_num;
+            }
+            // if (negative and i > 0) {
+            //     i -= 1;
+            //     reverse_buf[i] = '-';
+            // }
+            const number_slice = reverse_buf[i..21];
+            const new_len = self.len + number_slice.len;
+            try copyToBuffer(number_slice, self.bytes[self.len..]);
+            self.len = new_len;
+        }
+
+        pub fn appendChar(self: *LSBufType, append_char: u8) StringError!void {
+            const new_len = self.len + 1;
+            if (new_len > self.bytes.len) {
+                return StringError.BufferTooShort;
+            }
+            self.bytes[self.len] = append_char;
+            self.len = new_len;
+        }
+
+        pub inline fn setAnchor(self: *LSBufType) void {
+            self.anchor_len = self.len;
+        }
+
+        pub inline fn revertToAnchor(self: *LSBufType) void {
+            self.len = self.anchor_len;
         }
 
         pub inline fn string(self: *const LSBufType) []const u8 {
@@ -182,3 +264,5 @@ const StringError = error{
 };
 
 const to_lower_diff: comptime_int = 'a' - 'A';
+const to_numchar_diff: comptime_int = '0';
+const to_hexletter_diff: comptime_int = 'a' - 10;

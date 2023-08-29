@@ -77,14 +77,18 @@ pub fn loadImage(file_path: []const u8, format: ImageFormat, allocator: memory.A
 
         if (string.same(extension_lower, "bmp") or string.same(extension_lower, "dib")) {
             try bmp.load(&file, &image, allocator);
-        } else if (string.same(extension_lower, "jpg") or string.same(extension_lower, "jpeg")) {
+        }
+        else if (string.same(extension_lower, "jpg") or string.same(extension_lower, "jpeg")) {
             return ImageError.FormatUnsupported;
-        } else if (string.same(extension_lower, "png")) {
+        }
+        else if (string.same(extension_lower, "png")) {
             return ImageError.FormatUnsupported;
-        } else {
+        }
+        else {
             return ImageError.InvalidFileExtension;
         }
-    } else switch (format) {
+    }
+    else switch (format) {
         .Bmp => try bmp.load(&file, &image, allocator),
         .Jpg => return ImageError.FormatUnsupported,
         .Png => return ImageError.FormatUnsupported,
@@ -94,9 +98,14 @@ pub fn loadImage(file_path: []const u8, format: ImageFormat, allocator: memory.A
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ----------------------------------------------------------------------------------------------------------- constants
+// -------------------------------------------------------------------------------------------------------- debug params
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+pub var rle_debug_output: bool = false;
+
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ----------------------------------------------------------------------------------------------------------- constants
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // --------------------------------------------------------------------------------------------------------------- enums
@@ -143,57 +152,81 @@ test "Load Bitmap image" {
     // 0.9 is V1 only
 
     var path_buf = LocalStringBuffer(128).new();
-    var valid_paths: [2][]const u8 = .{
+    const test_paths: [6][]const u8 = .{
         "d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/",
         "d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/",
+        "d:/projects/zig/core/test/nocommit/bmpsuite-2.7/q/",
+        "d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/questionable/",
+        "d:/projects/zig/core/test/nocommit/bmpsuite-2.7/b/",
+        "d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/corrupt/",
     };
 
     var filename_lower = LocalStringBuffer(128).new();
-    var passed_all: bool = true;
     var valid_total: u32 = 0;
     var valid_supported: u32 = 0;
+    var questionable_total: u32 = 0;
+    var questionable_supported: u32 = 0;
+    var corrupt_total: u32 = 0;
+    var corrupt_supported: u32 = 0;
 
-    inline for (0..2) |i| {
-        try path_buf.replace(valid_paths[i]);
-        var valid_dir = try std.fs.openIterableDirAbsolute(path_buf.string(), .{ .access_sub_paths = false });
-        var valid_it = valid_dir.iterate();
+    inline for (0..6) |i| {
+        try path_buf.replace(test_paths[i]);
+        path_buf.setAnchor();
+        var test_dir = try std.fs.openIterableDirAbsolute(path_buf.string(), .{ .access_sub_paths = false });
+        var test_it = test_dir.iterate();
 
-        while (try valid_it.next()) |entry| {
-            try filename_lower.appendLower(entry.name);
-            defer filename_lower.setToPrevLen();
-            if (!string.sameTail(filename_lower.string(), "bmp") and !string.sameTail(filename_lower.string(), "dib")) {
+        while (try test_it.next()) |entry| {
+            try filename_lower.replaceLower(entry.name);
+            if (!string.sameTail(filename_lower.string(), "bmp") 
+                and !string.sameTail(filename_lower.string(), "dib")
+                and !string.sameTail(filename_lower.string(), "jpg")
+                and !string.same(filename_lower.string(), "nofileextension")
+            ) {
                 continue;
             }
 
             try path_buf.append(entry.name);
-            defer path_buf.setToPrevLen();
+            defer path_buf.revertToAnchor();
 
-            // print("loading {s}\n", .{filename_lower.string()});
-            // print("load error {any}\n", .{e})
-            // var image = loadImage(path_buf.string(), ImageFormat.Infer, allocator)
-            //     catch Image{};
-            var image = loadImage(path_buf.string(), ImageFormat.Infer, allocator) catch |e| blk: {
-                print("file {s} {any}\n", .{filename_lower.string(), e});
+            var image = loadImage(path_buf.string(), ImageFormat.Bmp, allocator) catch |e| blk: {
+                if (i < 2) {
+                    print("valid file {s} {any}\n", .{filename_lower.string(), e});
+                }
                 break :blk Image{};
             };
 
             if (image.pixels != null) {
-                valid_supported += 1;
-                // print("*** processed ***\n", .{});
+                if (i < 2) {
+                    valid_supported += 1;
+                }
+                else if (i < 4) {
+                    questionable_supported += 1;
+                }
+                else {
+                    corrupt_supported += 1;
+                }
                 image.clear();
-            } else {
-                passed_all = false;
             }
-            valid_total += 1;
-            // print("\n// ------------------ //\n\n", .{});
+
+            if (i < 2) {
+                valid_total += 1;
+            }
+            else if (i < 4) {
+                questionable_total += 1;
+            }
+            else {
+                corrupt_total += 1;
+            }
         }
-        path_buf.setToPrevLen();
     }
 
     const valid_perc = @intToFloat(f32, valid_supported) / @intToFloat(f32, valid_total) * 100.0;
+    const quest_perc = @intToFloat(f32, questionable_supported) / @intToFloat(f32, questionable_total) * 100.0;
+    const corpt_perc = @intToFloat(f32, corrupt_supported) / @intToFloat(f32, corrupt_total) * 100.0;
     print("bmp test suite 0.9 and 2.7\n", .{});
-    print("valid\n", .{});
-    print("total: {}, passed: {}, passed percentage: {d:0.1}%\n", .{ valid_total, valid_supported, valid_perc });
+    print("[VALID]        total: {}, passed: {}, passed percentage: {d:0.1}%\n", .{ valid_total, valid_supported, valid_perc });
+    print("[QUESTIONABLE] total: {}, passed: {}, passed percentage: {d:0.1}%\n", .{ questionable_total, questionable_supported, quest_perc });
+    print("[CORRUPT]      total: {}, passed: {}, passed percentage: {d:0.1}%\n", .{ corrupt_total, corrupt_supported, corpt_perc });
 
     bench.printAllScopeTimers();
     // try std.testing.expect(passed_all);
