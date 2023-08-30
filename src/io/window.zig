@@ -78,7 +78,7 @@ const GLFWError = error {
 // -------------------------------------------------------------------------------------------------------------- import
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const vk = @import("vulkan.zig");
-const gfx = @import("graphics.zig");
-const c = gfx.c;
+const vk = @import("../vulkan.zig");
+const gfx = @import("../graphics.zig");
+const c = @import("../ext.zig").c;
 const print = @import("std").debug.print;

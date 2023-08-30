@@ -61,31 +61,45 @@ pub fn WindowTimer(comptime window_size: comptime_int) type {
 
         const TimerType = @This();
 
-        times: [window_size]u64 = undefined,
+        const inv_window_size = 1.0 / @floatCast(comptime_float, window_size);
+
+        times: [window_size]i128 = undefined,
         time_idx: usize = 0,
-        start_time: u64 = 0,
+        start_time: i128 = 0,
 
         pub inline fn new() TimerType {
-            return TimerType{.times = std.mem.zeroes([window_size]u64)};
+            return TimerType{.times = std.mem.zeroes([window_size]i128)};
+        }
+
+        pub inline fn seedTime(self: *TimerType, seed: f32) void {
+            for (0..window_size) |i| {
+                self.times[i] = @floatToInt(u64, convert.milliToNano(seed));
+            }
         }
 
         pub inline fn start(self: *TimerType) void {
-            var start_inst = time.Instant.now() catch time.Instant{.timestamp=0};
-            self.start_time = start_inst.timestamp;
+            self.start_time = std.time.nanoTimestamp();
         }
 
         pub inline fn stop(self: *TimerType) void {
-            var end_inst = time.Instant.now() catch time.Instant{.timestamp=self.start_time};
-            self.times[self.time_idx] = end_inst.timestamp - self.start_time;
+            self.times[self.time_idx] = std.time.nanoTimestamp() - self.start_time;
             self.time_idx = if (self.time_idx == window_size - 1) 0 else self.time_idx + 1;
         }
 
-        pub inline fn runningAvgMs(self: *TimerType) f64 {
+        pub inline fn runningAvgMs64(self: *TimerType) f64 {
             var ms: f64 = 0.0;
             for (0..window_size) |i| {
-                ms += convert.nano100ToMilli(@intToFloat(f64, self.times[i]));
+                ms += convert.nanoToMilli(@intToFloat(f64, self.times[i]));
             }
-            return ms / @intToFloat(f64, window_size);
+            return ms * inv_window_size;
+        }
+
+        pub inline fn runningAvgMs32(self: *TimerType) f32 {
+            var ns : i128 = 0;
+            for (0..window_size) |i| {
+                ns += self.times[i];
+            }
+            return @floatCast(f32, convert.nanoToMilli(@intToFloat(f64, ns) * inv_window_size));
         }
     };
 }
@@ -112,8 +126,8 @@ pub fn printAllScopeTimers() void {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 const InternalTimer = struct {
-    name: [64]u8 = undefined, 
-    total_time: u64 = 0, // in hundreds of nanoseconds
+    name: [64]u8 = undefined,
+    total_time: u64 = 0, // in nanoseconds
     max_time: u64 = 0,
     min_time: u64 = std.math.maxInt(u64),
     log_ct: u64 = 0,

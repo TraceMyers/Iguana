@@ -1344,5 +1344,5 @@ const benchmark = @import("benchmark.zig");
 const ScopeTimer = benchmark.ScopeTimer;
 const getScopeTimerID = benchmark.getScopeTimerID;
 const kmath = @import("math.zig");
-const c = @import("graphics.zig").c;
+const c = @import("ext.zig").c;
 const builtin = @import("builtin");

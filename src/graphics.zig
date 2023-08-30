@@ -79,9 +79,4 @@ const fMat4x4 = kmath.fMat4x4;
 const fVec2 = kmath.fVec2;
 const fVec3 = kmath.fVec3;
 const LocalArray = @import("array.zig").LocalArray;
-
-pub const c = @cImport({
-    // @cInclude("glfwvulk.h");
-    // @cInclude("vk_mem_alloc.h");
-    @cInclude("memoryapi.h");
-});
+const c = @import("ext.zig").c;

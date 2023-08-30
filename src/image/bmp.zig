@@ -838,7 +838,7 @@ fn RLEReader(comptime IntType: type) type {
                     const colors: [2]RGBA32 = .{color_table.buffer[color_indices[0]], color_table.buffer[color_indices[1]]};
                     while (img_idx < img_idx_end) : (img_idx += 1) {
                         image.pixels.?[img_idx] = colors[color_idx];
-                        color_idx = if (color_idx == 0) 1 else 0;
+                        color_idx = 1 - color_idx;
                     }
                 },
                 u8 => {

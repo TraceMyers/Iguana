@@ -45,6 +45,9 @@ pub inline fn microToKilo(x: anytype) @TypeOf(x) {
 pub inline fn milliToNano(x: anytype) @TypeOf(x) {
     return milli_to_nano * x;
 }
+pub inline fn milliToNano100(x: anytype) @TypeOf(x) {
+    return milli_to_nano100 * x;
+}
 pub inline fn milliToMicro(x: anytype) @TypeOf(x) {
     return milli_to_micro * x;
 }
@@ -154,6 +157,7 @@ pub const micro_to_base = 1e-6;
 pub const micro_to_kilo = 1e-9;
 
 pub const milli_to_nano = 1e6;
+pub const milli_to_nano100 = 1e4;
 pub const milli_to_micro = 1e3;
 pub const milli_to_centi = 1e-1;
 pub const milli_to_deci = 1e-2;

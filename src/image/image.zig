@@ -150,8 +150,8 @@ pub const ImageLoadOptions = struct {
     // we disallow attempting to load as another format.
     format_comitted: bool = false,
     // if you want to provide a buffer that will be used during image loading, rather than allocating and freeing
-    // a loading buffer. will be ignored if too small. WARNING: providing a load buffer with incorrectly denoted 
-    // alignment can cause load issues.
+    // a loading buffer. will be ignored if too small or if alignment is incorrect for the format. WARNING: providing a
+    // load buffer with incorrectly denoted alignment can cause load issues.
     load_buffer: ImageLoadBuffer = ImageLoadBuffer{},
 };
 
@@ -192,6 +192,14 @@ test "Load Bitmap image" {
     var corrupt_total: u32 = 0;
     var corrupt_supported: u32 = 0;
 
+    const alloc_sz = 4_194_304 / 2; // 2MB
+    const load_options = ImageLoadOptions{
+        .load_buffer = ImageLoadBuffer{
+            .alignment = 4,
+            .allocation = try allocator.allocExplicitAlign(u8, alloc_sz, 4)
+        },
+    };
+
     inline for (0..6) |i| {
         try path_buf.replace(test_paths[i]);
         path_buf.setAnchor();
@@ -211,7 +219,7 @@ test "Load Bitmap image" {
             try path_buf.append(entry.name);
             defer path_buf.revertToAnchor();
 
-            var image = loadImage(path_buf.string(), ImageFormat.Bmp, allocator, .{}) catch |e| blk: {
+            var image = loadImage(path_buf.string(), ImageFormat.Bmp, allocator, load_options) catch |e| blk: {
                 if (i < 2) {
                     print("valid file {s} {any}\n", .{filename_lower.string(), e});
                 }

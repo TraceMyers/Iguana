@@ -86,10 +86,10 @@ pub fn cleanup() void {
     }
 }
 
-pub fn drawFrame() !void {
+pub fn drawFrame(delta_time: f32) !void {
     gfx_frame_timer.start();
 
-    try updateUniformBuffer(current_frame);
+    try updateUniformBuffer(current_frame, delta_time);
 
     var t1 = ScopeTimer.start("vkinterface.drawFrame", getScopeTimerID());
     defer t1.stop();
@@ -169,12 +169,19 @@ pub fn setFramebufferResized() void {
     framebuffer_resized = true;
 }
 
-fn updateUniformBuffer(current_image: u32) !void {
+fn updateUniformBuffer(current_image: u32, delta_time: f32) !void {
+    // try createTextureImage();
+
     var mvp: fMVP = undefined;
     // const instant = std.time.Instant;
     // const now = try instant.now();
     // const timestamp_seconds: f64 = convert.nano100ToBase(@intToFloat(f64, now.timestamp)) * 6.0;
-    test_rotation += 2e-4;
+    if (input.keyboardCheck(input.KeyboardInput.left, input.SwitchState.Held)) {
+        test_rotation += 5e-4 * delta_time;
+    }
+    else if (input.keyboardCheck(input.KeyboardInput.right, input.SwitchState.Held)) {
+        test_rotation -= 5e-4 * delta_time;
+    }
 
     mvp.model = math.fMat4x4.modelNoScale(
         fVec3.init(.{0.0, 0.0, 1.0}), 
@@ -1003,11 +1010,12 @@ fn createTextureImage() !void {
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/rle8-delta-320x240.bmp", ImageFormat.Infer, allocator);
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/32bpp-101110-320x240.bmp", ImageFormat.Infer, allocator);
     var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/565-321x240-topdown.bmp", ImageFormat.Infer, allocator, .{});
-    imagef.rle_debug_output = true;
+    defer texture.clear();
+
     if (texture.height > 32_768 or texture.width > 32_768) {
-        texture.clear();
         return VkError.TextureDimensionTooLarge;
     }
+
     const image_sz: c.VkDeviceSize = texture.height * texture.width * @sizeOf(RGBA32);
 
     var staging_buffer: VkBuffer = undefined;
@@ -2198,6 +2206,13 @@ const alloc_cb = c.VkAllocationCallbacks{
     .pfnInternalFree = vkInterfaceInternalFreeNotification
 };
 
+var path_buf = LocalStringBuffer(128).new();
+const test_paths: [2][]const u8 = .{
+    "d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/",
+    "d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/",
+};
+var filename_lower = LocalStringBuffer(128).new();
+
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------- constants
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2262,18 +2277,20 @@ const VkError = error {
 
 const std = @import("std");
 const array = @import("array.zig");
-const window = @import("window.zig");
+const window = @import("io/window.zig");
 const bench = @import("benchmark.zig");
 const math = @import("math.zig");
 const graphics = @import("graphics.zig");
 const convert = @import("convert.zig");
 const memory = @import("memory.zig");
 const imagef = @import("image/image.zig");
+const input = @import("io/input.zig");
+const string = @import("string.zig");
 
 const loadImage = imagef.loadImage;
 const ImageFormat = imagef.ImageFormat;
 const print = std.debug.print;
-const c = graphics.c;
+const c = @import("ext.zig").c;
 const LocalArray = array.LocalArray;
 const ScopeTimer = bench.ScopeTimer;
 const getScopeTimerID = bench.getScopeTimerID;
@@ -2282,6 +2299,7 @@ const fVec2 = math.fVec2;
 const fVec3 = math.fVec3;
 const RGBA32 = graphics.RGBA32;
 const fMVP = graphics.fMVP;
+const LocalStringBuffer = string.LocalStringBuffer;
 
 const VkResult = c.VkResult;
 const VK_SUCCESS = c.VK_SUCCESS;
