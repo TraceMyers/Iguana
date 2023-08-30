@@ -37,6 +37,7 @@ const string = @import("../string.zig");
 const memory = @import("../memory.zig");
 const bmp = @import("bmp.zig");
 const bench = @import("../benchmark.zig");
+const png = @import("png.zig");
 
 const print = std.debug.print;
 const LocalStringBuffer = string.LocalStringBuffer;
@@ -49,7 +50,9 @@ const LocalStringBuffer = string.LocalStringBuffer;
 // !! Warning !! calling this function may require up to 1.5KB free stack memory.
 // !! Warning !! some OS/2 BMPs are compatible, except their width and height entries are interpreted as signed integers
 // (rather than the OS/2 standard for core headers, unsigned), which may lead to a failed read or row-inverted image.
-pub fn loadImage(file_path: []const u8, format: ImageFormat, allocator: memory.Allocator) !Image {
+pub fn loadImage(
+    file_path: []const u8, format: ImageFormat, allocator: memory.Allocator, options: ImageLoadOptions
+) !Image {
     var t = bench.ScopeTimer.start("loadImage", bench.getScopeTimerID());
     defer t.stop();
 
@@ -76,22 +79,22 @@ pub fn loadImage(file_path: []const u8, format: ImageFormat, allocator: memory.A
         const extension_lower = extension_lower_buf.string();
 
         if (string.same(extension_lower, "bmp") or string.same(extension_lower, "dib")) {
-            try bmp.load(&file, &image, allocator);
+            try bmp.load(&file, &image, allocator, &options);
         }
         else if (string.same(extension_lower, "jpg") or string.same(extension_lower, "jpeg")) {
             return ImageError.FormatUnsupported;
         }
         else if (string.same(extension_lower, "png")) {
-            return ImageError.FormatUnsupported;
+            try png.load(&file, &image, allocator, &options);
         }
         else {
             return ImageError.InvalidFileExtension;
         }
     }
     else switch (format) {
-        .Bmp => try bmp.load(&file, &image, allocator),
+        .Bmp => try bmp.load(&file, &image, allocator, &options),
         .Jpg => return ImageError.FormatUnsupported,
-        .Png => return ImageError.FormatUnsupported,
+        .Png => try png.load(&file, &image, allocator, &options),
         else => unreachable,
     }
     return image;
@@ -106,6 +109,9 @@ pub var rle_debug_output: bool = false;
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------- constants
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub const bmp_identifier: []const u8 = "BM";
+pub const png_identifier: []const u8 = "\x89PNG\x0d\x0a\x1a\x0a";
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // --------------------------------------------------------------------------------------------------------------- enums
@@ -130,6 +136,23 @@ pub const Image = struct {
         self.allocator.?.free(self.pixels.?);
         self.* = Image{};
     }
+};
+
+pub const ImageLoadBuffer = struct {
+    allocation: ?[]u8 = null,
+    alignment: u29 = 0
+};
+
+pub const ImageLoadOptions = struct {
+    // image loading system is not allowed to attempt to load the image as any other format than whichever
+    // is first inferred or assigned. useful internally in situations where fmt a was assigned/inferred, but
+    // the image data suggests fmt b. so, we try to load fmt b but to be 100% sure we avoid infinite recursion,
+    // we disallow attempting to load as another format.
+    format_comitted: bool = false,
+    // if you want to provide a buffer that will be used during image loading, rather than allocating and freeing
+    // a loading buffer. will be ignored if too small. WARNING: providing a load buffer with incorrectly denoted 
+    // alignment can cause load issues.
+    load_buffer: ImageLoadBuffer = ImageLoadBuffer{},
 };
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -188,7 +211,7 @@ test "Load Bitmap image" {
             try path_buf.append(entry.name);
             defer path_buf.revertToAnchor();
 
-            var image = loadImage(path_buf.string(), ImageFormat.Bmp, allocator) catch |e| blk: {
+            var image = loadImage(path_buf.string(), ImageFormat.Bmp, allocator, .{}) catch |e| blk: {
                 if (i < 2) {
                     print("valid file {s} {any}\n", .{filename_lower.string(), e});
                 }

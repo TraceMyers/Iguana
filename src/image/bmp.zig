@@ -5,6 +5,7 @@ const string = @import("../string.zig");
 const memory = @import("../memory.zig");
 const imagef = @import("image.zig");
 const bench = @import("../benchmark.zig");
+const png = @import("png.zig");
 
 const LocalStringBuffer = string.LocalStringBuffer;
 const RGBA32 = graphics.RGBA32;
@@ -40,11 +41,25 @@ const ImageError = imagef.ImageError;
 // ------------------------------------------------------------------------------------------------------- pub functions
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub fn load(file: *std.fs.File, image: *Image, allocator: memory.Allocator) !void {
-    var buffer: []u8 = try loadFileAndCoreHeaders(file, allocator, bmp_min_sz);
-    defer allocator.free(buffer);
+pub fn load(
+    file: *std.fs.File, image: *Image, allocator: memory.Allocator, options: *const imagef.ImageLoadOptions
+) !void {
+    var externally_allocated: bool = undefined;
+    var buffer: []u8 = try loadFileAndCoreHeaders(file, allocator, bmp_min_sz, options, &externally_allocated);
+    defer if (!externally_allocated) allocator.free(buffer);
 
-    try validateIdentity(buffer); 
+    const format: imagef.ImageFormat = try validateIdentity(buffer); 
+    switch(format) {
+        .Bmp => {},
+        .Jpg => {
+            return ImageError.FormatUnsupported;
+        },
+        .Png => {
+            try redirectToPng(file, image, allocator, options, buffer);
+            return;
+        },
+        else => unreachable,
+    }
 
     var info = BitmapInfo{};
     if (!readInitial(buffer, &info)) {
@@ -80,7 +95,13 @@ pub fn load(file: *std.fs.File, image: *Image, allocator: memory.Allocator) !voi
 // ----------------------------------------------------------------------------------------------------------- functions
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-fn loadFileAndCoreHeaders(file: *std.fs.File, allocator: anytype, min_sz: usize) ![]u8 {
+fn loadFileAndCoreHeaders(
+    file: *std.fs.File, 
+    allocator: anytype, 
+    min_sz: usize, 
+    options: *const imagef.ImageLoadOptions, 
+    externally_allocated: *bool
+) ![]u8 {
     const stat = try file.stat();
     if (stat.size + 4 > memory.MAX_SZ) {
         return ImageError.TooLarge;
@@ -88,11 +109,41 @@ fn loadFileAndCoreHeaders(file: *std.fs.File, allocator: anytype, min_sz: usize)
     if (stat.size < min_sz) {
         return ImageError.InvalidSizeForFormat;
     }
-    var buffer: []u8 = try allocator.allocExplicitAlign(u8, stat.size + 4, 4);
+
+    var buffer: []u8 = undefined;
+    if (options.load_buffer.alignment == 4
+        and options.load_buffer.allocation != null 
+        and options.load_buffer.allocation.?.len >= stat.size + 4
+    ) {
+        externally_allocated.* = true;
+        buffer = options.load_buffer.allocation.?;
+    }
+    else {
+        externally_allocated.* = false;
+        buffer = try allocator.allocExplicitAlign(u8, stat.size + 4, 4);
+    }
+
     for (0..bmp_file_header_sz + bmp_info_header_sz_core) |i| {
         buffer[i] = try file.reader().readByte();
     }
+
     return buffer;
+}
+
+fn redirectToPng(
+    file: *std.fs.File, 
+    image: *Image, 
+    allocator: memory.Allocator, 
+    options: *const imagef.ImageLoadOptions, 
+    buffer: []u8
+) !void {
+    var retry_options = options.*;
+    retry_options.format_comitted = true;
+    if (options.load_buffer.allocation == null) {
+        retry_options.load_buffer = imagef.ImageLoadBuffer{.allocation=buffer, .alignment=4};
+    }
+    try file.seekTo(0);
+    try png.load(file, image, allocator, &retry_options);
 }
 
 fn loadRemainder(file: *std.fs.File, buffer: []u8, info: *BitmapInfo) !void {
@@ -127,22 +178,27 @@ inline fn readInitial(buffer: []const u8, info: *BitmapInfo) bool {
     return true;
 }
 
-fn validateIdentity(buffer: []const u8) !void {
+fn validateIdentity(buffer: []const u8) !imagef.ImageFormat {
     const identity = buffer[0..2];
-    if (!string.same(identity, "BM")) {
-        // identity strings acceptable for forms of OS/2 bitmaps. microsoft shouldered-out IBM and started taking over
-        // the format during windows 3.1 times.
-        if (string.same(identity, "BA")
-            or string.same(identity, "CI")
-            or string.same(identity, "CP")
-            or string.same(identity, "IC")
-            or string.same(identity, "PT")
-        ) {
-            return ImageError.BmpFlavorUnsupported;
-        }
-        else {
-            return ImageError.BmpInvalidBytesInFileHeader;
-        }
+    if (string.same(identity, imagef.bmp_identifier)) {
+        return imagef.ImageFormat.Bmp;
+    }
+    // png identity string is 8 bytes
+    if (string.same(buffer[0..8], imagef.png_identifier)) {
+        return imagef.ImageFormat.Png;
+    }
+    // identity strings acceptable for forms of OS/2 bitmaps. microsoft shouldered-out IBM and started taking over
+    // the format during windows 3.1 times.
+    if (string.same(identity, "BA")
+        or string.same(identity, "CI")
+        or string.same(identity, "CP")
+        or string.same(identity, "IC")
+        or string.same(identity, "PT")
+    ) {
+        return ImageError.BmpFlavorUnsupported;
+    }
+    else {
+        return ImageError.BmpInvalidBytesInFileHeader;
     }
 }
 
