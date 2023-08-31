@@ -14,44 +14,36 @@ pub fn main() !void {
     var delta_time: f32 = 1.0 / 60.0;
 
     while (should_run) {
-        var t = ScopeTimer.start("frame", benchmark.getScopeTimerID());
-        defer t.stop();
-        // frame_timer_short.start();
-        frame_timer_long.start();
+        var t = ScopeTimer.start("frame", bench.getScopeTimerID());
+        var frame_timer = try std.time.Timer.start();
         defer {
-            // frame_timer_short.stop();
-            frame_timer_long.stop();
-            delta_time = frame_timer_long.runningAvgMs32();
+            const time_elasped_ns: u64 = bench.waitUntil(&frame_timer, sync_time_ns);
+            delta_time = @floatCast(f32, convert.nanoToMilli(@intToFloat(f64, time_elasped_ns)));
+            t.stop();
         }
 
         window.pollEvents();
         if (window.shouldClose()) {
             should_run = false;
         }
-        // std.time.sleep(convert.milliToNano(2));
 
-        input.frameUpdate(delta_time);
-
+        input.frameUpdate();
         try vk.drawFrame(delta_time);
     }
-    print("avg delta time: {d:.3}\n", .{delta_time});
 
-    benchmark.printAllScopeTimers();
+    bench.printAllScopeTimers();
     // try img.LoadImageTest();
 }
 
-// var frame_timer_short = benchmark.WindowTimer(4).new();
-var frame_timer_long = benchmark.WindowTimer(128).new();
-var frame_timer_print_ctr: u16 = 0;
-const frame_timer_print_rate: u16 = 1;
+var sync_time_ns: u64 = 4_166_600; // 240 fps max
 
 const std = @import("std");
 const print = std.debug.print;
 const expect = std.testing.expect;
 const array = @import("array.zig");
 const LocalArray = array.LocalArray;
-const benchmark = @import("benchmark.zig");
-const ScopeTimer = benchmark.ScopeTimer;
+const bench = @import("benchmark.zig");
+const ScopeTimer = bench.ScopeTimer;
 const memory = @import("memory.zig");
 const kmath = @import("math.zig");
 const window = @import("io/window.zig");

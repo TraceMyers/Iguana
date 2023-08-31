@@ -5,35 +5,28 @@ const print = std.debug.print;
 
 pub fn init() void {
     for (0..keyboard_max) |i| {
-        keyboard_switches[i] = InputSwitch{};
+        keyboard_switches[i] = .None;
     }
 }
 
-pub fn frameUpdate(delta_time: f32) void {
-    _ = delta_time;
+pub fn frameUpdate() void {
     for (0..keyboard_max) |i| {
-        const key_state: i32 = c.glfwGetKey(window.get(), @intCast(c_int, i));
-        var key_switch: *InputSwitch = &keyboard_switches[i];
-        if (key_state == c.GLFW_PRESS) {
-            if (key_switch.states[@enumToInt(SwitchState.Held)]) {
-                key_switch.states[@enumToInt(SwitchState.Pressed)] = false;
-                key_switch.states[@enumToInt(SwitchState.Released)] = false;
+        const glfw_state: u32 = @intCast(u32, c.glfwGetKey(window.get(), @intCast(c_int, i)));
+        const key_state = keyboard_switches[i];
+        if (glfw_state == c.GLFW_PRESS) {
+            if (key_state == .Released or key_state == .None) {
+                keyboard_switches[i] = .Pressed;
             }
-            else {
-                key_switch.states[@enumToInt(SwitchState.Held)] = true;
-                key_switch.states[@enumToInt(SwitchState.Pressed)] = true;
-                key_switch.states[@enumToInt(SwitchState.Released)] = false;
+            else if (key_state == .Pressed) {
+                keyboard_switches[i] = .Held;
             }
         }
-        else {
-            if (key_switch.states[@enumToInt(SwitchState.Held)]) {
-                key_switch.states[@enumToInt(SwitchState.Held)] = false;
-                key_switch.states[@enumToInt(SwitchState.Pressed)] = false;
-                key_switch.states[@enumToInt(SwitchState.Released)] = true;
+        else if (glfw_state == c.GLFW_RELEASE) {
+            if (key_state == .Pressed or key_state == .Held) {
+                keyboard_switches[i] = .Released;
             }
-            else {
-                key_switch.states[@enumToInt(SwitchState.Pressed)] = false;
-                key_switch.states[@enumToInt(SwitchState.Released)] = false;
+            else if (key_state == .Released) {
+                keyboard_switches[i] = .None;
             }
         }
     }
@@ -84,18 +77,33 @@ pub const KeyboardInput = enum(u16) {
 };
 
 const keyboard_max: comptime_int = 348;
-var keyboard_switches: [keyboard_max]InputSwitch = undefined;
 
-const InputSwitch = struct {
-    states: [3]bool = .{ false, false, false },
+pub const SwitchState = enum(u4) {
+    None = 0x0,
+    // OnPressed = 0x1, ghost state. (OnPressed | Held) = Pressed
+    Held = 0x2,
+    Pressed = 0x3,
+    Released = 0x4,
+
+    pub inline fn pressedOrHeld(self: SwitchState) bool {
+        return (@enumToInt(self) & @enumToInt(SwitchState.Pressed)) != 0;
+    }
 };
 
-pub const SwitchState = enum(u8) {
-    Held = 0,
-    Pressed = 1,
-    Released = 2
-};
+var keyboard_switches: [keyboard_max]SwitchState = undefined;
 
-pub inline fn keyboardCheck(input: KeyboardInput, state: SwitchState) bool {
-    return keyboard_switches[@enumToInt(input)].states[@enumToInt(state)];
+pub inline fn keyboardCheck(input: KeyboardInput) bool {
+    return keyboard_switches[@enumToInt(input)].pressedOrHeld();
+}
+
+pub inline fn keyboardPressed(input: KeyboardInput) bool {
+    keyboard_switches[@enumToInt(input)] == SwitchState.Pressed;
+}
+
+pub inline fn keyboardReleased(input: KeyboardInput) bool {
+    return keyboard_switches[@enumToInt(input)] == SwitchState.Released;
+}
+
+pub inline fn keyboardState(input: KeyboardInput) SwitchState {
+    return keyboard_switches[@enumToInt(input)];
 }

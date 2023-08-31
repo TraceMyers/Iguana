@@ -3,6 +3,9 @@
 // TODO: input system
 // TODO: use input system to scroll through test images
 
+// intel integrated gpus may have 4 descriptor set limitation. so, common strategy:
+// 
+
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- config
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -46,7 +49,8 @@ pub fn init(method: RenderMethod) !void {
 
 pub fn cleanup() void {
     if (in_flight_fences[0] != null) {
-        _ = c.vkWaitForFences(vk_logical, MAX_FRAMES_IN_FLIGHT, &in_flight_fences[0], c.VK_TRUE, ONE_SECOND_IN_NANOSECONDS);
+        const one_second = convert.baseToNano(1);
+        _ = c.vkWaitForFences(vk_logical, MAX_FRAMES_IN_FLIGHT, &in_flight_fences[0], c.VK_TRUE, one_second);
     }
     cleanupSwapchain();
     c.vkDestroyBuffer(vk_logical, vertex_buffer, &alloc_cb);
@@ -87,8 +91,6 @@ pub fn cleanup() void {
 }
 
 pub fn drawFrame(delta_time: f32) !void {
-    gfx_frame_timer.start();
-
     try updateUniformBuffer(current_frame, delta_time);
 
     var t1 = ScopeTimer.start("vkinterface.drawFrame", getScopeTimerID());
@@ -154,15 +156,6 @@ pub fn drawFrame(delta_time: f32) !void {
     }
 
     current_frame = @mod((current_frame + 1), MAX_FRAMES_IN_FLIGHT);
-
-    gfx_frame_timer.stop();
-    // if (gfx_frame_timer_print_ctr >= gfx_frame_timer_print_rate) {
-    //     print("avg frame time: {d}\n", .{gfx_frame_timer.runningAvgMs()});
-    //     gfx_frame_timer_print_ctr = 0;
-    // }
-    // else {
-    //     gfx_frame_timer_print_ctr += 1;
-    // }
 }
 
 pub fn setFramebufferResized() void {
@@ -176,11 +169,11 @@ fn updateUniformBuffer(current_image: u32, delta_time: f32) !void {
     // const instant = std.time.Instant;
     // const now = try instant.now();
     // const timestamp_seconds: f64 = convert.nano100ToBase(@intToFloat(f64, now.timestamp)) * 6.0;
-    if (input.keyboardCheck(input.KeyboardInput.left, input.SwitchState.Held)) {
-        test_rotation += 5e-4 * delta_time;
+    if (input.keyboardCheck(input.KeyboardInput.left)) {
+        test_rotation += 2e-3 * delta_time;
     }
-    else if (input.keyboardCheck(input.KeyboardInput.right, input.SwitchState.Held)) {
-        test_rotation -= 5e-4 * delta_time;
+    else if (input.keyboardCheck(input.KeyboardInput.right)) {
+        test_rotation -= 2e-3 * delta_time;
     }
 
     mvp.model = math.fMat4x4.modelNoScale(
@@ -1002,6 +995,9 @@ fn createCommandPools() !void {
     }
 }
 
+// VkBuffer: cpu
+// VkImage: gpu
+
 fn createTextureImage() !void {
     // var texture = try loadImage("d:/projects/zig/core/test/images/puppy.bmp", ImageFormat.Infer, allocator);
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/pal8rle.bmp", ImageFormat.Infer, allocator);
@@ -1023,6 +1019,8 @@ fn createTextureImage() !void {
 
     const usage_flags: c.VkBufferUsageFlags = c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     const memory_flags: c.VkMemoryPropertyFlags = c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+
+    // this is just a buffer. it can be larger!
     try createBuffer(image_sz, usage_flags, memory_flags, &staging_buffer, &staging_buffer_memory);
 
     var image_data: ?[*]RGBA32 = null;
@@ -2189,9 +2187,6 @@ var descriptor_sets: [MAX_FRAMES_IN_FLIGHT]c.VkDescriptorSet = undefined;
 
 var dbg_switch: bool = false;
 
-var gfx_frame_timer = bench.WindowTimer(8).new();
-var gfx_frame_timer_print_ctr: u16 = 0;
-const gfx_frame_timer_print_rate: u16 = 200;
 
 var test_rotation: f64 = std.math.pi / 4.0;
 
@@ -2217,8 +2212,7 @@ var filename_lower = LocalStringBuffer(128).new();
 // ----------------------------------------------------------------------------------------------------------- constants
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const ONE_SECOND_IN_NANOSECONDS: u32 = 1_000_000_000;
-const MAX_FRAMES_IN_FLIGHT: u32 = 1;
+const MAX_FRAMES_IN_FLIGHT: u32 = 2;
 
 const OP_TYPE = enum {Present, Graphics, Compute, Transfer};
 
