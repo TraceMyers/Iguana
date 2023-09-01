@@ -3217,7 +3217,7 @@ pub fn Quaternion(comptime ScalarType: type) type {
         }
 
         // angle in radians. axis must be normalized.
-        pub inline fn fromAxisAngle(axis: Vec(3, ScalarType), angle: ScalarType) QuaternionType {
+        pub inline fn fromAxisAngle(axis: anytype, angle: ScalarType) QuaternionType {
             std.debug.assert(axis.isNorm());
             const half_angle = angle * 0.5;
             const sin_half_angle = std.math.sin(half_angle);

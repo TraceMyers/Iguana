@@ -33,16 +33,16 @@ pub fn frameUpdate() void {
 }
 
 pub const KeyboardInput = enum(u16) {
-    num_0 = c.GLFW_KEY_0,
-    num_1 = c.GLFW_KEY_1,
-    num_2 = c.GLFW_KEY_2,
-    num_3 = c.GLFW_KEY_3,
-    num_4 = c.GLFW_KEY_4,
-    num_5 = c.GLFW_KEY_5,
-    num_6 = c.GLFW_KEY_6,
-    num_7 = c.GLFW_KEY_7,
-    num_8 = c.GLFW_KEY_8,
-    num_9 = c.GLFW_KEY_9,
+    Num0 = c.GLFW_KEY_0,
+    Num1 = c.GLFW_KEY_1,
+    Num2 = c.GLFW_KEY_2,
+    Num3 = c.GLFW_KEY_3,
+    Num4 = c.GLFW_KEY_4,
+    Num5 = c.GLFW_KEY_5,
+    Num6 = c.GLFW_KEY_6,
+    Num7 = c.GLFW_KEY_7,
+    Num8 = c.GLFW_KEY_8,
+    Num9 = c.GLFW_KEY_9,
     Q = c.GLFW_KEY_Q,
     W = c.GLFW_KEY_W,
     E = c.GLFW_KEY_E,
@@ -69,11 +69,11 @@ pub const KeyboardInput = enum(u16) {
     B = c.GLFW_KEY_B,
     N = c.GLFW_KEY_N,
     M = c.GLFW_KEY_M,
-    space = c.GLFW_KEY_SPACE,
-    up = c.GLFW_KEY_UP,
-    down = c.GLFW_KEY_DOWN,
-    left = c.GLFW_KEY_LEFT,
-    right = c.GLFW_KEY_RIGHT,
+    Space = c.GLFW_KEY_SPACE,
+    Up = c.GLFW_KEY_UP,
+    Down = c.GLFW_KEY_DOWN,
+    Left = c.GLFW_KEY_LEFT,
+    Right = c.GLFW_KEY_RIGHT,
 };
 
 const keyboard_max: comptime_int = 348;

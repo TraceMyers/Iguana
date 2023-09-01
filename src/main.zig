@@ -16,11 +16,7 @@ pub fn main() !void {
     while (should_run) {
         var t = ScopeTimer.start("frame", bench.getScopeTimerID());
         var frame_timer = try std.time.Timer.start();
-        defer {
-            const time_elasped_ns: u64 = bench.waitUntil(&frame_timer, sync_time_ns);
-            delta_time = @floatCast(f32, convert.nanoToMilli(@intToFloat(f64, time_elasped_ns)));
-            t.stop();
-        }
+        defer endFrame(&frame_timer, &t, &delta_time);
 
         window.pollEvents();
         if (window.shouldClose()) {
@@ -35,7 +31,35 @@ pub fn main() !void {
     // try img.LoadImageTest();
 }
 
+inline fn endFrame(frame_timer: *std.time.Timer, scope_timer: *ScopeTimer, delta_time: *f32) void {
+    var time_elapsed_ns: u64 = undefined;
+    if (sync_endframe) {
+        time_elapsed_ns = bench.waitUntil(frame_timer, sync_time_ns);
+    }
+    else {
+        time_elapsed_ns = frame_timer.read();
+    }
+    delta_time.* = @floatCast(f32, convert.nanoToMilli(@intToFloat(f64, time_elapsed_ns)));
+
+    if (print_dt) {
+        if (pdt_timer >= pdt_interval) {
+            pdt_timer = 0.0;
+            print("delta time: {d:.4}\n", .{delta_time.*});
+        }
+        else {
+            pdt_timer += delta_time.*;
+        }
+    }
+
+    scope_timer.stop();
+}
+
+
+var sync_endframe: bool = true;
+var print_dt: bool = true;
 var sync_time_ns: u64 = 4_166_600; // 240 fps max
+var pdt_timer: f32 = 0.0;
+const pdt_interval: f32 = convert.baseToMilli(1.0);
 
 const std = @import("std");
 const print = std.debug.print;

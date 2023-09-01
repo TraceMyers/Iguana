@@ -163,27 +163,59 @@ pub fn setFramebufferResized() void {
 }
 
 fn updateUniformBuffer(current_image: u32, delta_time: f32) !void {
-    // try createTextureImage();
 
     var mvp: fMVP = undefined;
-    // const instant = std.time.Instant;
-    // const now = try instant.now();
-    // const timestamp_seconds: f64 = convert.nano100ToBase(@intToFloat(f64, now.timestamp)) * 6.0;
-    if (input.keyboardCheck(input.KeyboardInput.left)) {
+
+    test_x = 0.0;
+    test_y = 0.0;
+    test_z = 0.0;
+    if (input.keyboardCheck(input.KeyboardInput.A)) {
+        test_x -= 2e-3 * delta_time;
+    }
+    if (input.keyboardCheck(input.KeyboardInput.D)) {
+        test_x += 2e-3 * delta_time;
+    }
+    if (input.keyboardCheck(input.KeyboardInput.W)) {
+        test_y += 2e-3 * delta_time;
+    }
+    if (input.keyboardCheck(input.KeyboardInput.S)) {
+        test_y -= 2e-3 * delta_time;
+    }
+    if (input.keyboardCheck(input.KeyboardInput.Q)) {
         test_rotation += 2e-3 * delta_time;
     }
-    else if (input.keyboardCheck(input.KeyboardInput.right)) {
+    if (input.keyboardCheck(input.KeyboardInput.E)) {
         test_rotation -= 2e-3 * delta_time;
+    }
+    if (input.keyboardCheck(input.KeyboardInput.Z)) {
+        test_z -= 2e-3 * delta_time;
+    }
+    if (input.keyboardCheck(input.KeyboardInput.X)) {
+        test_z += 2e-3 * delta_time;
     }
 
     mvp.model = math.fMat4x4.modelNoScale(
         fVec3.init(.{0.0, 0.0, 1.0}), 
-        math.fQuat.fromAxisAngle(fVec3.z_axis, @floatCast(f32, test_rotation))
+        math.fQuat.fromAxisAngle(fVec3.z_axis, @floatCast(f32, std.math.pi))
     );
+
+    var cam_up: fVec3 = undefined;
+    var cam_up_vec4: math.fVec4 = math.fVec4.y_axis.axisAngleRotation(math.fVec4.z_axis, test_rotation);
+    cam_up.copyAssymetric(cam_up_vec4);
+
+    var cam_move_right: fVec3 = cam_up.cross(fVec3.z_axis).normalSafe();
+    cam_move_right.mul(test_x);
+
+    var cam_move_up = cam_up.mulc(test_y);
+    const cam_move_z = fVec3.z_axis.mulc(test_z);
+    test_origin.add(cam_move_right.addc(cam_move_up.addc(cam_move_z)));
+
+    const look_pos = test_origin.subc(fVec3.z_axis);
+
     mvp.view = math.fMat4x4.lookAt(
-        fVec3.fromScalar(2.0), 
-        fVec3.fromScalar(0.0), 
-        fVec3.init(.{0.0, 0.0, 1.0})
+        test_origin,
+        look_pos,
+        cam_up,
     );
     mvp.projection = math.fMat4x4.projectionPerspective(
         std.math.pi * 0.25, 
@@ -999,13 +1031,13 @@ fn createCommandPools() !void {
 // VkImage: gpu
 
 fn createTextureImage() !void {
-    // var texture = try loadImage("d:/projects/zig/core/test/images/puppy.bmp", ImageFormat.Infer, allocator);
+    var texture = try loadImage("d:/projects/zig/core/test/images/puppy.bmp", ImageFormat.Infer, allocator, .{});
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/pal8rle.bmp", ImageFormat.Infer, allocator);
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/q/rgba32abf.bmp", ImageFormat.Infer, allocator);
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/rle8-encoded-320x240.bmp", ImageFormat.Infer, allocator);
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/rle8-delta-320x240.bmp", ImageFormat.Infer, allocator);
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/32bpp-101110-320x240.bmp", ImageFormat.Infer, allocator);
-    var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/565-321x240-topdown.bmp", ImageFormat.Infer, allocator, .{});
+    // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/565-321x240-topdown.bmp", ImageFormat.Infer, allocator, .{});
     defer texture.clear();
 
     if (texture.height > 32_768 or texture.width > 32_768) {
@@ -2187,8 +2219,11 @@ var descriptor_sets: [MAX_FRAMES_IN_FLIGHT]c.VkDescriptorSet = undefined;
 
 var dbg_switch: bool = false;
 
-
-var test_rotation: f64 = std.math.pi / 4.0;
+var test_origin = fVec3.init(.{0.0, 0.0, 2.0});
+var test_rotation: f32 = 0.0;
+var test_x: f32 = 0.0;
+var test_y: f32 = 0.0;
+var test_z: f32 = 2.0;
 
 const allocator = memory.Allocator.new(memory.Enclave.RenderCPU);
 

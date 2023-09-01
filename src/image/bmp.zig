@@ -617,14 +617,16 @@ fn readInlinePixelImage(
     row_sz: usize,
     standard_masks: bool
 ) !void {
-    const alpha_mask_present = info.compression == .ALPHABITFIELDS or info.alpha_mask > 0;
+    var alpha_mask_present = info.compression == .ALPHABITFIELDS or info.alpha_mask > 0;
 
     if (!bufferLongEnough(pixel_buf, image, row_sz)) {
         return ImageError.UnexpectedEOF;
     }
     if (!standard_masks or alpha_mask_present) {
         if (PixelType == u24) {
-            return ImageError.Bmp24BitCustomMasksUnsupported;
+            // return ImageError.Bmp24BitCustomMasksUnsupported;
+            // TODO: ?
+            alpha_mask_present = false;
         }
         if (!validColorMasks(PixelType, info)) {
             return ImageError.BmpInvalidColorMasks;
