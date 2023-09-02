@@ -8,7 +8,9 @@
 // this the page list always taking the lowest block idx and it probably stays defragmented pretty well.
 // Yet another solution is to keep track of the lowest and highest free block in a page list. the lowest is what is
 // used for allocations, and the highest is used to tell which pages can be freed.
-// TODO: realloc
+// TODO: realloc 
+// TODO: getSize() is wrong for large allocations. doesn't take number of actually allocated pages into account.
+// TODO: blockAlignedSlice() has the same problem
 // TODO: refactor for consistent naming
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -246,6 +248,93 @@ pub const Allocator = struct {
         else {
             print("fuck address is {d}\n", .{data_address});
         }
+    }
+
+    pub fn getSize(self: *const Allocator, data_in: *anyopaque) usize {
+        const data_address = @ptrToInt(data_in);
+        if (data_address < @ptrToInt(medium_pools[self.enclave_idx].bytes)) {
+            const small_pool: *SmallPool = &small_pools[self.enclave_idx];
+            const offset = data_address - @ptrToInt(small_pool.bytes);
+            const sm_idx = offset / SMALL_DIVISION_SZ;
+            const block_sz = SMALL_BLOCK_SIZES[sm_idx];
+            const mod_block_sz = offset % block_sz;
+            print("block sz: {}, mod_block_sz: {}, diff: {}\n", .{block_sz, mod_block_sz, block_sz - mod_block_sz});
+            if (mod_block_sz == 0) {
+                return block_sz;
+            }
+            return block_sz - mod_block_sz;
+        }
+        else if (data_address < @ptrToInt(large_pools[self.enclave_idx].bytes)) {
+            const medium_pool: *MediumPool = &medium_pools[self.enclave_idx];
+            const offset = data_address - @ptrToInt(medium_pool.bytes);
+            const md_idx = offset / MEDIUM_DIVISION_SZ;
+            const block_sz = MEDIUM_BLOCK_SIZES[md_idx];
+            const mod_block_sz = offset % block_sz;
+            print("block sz: {}, mod_block_sz: {}, diff: {}\n", .{block_sz, mod_block_sz, block_sz - mod_block_sz});
+            if (mod_block_sz == 0) {
+                return block_sz;
+            }
+            return block_sz - mod_block_sz;
+        }
+        else if (data_address < @ptrToInt(giant_pools[self.enclave_idx].bytes)) {
+            const large_pool: *LargePool = &large_pools[self.enclave_idx];
+            const offset = data_address - @ptrToInt(large_pool.bytes);
+            const lg_idx = offset / LARGE_DIVISION_SZ;
+            const block_sz = LARGE_BLOCK_SIZES[lg_idx];
+            const mod_block_sz = offset % block_sz;
+            print("block sz: {}, mod_block_sz: {}, diff: {}\n", .{block_sz, mod_block_sz, block_sz - mod_block_sz});
+            if (mod_block_sz == 0) {
+                return block_sz;
+            }
+            return block_sz - mod_block_sz;
+        }
+        else {
+            print("fuck address is {d}\n", .{data_address});
+            unreachable;
+        }       
+        unreachable;
+    }
+
+    pub fn blockAlignedSlice(self: *const Allocator, data_in: *anyopaque) []u8 {
+        const data_address = @ptrToInt(data_in);
+        if (data_address < @ptrToInt(medium_pools[self.enclave_idx].bytes)) {
+            const small_pool: *SmallPool = &small_pools[self.enclave_idx];
+            const offset = data_address - @ptrToInt(small_pool.bytes);
+            const sm_idx = offset / SMALL_DIVISION_SZ;
+
+            var page_list: *PageList = &small_pool.page_lists[sm_idx];
+            const page_list_head_address = @ptrToInt(@ptrCast(*u8, page_list.bytes));
+            const block_idx = @intCast(u32, @divTrunc((data_address - page_list_head_address), SMALL_BLOCK_SIZES[sm_idx]));
+            const bytes_start = block_idx * SMALL_BLOCK_SIZES[sm_idx];
+            return @ptrCast([*]u8, &page_list.bytes[bytes_start])[0..SMALL_BLOCK_SIZES[sm_idx]];
+        }
+        else if (data_address < @ptrToInt(large_pools[self.enclave_idx].bytes)) {
+            const medium_pool: *MediumPool = &medium_pools[self.enclave_idx];
+            const offset = data_address - @ptrToInt(medium_pool.bytes);
+            const md_idx = offset / MEDIUM_DIVISION_SZ;
+            
+            var page_list: *PageList = &medium_pool.page_lists[md_idx];
+            const page_list_head_address = @ptrToInt(@ptrCast(*u8, page_list.bytes));
+            const block_idx = @intCast(u32, @divTrunc((data_address - page_list_head_address), MEDIUM_BLOCK_SIZES[md_idx]));
+            const bytes_start = block_idx * MEDIUM_BLOCK_SIZES[md_idx];
+            return @ptrCast([*]u8, &page_list.bytes[bytes_start])[0..MEDIUM_BLOCK_SIZES[md_idx]];
+        }
+        else if (data_address < @ptrToInt(giant_pools[self.enclave_idx].bytes)) {
+            const large_pool: *LargePool = &large_pools[self.enclave_idx];
+            const offset = data_address - @ptrToInt(large_pool.bytes);
+            const lg_idx = offset / LARGE_DIVISION_SZ;
+
+            var node_list: *NodeList = &large_pool.node_lists[lg_idx];
+            const node_list_head_address = @ptrToInt(@ptrCast(*u8, node_list.bytes));
+            const node_idx = @intCast(u32, @divTrunc((data_address - node_list_head_address), LARGE_BLOCK_SIZES[lg_idx]));
+            const bytes_start = node_idx * LARGE_BLOCK_SIZES[lg_idx];
+            return @ptrCast([*]u8, &node_list.bytes[bytes_start])[0..LARGE_BLOCK_SIZES[lg_idx]];
+        }
+        else {
+            print("fuck address is {d}\n", .{data_address});
+            unreachable;
+        }
+        unreachable;
     }
 
     pub inline fn enclave(self: *const Allocator) Enclave {
@@ -535,9 +624,9 @@ fn allocLarge(large_pool: *LargePool, lg_idx: usize, alloc_sz: usize, alignment:
     var bytes_start = node_idx * LARGE_BLOCK_SIZES[lg_idx];
     var alloc_bytes = &node_list.bytes[bytes_start];
     _ = windows.VirtualAlloc(alloc_bytes, page_alloc_sz, windows.MEM_COMMIT, windows.PAGE_READWRITE) catch return null;
-    if (lock_memory) {
-        _ = c.VirtualLock(alloc_bytes, page_alloc_sz);
-    }
+    // if (lock_memory) {
+    //     _ = c.VirtualLock(alloc_bytes, page_alloc_sz);
+    // }
 
     const bytes_end = bytes_start + page_alloc_sz;
 
@@ -552,6 +641,7 @@ fn allocLarge(large_pool: *LargePool, lg_idx: usize, alloc_sz: usize, alignment:
 }
 
 fn freeLarge(large_pool: *LargePool, data: *u8, lg_idx: usize, lock_memory: bool) void {
+    _ = lock_memory;
     var node_list: *NodeList = &large_pool.node_lists[lg_idx];
     const node_list_head_address = @ptrToInt(@ptrCast(*u8, node_list.bytes));
     const data_address = @ptrToInt(data);
@@ -566,9 +656,9 @@ fn freeLarge(large_pool: *LargePool, data: *u8, lg_idx: usize, lock_memory: bool
     node_list.free_node = node_idx;
 
     const bytes_start = node_idx * LARGE_BLOCK_SIZES[lg_idx];
-    if (lock_memory) {
-        _ = c.VirtualUnlock(&node_list.bytes[bytes_start], LARGE_BLOCK_SIZES[lg_idx]);
-    }
+    // if (lock_memory) {
+    //     _ = c.VirtualUnlock(&node_list.bytes[bytes_start], LARGE_BLOCK_SIZES[lg_idx]);
+    // }
     windows.VirtualFree(&node_list.bytes[bytes_start], LARGE_BLOCK_SIZES[lg_idx], windows.MEM_DECOMMIT);
 }
 
@@ -634,12 +724,13 @@ fn expandNodeList(
     nodes_per_page: usize,
     lock_memory: bool,
 ) !void {
+    _ = lock_memory;
     const page_start = node_list.page_ct * nodes_per_page;
     const nodes_bytes = &node_list.nodes[page_start];
     _ = try windows.VirtualAlloc(nodes_bytes, page_sz, windows.MEM_COMMIT, windows.PAGE_READWRITE);
-    if (lock_memory) {
-        _ = c.VirtualLock(nodes_bytes, page_sz);
-    }
+    // if (lock_memory) {
+    //     _ = c.VirtualLock(nodes_bytes, page_sz);
+    // }
 
     const page_end = page_start + nodes_per_page;
     for (page_start..page_end-1) |i| {

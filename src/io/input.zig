@@ -32,6 +32,22 @@ pub fn frameUpdate() void {
     }
 }
 
+pub inline fn keyboardCheck(input: KeyboardInput) bool {
+    return keyboard_switches[@enumToInt(input)].isOn();
+}
+
+pub inline fn keyboardPressed(input: KeyboardInput) bool {
+    keyboard_switches[@enumToInt(input)] == SwitchState.Pressed;
+}
+
+pub inline fn keyboardReleased(input: KeyboardInput) bool {
+    return keyboard_switches[@enumToInt(input)] == SwitchState.Released;
+}
+
+pub inline fn keyboardState(input: KeyboardInput) SwitchState {
+    return keyboard_switches[@enumToInt(input)];
+}
+
 pub const KeyboardInput = enum(u16) {
     Num0 = c.GLFW_KEY_0,
     Num1 = c.GLFW_KEY_1,
@@ -74,36 +90,35 @@ pub const KeyboardInput = enum(u16) {
     Down = c.GLFW_KEY_DOWN,
     Left = c.GLFW_KEY_LEFT,
     Right = c.GLFW_KEY_RIGHT,
+    None = std.math.maxInt(u16),
 };
 
-const keyboard_max: comptime_int = 348;
+pub const ControllerInput = enum(u8) {
+    None = std.math.maxInt(u8),
+};
 
 pub const SwitchState = enum(u4) {
-    None = 0x0,
+    None = 0x0,     // no input
     // OnPressed = 0x1, ghost state. (OnPressed | Held) = Pressed
-    Held = 0x2,
-    Pressed = 0x3,
-    Released = 0x4,
+    Held = 0x2,     // switch is on, but it was not switched on this frame
+    Pressed = 0x3,  // switched on this frame
+    Released = 0x4, // switched off this frame
 
-    pub inline fn pressedOrHeld(self: SwitchState) bool {
+    pub inline fn isOn(self: SwitchState) bool {
         return (@enumToInt(self) & @enumToInt(SwitchState.Pressed)) != 0;
+    }
+
+    pub inline fn isOff(self: SwitchState) bool {
+        return (@enumToInt(self) & @enumToInt(SwitchState.Pressed)) == 0;
     }
 };
 
+pub const InputTorch = packed struct {
+    id: u16,
+    controller_input: ControllerInput = .None,
+    keyboard_input: KeyboardInput = .None,
+};
+
+const keyboard_max: comptime_int = 350;
+
 var keyboard_switches: [keyboard_max]SwitchState = undefined;
-
-pub inline fn keyboardCheck(input: KeyboardInput) bool {
-    return keyboard_switches[@enumToInt(input)].pressedOrHeld();
-}
-
-pub inline fn keyboardPressed(input: KeyboardInput) bool {
-    keyboard_switches[@enumToInt(input)] == SwitchState.Pressed;
-}
-
-pub inline fn keyboardReleased(input: KeyboardInput) bool {
-    return keyboard_switches[@enumToInt(input)] == SwitchState.Released;
-}
-
-pub inline fn keyboardState(input: KeyboardInput) SwitchState {
-    return keyboard_switches[@enumToInt(input)];
-}

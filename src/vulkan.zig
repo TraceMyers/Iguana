@@ -1,7 +1,6 @@
 // TODO: better error handling
-// TODO: finish implementing kmem as vk allocator
-// TODO: input system
 // TODO: use input system to scroll through test images
+// TODO: implement realloc correctly when allocator doesn't fuck up returning info on large allocations
 
 // intel integrated gpus may have 4 descriptor set limitation. so, common strategy:
 // 
@@ -83,7 +82,7 @@ pub fn cleanup() void {
     swapchain.reset();
     c.vkDestroyDevice(vk_logical, &alloc_cb);
     c.vkDestroySurfaceKHR(vk_instance, vk_surface, &alloc_cb);
-    c.vkDestroyInstance(vk_instance, null);
+    c.vkDestroyInstance(vk_instance, &alloc_cb);
 
     if (direct_image != null) {
         // direct_image.?.deinit();
@@ -212,11 +211,7 @@ fn updateUniformBuffer(current_image: u32, delta_time: f32) !void {
 
     const look_pos = test_origin.subc(fVec3.z_axis);
 
-    mvp.view = math.fMat4x4.lookAt(
-        test_origin,
-        look_pos,
-        cam_up,
-    );
+    mvp.view = math.fMat4x4.lookAt(test_origin, look_pos, cam_up);
     mvp.projection = math.fMat4x4.projectionPerspective(
         std.math.pi * 0.25, 
         @intToFloat(f32, swapchain.extent.width) / @intToFloat(f32, swapchain.extent.height), 
@@ -458,7 +453,7 @@ fn createInstance() !void {
     };
 
     {
-        const result: VkResult = c.vkCreateInstance(&create_info, null, &vk_instance);
+        const result: VkResult = c.vkCreateInstance(&create_info, &alloc_cb, &vk_instance);
 
         if (result != VK_SUCCESS) {
             return VkError.CreateInstance;
@@ -1995,10 +1990,50 @@ pub fn vkInterfaceReallocate(
     _ = user_data;
     _ = alloc_scope;
 
-    if (original_alloc != null) {
-        allocator.freeOpaque(original_alloc.?);
+    if (original_alloc == null) {
+        var data = allocator.allocExplicitAlign(u8, sz, alignment) catch return null;
+        return &data[0];
     }
+
     var data = allocator.allocExplicitAlign(u8, sz, alignment) catch return null;
+    var old_data = allocator.blockAlignedSlice(original_alloc.?);
+
+    // var err: 
+    var old_meminfo: c.MEMORY_BASIC_INFORMATION = undefined;
+    const old_bytes = c.VirtualQuery(&old_data[0], &old_meminfo, @sizeOf(c.MEMORY_BASIC_INFORMATION));
+    var old_error: c.DWORD = 0;
+    if (old_bytes == 0) {
+        old_error = c.GetLastError();
+    }
+    // var old_mem_used: bool = old_meminfo.State == c.MEM_COMMIT;
+
+    var new_meminfo: c.MEMORY_BASIC_INFORMATION = undefined;
+    const new_bytes = c.VirtualQuery(&data[0], &new_meminfo, @sizeOf(c.MEMORY_BASIC_INFORMATION));
+    var new_error: c.DWORD = 0;
+    if (new_bytes == 0) {
+        new_error = c.GetLastError();
+    }
+    // var new_mem_used: bool = new_meminfo.State == c.MEM_COMMIT;
+
+    // const prev_sz = old_data.len;
+
+    // print("\nold bytes: {}, new_bytes: {}\n", .{old_bytes, new_bytes});
+    // print("old error: {}, new_error: {}\n", .{old_error, new_error});
+    // print("sz: {}, prev sz: {}, min sz: {}, old used: {}, new used: {}\n", .{sz, prev_sz, min_sz, old_mem_used, new_mem_used});
+    // print("old region sz: {}, new region sz: {}\n", .{old_meminfo.RegionSize, new_meminfo.RegionSize});
+    // print("old protect: {}, new protect: {}\n", .{old_meminfo.Protect, new_meminfo.Protect});
+    // print("old alloc protect: {}, new alloc protect: {}\n", .{old_meminfo.AllocationProtect, new_meminfo.AllocationProtect});
+    // print("old address: {x}, new_address: {x}\n", .{old_meminfo.BaseAddress.?, new_meminfo.BaseAddress.?});
+
+    const min_sz = std.math.min(old_meminfo.RegionSize, new_meminfo.RegionSize);
+
+    _ = c.memcpy(data.ptr, old_data.ptr, min_sz);
+    allocator.freeOpaque(original_alloc.?);
+    //data :b, old: 6
+
+    // var slice_to = @ptrCast([*]u8, &data[0])[0..min_sz];
+    // @memcpy(slice_to, old_data);
+
     return &data[0];
 }
 

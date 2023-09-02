@@ -260,7 +260,7 @@ pub fn toLower(str: []u8) void {
 }
 
 const StringError = error{
-    BufferTooShort,
+    BufferTooShort
 };
 
 const to_lower_diff: comptime_int = 'a' - 'A';

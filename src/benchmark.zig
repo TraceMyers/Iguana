@@ -68,8 +68,6 @@ pub inline fn waitUntil(timer: *std.time.Timer, nanoseconds: u64) u64 {
     return time_elapsed;
 }
 
-// This struct is super innacurate for some reason; may want to bring it back using std.time.Timer as the blueprint
-// if running average is needed.
 // pub fn WindowTimer(comptime window_size: comptime_int) type {
 
 //     return struct {
@@ -175,7 +173,7 @@ var timers = LocalArray(InternalTimer, 128).new();
 // ------------------------------------------------------------------------------------------------------------- private
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-fn addTimer(idx: usize, name: []const u8) void {
+inline fn addTimer(idx: usize, name: []const u8) void {
     if (!timers.items[idx].initialized) {
         var timer = &timers.items[idx];
         timer.* = InternalTimer{};
@@ -193,7 +191,7 @@ fn addTimer(idx: usize, name: []const u8) void {
     }
 }
 
-fn logEndTime(id: usize, time_ns: u64) void {
+inline fn logEndTime(id: usize, time_ns: u64) void {
     var timer = &timers.items[id];
 
     timer.total_time += time_ns;
