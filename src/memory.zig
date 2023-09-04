@@ -9,8 +9,6 @@
 // Yet another solution is to keep track of the lowest and highest free block in a page list. the lowest is what is
 // used for allocations, and the highest is used to tell which pages can be freed.
 // TODO: realloc 
-// TODO: getSize() is wrong for large allocations. doesn't take number of actually allocated pages into account.
-// TODO: blockAlignedSlice() has the same problem
 // TODO: refactor for consistent naming
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -137,8 +135,7 @@ pub const Allocator = struct {
 
     // allocate with alignment to type
     pub inline fn alloc(self: *const Allocator, comptime Type: type, ct: usize) Mem6Error![]Type {
-        const alignment = @alignOf(Type);
-        return self.allocExplicitAlign(Type, ct, alignment);
+        return self.allocExplicitAlign(Type, ct, @alignOf(Type));
     }
 
     // allocate providing the alignment
@@ -146,76 +143,30 @@ pub const Allocator = struct {
         self: *const Allocator,
         comptime Type: type, 
         ct: usize, 
-        alignment: usize
+        alignment: u29
     ) Mem6Error![]Type {
         const alloc_sz: usize = ct * @sizeOf(Type);
         assert(alloc_sz > 0 and alignment > 0);
 
         var data: []u8 = undefined;
-        var division: usize = undefined;
-        var align_sz: usize = undefined;
+        // determining a safe allocation size for the given alignment quickly
+        const align_sz: usize = if (std.math.isPowerOfTwo(alignment)) alloc_sz else alloc_sz + alignment - 1;
 
-        if (alloc_sz <= SMALL_ALLOC_MAX_SZ) {
-            const sz_mod_min = alloc_sz % SMALL_ALLOC_MIN_SZ;
-            const sz_mod_min_eq_0 = sz_mod_min == 0;
-
-            if (std.math.isPowerOfTwo(alignment) or sz_mod_min_eq_0) {
-                const sz_div_min = @intCast(usize, @divTrunc(alloc_sz, SMALL_ALLOC_MIN_SZ));
-                division = sz_div_min - @intCast(usize, @boolToInt(sz_mod_min_eq_0));
-                data = allocSmall(&small_pools[self.enclave_idx], division, alignment) 
-                    orelse return Mem6Error.OutOfMemory;
-            }
-            else {
-                align_sz = alloc_sz + alignment - 1;
-                if (align_sz <= SMALL_ALLOC_MAX_SZ) {
-                    const align_sz_div_min = @intCast(usize, @divTrunc(align_sz, SMALL_ALLOC_MIN_SZ));
-                    const align_sz_mod_min_eq_0 = (align_sz % SMALL_ALLOC_MIN_SZ == 0);
-                    division = align_sz_div_min - @intCast(usize, @boolToInt(align_sz_mod_min_eq_0));
-                    data = allocSmall(&small_pools[self.enclave_idx], division, alignment) 
-                        orelse return Mem6Error.OutOfMemory;
-                }
-                else {
-                    division = mediumSizeBracket(align_sz);
-                    data = allocMedium(&medium_pools[self.enclave_idx], division, alignment) 
-                        orelse return Mem6Error.OutOfMemory;
-                }
-            }
+        if (align_sz <= SMALL_ALLOC_MAX_SZ) {
+            const division: usize = smallSizeBracket(align_sz);
+            data = allocSmall(&small_pools[self.enclave_idx], division, alignment) 
+                orelse return Mem6Error.OutOfMemory;
         }
-        else if (alloc_sz <= MEDIUM_ALLOC_MAX_SZ) {
-            if (std.math.isPowerOfTwo(alignment)) {
-                division = mediumSizeBracket(alloc_sz);
-                data = allocMedium(&medium_pools[self.enclave_idx], division, alignment) 
-                    orelse return Mem6Error.OutOfMemory;
-            }
-            else {
-                align_sz = alloc_sz + alignment - 1;
-                if (align_sz <= MEDIUM_ALLOC_MAX_SZ) {
-                    division = mediumSizeBracket(align_sz);
-                    data = allocMedium(&medium_pools[self.enclave_idx], division, alignment) 
-                        orelse return Mem6Error.OutOfMemory;
-                }
-                else {
-                    division = largeSizeBracket(align_sz);
-                    data = allocLarge(
-                        &large_pools[self.enclave_idx], division, align_sz, alignment, lock_memory_rules[self.enclave_idx]
-                    ) orelse return Mem6Error.OutOfMemory;
-                }
-            }
+        else if (align_sz <= MEDIUM_ALLOC_MAX_SZ) {
+            const division: usize = mediumSizeBracket(align_sz);
+            data = allocMedium(&medium_pools[self.enclave_idx], division, alignment) 
+                orelse return Mem6Error.OutOfMemory;
         }
-        else if (alloc_sz <= LARGE_ALLOC_MAX_SZ) {
-            if (std.math.isPowerOfTwo(alignment)) {
-                division = largeSizeBracket(alloc_sz);
-                data = allocLarge(
-                    &large_pools[self.enclave_idx], division, alloc_sz, alignment, lock_memory_rules[self.enclave_idx]
-                ) orelse return Mem6Error.OutOfMemory;
-            }
-            else {
-                align_sz = alloc_sz + alignment - 1;
-                division = largeSizeBracket(align_sz);
-                data = allocLarge(
-                    &large_pools[self.enclave_idx], division, align_sz, alignment, lock_memory_rules[self.enclave_idx]
-                ) orelse return Mem6Error.OutOfMemory;
-            }
+        else if (align_sz <= LARGE_ALLOC_MAX_SZ) {
+            const division: usize = largeSizeBracket(align_sz);
+            data = allocLarge(
+                &large_pools[self.enclave_idx], division, align_sz, alignment, lock_memory_rules[self.enclave_idx]
+            ) orelse return Mem6Error.OutOfMemory;
         }
         else {
             return Mem6Error.OutOfMemory;
@@ -250,53 +201,8 @@ pub const Allocator = struct {
         }
     }
 
-    pub fn getSize(self: *const Allocator, data_in: *anyopaque) usize {
-        const data_address = @ptrToInt(data_in);
-        if (data_address < @ptrToInt(medium_pools[self.enclave_idx].bytes)) {
-            const small_pool: *SmallPool = &small_pools[self.enclave_idx];
-            const offset = data_address - @ptrToInt(small_pool.bytes);
-            const sm_idx = offset / SMALL_DIVISION_SZ;
-            const block_sz = SMALL_BLOCK_SIZES[sm_idx];
-            const mod_block_sz = offset % block_sz;
-            print("block sz: {}, mod_block_sz: {}, diff: {}\n", .{block_sz, mod_block_sz, block_sz - mod_block_sz});
-            if (mod_block_sz == 0) {
-                return block_sz;
-            }
-            return block_sz - mod_block_sz;
-        }
-        else if (data_address < @ptrToInt(large_pools[self.enclave_idx].bytes)) {
-            const medium_pool: *MediumPool = &medium_pools[self.enclave_idx];
-            const offset = data_address - @ptrToInt(medium_pool.bytes);
-            const md_idx = offset / MEDIUM_DIVISION_SZ;
-            const block_sz = MEDIUM_BLOCK_SIZES[md_idx];
-            const mod_block_sz = offset % block_sz;
-            print("block sz: {}, mod_block_sz: {}, diff: {}\n", .{block_sz, mod_block_sz, block_sz - mod_block_sz});
-            if (mod_block_sz == 0) {
-                return block_sz;
-            }
-            return block_sz - mod_block_sz;
-        }
-        else if (data_address < @ptrToInt(giant_pools[self.enclave_idx].bytes)) {
-            const large_pool: *LargePool = &large_pools[self.enclave_idx];
-            const offset = data_address - @ptrToInt(large_pool.bytes);
-            const lg_idx = offset / LARGE_DIVISION_SZ;
-            const block_sz = LARGE_BLOCK_SIZES[lg_idx];
-            const mod_block_sz = offset % block_sz;
-            print("block sz: {}, mod_block_sz: {}, diff: {}\n", .{block_sz, mod_block_sz, block_sz - mod_block_sz});
-            if (mod_block_sz == 0) {
-                return block_sz;
-            }
-            return block_sz - mod_block_sz;
-        }
-        else {
-            print("fuck address is {d}\n", .{data_address});
-            unreachable;
-        }       
-        unreachable;
-    }
-
-    pub fn blockAlignedSlice(self: *const Allocator, data_in: *anyopaque) []u8 {
-        const data_address = @ptrToInt(data_in);
+    pub fn getFullAlloc(self: *const Allocator, allocated_data: *anyopaque) []u8 {
+        const data_address = @ptrToInt(allocated_data);
         if (data_address < @ptrToInt(medium_pools[self.enclave_idx].bytes)) {
             const small_pool: *SmallPool = &small_pools[self.enclave_idx];
             const offset = data_address - @ptrToInt(small_pool.bytes);
@@ -328,7 +234,8 @@ pub const Allocator = struct {
             const node_list_head_address = @ptrToInt(@ptrCast(*u8, node_list.bytes));
             const node_idx = @intCast(u32, @divTrunc((data_address - node_list_head_address), LARGE_BLOCK_SIZES[lg_idx]));
             const bytes_start = node_idx * LARGE_BLOCK_SIZES[lg_idx];
-            return @ptrCast([*]u8, &node_list.bytes[bytes_start])[0..LARGE_BLOCK_SIZES[lg_idx]];
+            const bytes_end = node_list.nodes[@intCast(usize, node_idx)].alloc_sz;
+            return @ptrCast([*]u8, &node_list.bytes[bytes_start])[0..bytes_end];
         }
         else {
             print("fuck address is {d}\n", .{data_address});
@@ -464,11 +371,13 @@ fn initAllocators(enclave: usize) !void {
 
         var node_list = &large_pools[enclave].node_lists[i];
         node_list.bytes = @ptrCast([*]u8, large_pools[enclave].bytes[bytes_start..bytes_end]);
-        node_list.nodes = free_lists_casted[block_sum..(block_sum + block_ct)];
+        node_list.nodes = @ptrCast([*]LargeBlockNode, 
+            @alignCast(@alignOf(LargeBlockNode), &free_lists_casted[block_sum]
+        ))[0..block_ct];
         node_list.free_node = null;
         node_list.page_ct = 0;
 
-        block_sum += block_ct;
+        block_sum += block_ct * 2; // LargeBlockNodes are 2x as large as BlockNodes
     }
 }
 
@@ -487,7 +396,7 @@ inline fn largeSizeBracket(alloc_sz: usize) usize {
     return kmath.ceilExp2(alloc_sz) - LARGE_MIN_EXP2;
 }
 
-fn allocSmall(small_pool: *SmallPool, sm_idx: usize, alignment: usize) ?[]u8 {
+fn allocSmall(small_pool: *SmallPool, sm_idx: usize, alignment: u29) ?[]u8 {
     var page_list: *PageList = &small_pool.page_lists[sm_idx];
     if (page_list.free_block == null) {
         expandPageList(
@@ -544,7 +453,7 @@ fn freeSmall(small_pool: *SmallPool, data: *u8, sm_idx: usize) void {
     page_record.free_block_ct += 1;
 }
 
-fn allocMedium(medium_pool: *MediumPool, md_idx: usize, alignment: usize) ?[]u8 {
+fn allocMedium(medium_pool: *MediumPool, md_idx: usize, alignment: u29) ?[]u8 {
     var page_list: *PageList = &medium_pool.page_lists[md_idx];
     if (page_list.free_block == null) {
         expandPageList(
@@ -602,7 +511,7 @@ fn freeMedium(medium_pool: *MediumPool, data: *u8, md_idx: usize) void {
     page_record.free_block_ct += 1;
 }
 
-fn allocLarge(large_pool: *LargePool, lg_idx: usize, alloc_sz: usize, alignment: usize, lock_memory: bool) ?[]u8 {
+fn allocLarge(large_pool: *LargePool, lg_idx: usize, alloc_sz: usize, alignment: u29, lock_memory: bool) ?[]u8 {
     var node_list: *NodeList = &large_pool.node_lists[lg_idx];
     if (node_list.free_node == null) {
         expandNodeList(node_list, SMALL_PAGE_SZ, LARGE_NODES_PER_PAGE, lock_memory) catch return null;
@@ -627,6 +536,7 @@ fn allocLarge(large_pool: *LargePool, lg_idx: usize, alloc_sz: usize, alignment:
     // if (lock_memory) {
     //     _ = c.VirtualLock(alloc_bytes, page_alloc_sz);
     // }
+    node_list.nodes[@intCast(usize, node_idx)].alloc_sz = @intCast(u32, page_alloc_sz);
 
     const bytes_end = bytes_start + page_alloc_sz;
 
@@ -653,6 +563,7 @@ fn freeLarge(large_pool: *LargePool, data: *u8, lg_idx: usize, lock_memory: bool
     else {
         node_list.nodes[@intCast(usize, node_idx)].next_free = NO_BLOCK;
     }
+    node_list.nodes[@intCast(usize, node_idx)].alloc_sz = 0;
     node_list.free_node = node_idx;
 
     const bytes_start = node_idx * LARGE_BLOCK_SIZES[lg_idx];
@@ -728,13 +639,11 @@ fn expandNodeList(
     const page_start = node_list.page_ct * nodes_per_page;
     const nodes_bytes = &node_list.nodes[page_start];
     _ = try windows.VirtualAlloc(nodes_bytes, page_sz, windows.MEM_COMMIT, windows.PAGE_READWRITE);
-    // if (lock_memory) {
-    //     _ = c.VirtualLock(nodes_bytes, page_sz);
-    // }
 
     const page_end = page_start + nodes_per_page;
     for (page_start..page_end-1) |i| {
         node_list.nodes[i].next_free = @intCast(u32, i) + 1;
+        node_list.nodes[i].alloc_sz = 0;
     }
     node_list.nodes[page_end-1].next_free = NO_BLOCK;
 
@@ -771,6 +680,11 @@ const BlockNode = struct {
     next_free: u32 = undefined,
 };
 
+const LargeBlockNode = struct {
+    next_free: u32 = undefined,   
+    alloc_sz: u32 = undefined,
+};
+
 const FreeLists = struct {
     bytes: [*]u8 = undefined,
 };
@@ -792,7 +706,7 @@ const PageList = struct {
 
 const NodeList = struct {
     bytes: [*]u8 = undefined,
-    nodes: []BlockNode = undefined, 
+    nodes: []LargeBlockNode = undefined, 
     free_node: ?u32 = undefined, 
     page_ct: u32 = undefined,
 };
@@ -973,7 +887,7 @@ const LARGE_DIVISION_CT: usize = 8;
 const LARGE_MIN_EXP2: usize = std.math.log(comptime_int, 2, @as(comptime_int, LARGE_ALLOC_MIN_SZ));
 
 const LARGE_DIVISION_SZ: usize                  = LARGE_POOL_SZ / LARGE_DIVISION_CT;
-const LARGE_NODES_PER_PAGE: usize               = SMALL_PAGE_SZ / @sizeOf(BlockNode);
+const LARGE_NODES_PER_PAGE: usize               = SMALL_PAGE_SZ / @sizeOf(LargeBlockNode);
 
 const LARGE_BLOCK_SIZES: [8]usize = .{32_768, 65_536, 131_072, 262_144, 524_288, 1_048_576, 2_097_152, 4_194_304};
 
@@ -1011,14 +925,14 @@ const LARGE_NODE_SETS_PER_PAGE: [8]usize = .{
 };
 
 const LARGE_FREE_LIST_SZ_PER_DIVISION: [8]usize = .{
-    LARGE_BLOCK_COUNTS_PER_DIVISION[0] * @sizeOf(BlockNode),
-    LARGE_BLOCK_COUNTS_PER_DIVISION[1] * @sizeOf(BlockNode),
-    LARGE_BLOCK_COUNTS_PER_DIVISION[2] * @sizeOf(BlockNode),
-    LARGE_BLOCK_COUNTS_PER_DIVISION[3] * @sizeOf(BlockNode),
-    LARGE_BLOCK_COUNTS_PER_DIVISION[4] * @sizeOf(BlockNode),
-    LARGE_BLOCK_COUNTS_PER_DIVISION[5] * @sizeOf(BlockNode),
-    LARGE_BLOCK_COUNTS_PER_DIVISION[6] * @sizeOf(BlockNode),
-    LARGE_BLOCK_COUNTS_PER_DIVISION[7] * @sizeOf(BlockNode),
+    LARGE_BLOCK_COUNTS_PER_DIVISION[0] * @sizeOf(LargeBlockNode),
+    LARGE_BLOCK_COUNTS_PER_DIVISION[1] * @sizeOf(LargeBlockNode),
+    LARGE_BLOCK_COUNTS_PER_DIVISION[2] * @sizeOf(LargeBlockNode),
+    LARGE_BLOCK_COUNTS_PER_DIVISION[3] * @sizeOf(LargeBlockNode),
+    LARGE_BLOCK_COUNTS_PER_DIVISION[4] * @sizeOf(LargeBlockNode),
+    LARGE_BLOCK_COUNTS_PER_DIVISION[5] * @sizeOf(LargeBlockNode),
+    LARGE_BLOCK_COUNTS_PER_DIVISION[6] * @sizeOf(LargeBlockNode),
+    LARGE_BLOCK_COUNTS_PER_DIVISION[7] * @sizeOf(LargeBlockNode),
 };
 
 //------------------------------------------------------------------------------------------------------------- the rest
