@@ -8,8 +8,10 @@
 // this the page list always taking the lowest block idx and it probably stays defragmented pretty well.
 // Yet another solution is to keep track of the lowest and highest free block in a page list. the lowest is what is
 // used for allocations, and the highest is used to tell which pages can be freed.
-// TODO: realloc 
 // TODO: refactor for consistent naming
+// TODO: convert to std allocator implementation so it can be used with std lib
+// TODO: optionals should be errors
+
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- config
@@ -174,6 +176,11 @@ pub const Allocator = struct {
 
         return mem.bytesAsSlice(Type, @alignCast(@alignOf(Type), data[0..alloc_sz]));
     }
+
+    pub inline fn realloc(self: *const Allocator, prev_alloc: anytype, ct: usize) Mem6Error![]@TypeOf(prev_alloc.ptr.*) {
+        return self.reallocExplicitAlign(@TypeOf(prev_alloc.ptr.*), prev_alloc.ptr, ct, @alignOf(prev_alloc.ptr.*));
+    }
+
     // WARNING: assumes alignment has not changed! Alignment is allowed to be explicit so this allocator works with
     // C-based libraries like Vulkan
     pub fn reallocExplicitAlign(
@@ -445,6 +452,7 @@ fn initAllocators(enclave: usize) !void {
         page_list.free_block = null;
         page_list.page_ct = 0;
         page_list.free_page_ct = 0;
+        page_list.mutex = std.Thread.Mutex{};
 
         initPages(page_list.pages, SMALL_DIVISION_PAGE_CT);
         
@@ -468,6 +476,7 @@ fn initAllocators(enclave: usize) !void {
         page_list.free_block = null;
         page_list.page_ct = 0;
         page_list.free_page_ct = 0;
+        page_list.mutex = std.Thread.Mutex{};
 
         initPages(page_list.pages, MEDIUM_DIVISION_PAGE_CT);
         
@@ -487,6 +496,7 @@ fn initAllocators(enclave: usize) !void {
         ))[0..block_ct];
         node_list.free_node = null;
         node_list.page_ct = 0;
+        node_list.mutex = std.Thread.Mutex{};
 
         block_sum += block_ct * 2; // LargeBlockNodes are 2x as large as BlockNodes
     }
@@ -507,8 +517,10 @@ inline fn largeSizeBracket(alloc_sz: usize) usize {
     return kmath.ceilExp2(alloc_sz) - LARGE_MIN_EXP2;
 }
 
-fn allocSmall(small_pool: *SmallPool, sm_idx: usize, alignment: u29) ?[]u8 {
-    var page_list: *PageList = &small_pool.page_lists[sm_idx];
+fn smallBlockIdx(page_list: *PageList, sm_idx: usize) ?u32 {
+    page_list.mutex.lock();
+    defer page_list.mutex.unlock();
+
     if (page_list.free_block == null) {
         expandPageList(
             page_list, 
@@ -533,39 +545,13 @@ fn allocSmall(small_pool: *SmallPool, sm_idx: usize, alignment: u29) ?[]u8 {
     var page_record: *PageRecord = &page_list.pages[page_idx];
     page_record.free_block_ct -= 1;
 
-    var block_start = block_idx * SMALL_BLOCK_SIZES[sm_idx];
-    const block_end = block_start + SMALL_BLOCK_SIZES[sm_idx];
-
-    // make sure we're aligned
-    const start_address = @ptrToInt(&page_list.bytes[block_start]);
-    const address_mod_align = start_address % alignment;
-    if (address_mod_align != 0) {
-        block_start += alignment - address_mod_align;
-    }
-
-    return page_list.bytes[block_start..block_end];
+    return block_idx;
 }
 
-fn freeSmall(small_pool: *SmallPool, data: *u8, sm_idx: usize) void {
-    var page_list: *PageList = &small_pool.page_lists[sm_idx];
-    const page_list_head_address = @ptrToInt(@ptrCast(*u8, page_list.bytes));
-    const data_address = @ptrToInt(data);
-    const block_idx = @intCast(u32, @divTrunc((data_address - page_list_head_address), SMALL_BLOCK_SIZES[sm_idx]));
+fn mediumBlockIdx(page_list: *PageList, md_idx: usize) ?u32 {
+    page_list.mutex.lock();
+    defer page_list.mutex.unlock();
 
-    if (page_list.free_block) |next_free| {
-        page_list.blocks[@intCast(usize, block_idx)].next_free = @intCast(u32, next_free);
-    }
-    else {
-        page_list.blocks[@intCast(usize, block_idx)].next_free = NO_BLOCK;
-    }
-    page_list.free_block = block_idx;
-
-    var page_record: *PageRecord = &page_list.pages[block_idx / SMALL_BLOCK_COUNTS_PER_PAGE[sm_idx]];
-    page_record.free_block_ct += 1;
-}
-
-fn allocMedium(medium_pool: *MediumPool, md_idx: usize, alignment: u29) ?[]u8 {
-    var page_list: *PageList = &medium_pool.page_lists[md_idx];
     if (page_list.free_block == null) {
         expandPageList(
             page_list, 
@@ -589,6 +575,52 @@ fn allocMedium(medium_pool: *MediumPool, md_idx: usize, alignment: u29) ?[]u8 {
     const page_idx = @divTrunc(block_idx, MEDIUM_BLOCK_COUNTS_PER_PAGE[md_idx]);
     var page_record: *PageRecord = &page_list.pages[page_idx];
     page_record.free_block_ct -= 1;
+    return block_idx;
+}
+
+fn allocSmall(small_pool: *SmallPool, sm_idx: usize, alignment: u29) ?[]u8 {
+    var page_list: *PageList = &small_pool.page_lists[sm_idx];
+
+    const block_idx: u32 = smallBlockIdx(page_list, sm_idx) orelse return null;
+
+    var block_start = block_idx * SMALL_BLOCK_SIZES[sm_idx];
+    const block_end = block_start + SMALL_BLOCK_SIZES[sm_idx];
+
+    // make sure we're aligned
+    const start_address = @ptrToInt(&page_list.bytes[block_start]);
+    const address_mod_align = start_address % alignment;
+    if (address_mod_align != 0) {
+        block_start += alignment - address_mod_align;
+    }
+
+    return page_list.bytes[block_start..block_end];
+}
+
+fn freeSmall(small_pool: *SmallPool, data: *u8, sm_idx: usize) void {
+    var page_list: *PageList = &small_pool.page_lists[sm_idx];
+    const page_list_head_address = @ptrToInt(@ptrCast(*u8, page_list.bytes));
+    const data_address = @ptrToInt(data);
+    const block_idx = @intCast(u32, @divTrunc((data_address - page_list_head_address), SMALL_BLOCK_SIZES[sm_idx]));
+
+    page_list.mutex.lock();
+    defer page_list.mutex.unlock();
+    
+    if (page_list.free_block) |next_free| {
+        page_list.blocks[@intCast(usize, block_idx)].next_free = @intCast(u32, next_free);
+    }
+    else {
+        page_list.blocks[@intCast(usize, block_idx)].next_free = NO_BLOCK;
+    }
+    page_list.free_block = block_idx;
+
+    var page_record: *PageRecord = &page_list.pages[block_idx / SMALL_BLOCK_COUNTS_PER_PAGE[sm_idx]];
+    page_record.free_block_ct += 1;
+}
+
+fn allocMedium(medium_pool: *MediumPool, md_idx: usize, alignment: u29) ?[]u8 {
+    var page_list: *PageList = &medium_pool.page_lists[md_idx];
+
+    const block_idx: u32 = mediumBlockIdx(page_list, md_idx) orelse return null;
 
     var block_start = block_idx * MEDIUM_BLOCK_SIZES[md_idx];
     const block_end = block_start + MEDIUM_BLOCK_SIZES[md_idx];
@@ -608,6 +640,9 @@ fn freeMedium(medium_pool: *MediumPool, data: *u8, md_idx: usize) void {
     const page_list_head_address = @ptrToInt(@ptrCast(*u8, page_list.bytes));
     const data_address = @ptrToInt(data);
     const block_idx = @intCast(u32, @divTrunc((data_address - page_list_head_address), MEDIUM_BLOCK_SIZES[md_idx]));
+
+    page_list.mutex.lock();
+    defer page_list.mutex.unlock();
     
     if (page_list.free_block) |next_free| {
         page_list.blocks[@intCast(usize, block_idx)].next_free = @intCast(u32, next_free);
@@ -624,6 +659,9 @@ fn freeMedium(medium_pool: *MediumPool, data: *u8, md_idx: usize) void {
 
 fn allocLarge(large_pool: *LargePool, lg_idx: usize, alloc_sz: usize, alignment: u29, lock_memory: bool) ?[]u8 {
     var node_list: *NodeList = &large_pool.node_lists[lg_idx];
+
+    node_list.mutex.lock();
+
     if (node_list.free_node == null) {
         expandNodeList(node_list, SMALL_PAGE_SZ, LARGE_NODES_PER_PAGE, lock_memory) catch return null;
     }
@@ -644,6 +682,9 @@ fn allocLarge(large_pool: *LargePool, lg_idx: usize, alloc_sz: usize, alignment:
     var bytes_start = node_idx * LARGE_BLOCK_SIZES[lg_idx];
     var alloc_bytes = &node_list.bytes[bytes_start];
     _ = windows.VirtualAlloc(alloc_bytes, page_alloc_sz, windows.MEM_COMMIT, windows.PAGE_READWRITE) catch return null;
+
+    node_list.mutex.unlock();
+
     // if (lock_memory) {
     //     _ = c.VirtualLock(alloc_bytes, page_alloc_sz);
     // }
@@ -667,6 +708,9 @@ fn freeLarge(large_pool: *LargePool, data: *u8, lg_idx: usize, lock_memory: bool
     const node_list_head_address = @ptrToInt(@ptrCast(*u8, node_list.bytes));
     const data_address = @ptrToInt(data);
     const node_idx = @intCast(u32, @divTrunc((data_address - node_list_head_address), LARGE_BLOCK_SIZES[lg_idx]));
+
+    node_list.mutex.lock();
+    defer node_list.mutex.unlock();
 
     if (node_list.free_node) |next_free| {
         node_list.nodes[@intCast(usize, node_idx)].next_free = @intCast(u32, next_free);
@@ -813,6 +857,7 @@ const PageList = struct {
     free_block: ?u32 = undefined, 
     page_ct: u32 = undefined, 
     free_page_ct: u32 = undefined,
+    mutex: std.Thread.Mutex = undefined,
 };
 
 const NodeList = struct {
@@ -820,6 +865,7 @@ const NodeList = struct {
     nodes: []LargeBlockNode = undefined, 
     free_node: ?u32 = undefined, 
     page_ct: u32 = undefined,
+    mutex: std.Thread.Mutex = undefined,
 };
 
 const SmallPool = struct {
@@ -846,10 +892,6 @@ const AllocSector = enum {Small, Medium, Large, Giant};
 const AllocPlacementInfo = struct {
     sector: AllocSector,
     division: u8,
-
-    inline fn same(self: AllocPlacementInfo, other: AllocPlacementInfo) bool {
-        return self.sector == other.sector and self.division == other.division;
-    }
 };
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
