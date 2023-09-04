@@ -1990,18 +1990,14 @@ pub fn vkInterfaceReallocate(
     _ = user_data;
     _ = alloc_scope;
 
-    var data = allocator.allocExplicitAlign(u8, sz, @intCast(u29, alignment)) catch return null;
+    var new_data: []u8 = undefined; 
     if (original_alloc != null) {
-        var old_data = allocator.getFullAlloc(original_alloc.?);
-        // original_alloc may be offset from the head of its allocation due to alignment; we want to copy from
-        // original_alloc to the end of the allocation.
-        const old_data_len = old_data.len - (@ptrToInt(original_alloc) - @ptrToInt(old_data.ptr));
-        const min_sz = std.math.min(data.len, old_data_len);
-        _ = c.memcpy(data.ptr, original_alloc, min_sz);
-        allocator.freeOpaque(original_alloc.?);
+        new_data = allocator.reallocExplicitAlign(u8, original_alloc.?, sz, @intCast(u29, alignment)) catch return null;
     }
-
-    return data.ptr;
+    else {
+        new_data = allocator.allocExplicitAlign(u8, sz, @intCast(u29, alignment)) catch return null;
+    }
+    return new_data.ptr;
 }
 
 pub fn vkInterfaceFree(user_data: ?*anyopaque, alloc: ?*anyopaque) callconv(.C) void {

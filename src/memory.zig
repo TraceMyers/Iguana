@@ -174,9 +174,75 @@ pub const Allocator = struct {
 
         return mem.bytesAsSlice(Type, @alignCast(@alignOf(Type), data[0..alloc_sz]));
     }
+    // WARNING: assumes alignment has not changed! Alignment is allowed to be explicit so this allocator works with
+    // C-based libraries like Vulkan
+    pub fn reallocExplicitAlign(
+        self: *const Allocator, comptime Type: type, data_in: *anyopaque, ct: usize, alignment: u29
+    ) Mem6Error![]Type {
+        const alloc_sz: usize = ct * @sizeOf(Type);
+        assert(alloc_sz > 0 and alignment > 0);
+
+        // determining a safe allocation size for the given alignment quickly
+        const align_sz: usize = if (std.math.isPowerOfTwo(alignment)) alloc_sz else alloc_sz + alignment - 1;
+        const old_placement_info: AllocPlacementInfo = self.existingPlacementInfo(data_in);
+        const new_placement_info: AllocPlacementInfo = newPlacementInfo(align_sz);
+        
+        if (std.meta.eql(old_placement_info, new_placement_info)) {
+            const not_large_or_enough_space = blk: {
+                if (new_placement_info.sector == .Large) {
+                    const prev_full_align_sz = self.largeAllocSzAligned(data_in, old_placement_info.division);
+                    if (prev_full_align_sz >= align_sz) {
+                        break :blk true;
+                    }
+                    break :blk false;
+                }   
+                break :blk true;
+            };
+            if (not_large_or_enough_space) {
+                return @ptrCast([*]Type, data_in)[0..ct];
+            }
+        }
+
+        var old_data = self.getFullAlloc(data_in);
+        var new_data = switch(new_placement_info.sector) {
+            .Small => allocSmall(&small_pools[self.enclave_idx], new_placement_info.division, alignment),
+            .Medium => allocMedium(&medium_pools[self.enclave_idx], new_placement_info.division, alignment),
+            .Large => allocLarge(
+                &large_pools[self.enclave_idx], 
+                new_placement_info.division, 
+                align_sz, 
+                alignment, 
+                lock_memory_rules[self.enclave_idx]
+            ),
+            .Giant => unreachable,
+        } orelse return Mem6Error.OutOfMemory;
+
+        // data_in may be offset from the head of its allocation due to alignment; we want to copy from
+        // data_in to the end of the allocation.
+        const old_data_len = old_data.len - (@ptrToInt(data_in) - @ptrToInt(old_data.ptr));
+        const min_sz = std.math.min(new_data.len, old_data_len);
+        _ = c.memcpy(new_data.ptr, data_in, min_sz);
+
+        switch(old_placement_info.sector) {
+            .Small => {
+                const small_pool: *SmallPool = &small_pools[self.enclave_idx];
+                freeSmall(small_pool, @ptrCast(*u8, data_in), old_placement_info.division);
+            },
+            .Medium => {
+                const medium_pool: *MediumPool = &medium_pools[self.enclave_idx];
+                freeMedium(medium_pool, @ptrCast(*u8, data_in), old_placement_info.division);
+            },
+            .Large => {
+                const large_pool: *LargePool = &large_pools[self.enclave_idx];
+                freeLarge(large_pool, @ptrCast(*u8, data_in), old_placement_info.division, lock_memory_rules[self.enclave_idx]);
+            },
+            .Giant => {},
+        }
+        return new_data;
+    }
 
     pub inline fn free(self: *const Allocator, data_in: anytype) void {
-        self.freeOpaque(&data_in[0]);
+        self.freeOpaque(data_in.ptr);
     }
 
     pub fn freeOpaque(self: *const Allocator, data_in: *anyopaque) void {
@@ -242,6 +308,51 @@ pub const Allocator = struct {
             unreachable;
         }
         unreachable;
+    }
+
+    fn existingPlacementInfo(self: *const Allocator, data: *anyopaque) AllocPlacementInfo {
+        const data_address = @ptrToInt(data);
+        if (data_address < @ptrToInt(medium_pools[self.enclave_idx].bytes)) {
+            const small_pool: *SmallPool = &small_pools[self.enclave_idx];
+            const sm_idx = (data_address - @ptrToInt(small_pool.bytes)) / SMALL_DIVISION_SZ;
+            return AllocPlacementInfo{.sector=.Small, .division=@intCast(u8, sm_idx)};
+        }
+        else if (data_address < @ptrToInt(large_pools[self.enclave_idx].bytes)) {
+            const medium_pool: *MediumPool = &medium_pools[self.enclave_idx];
+            const md_idx = (data_address - @ptrToInt(medium_pool.bytes)) / MEDIUM_DIVISION_SZ;
+            return AllocPlacementInfo{.sector=.Medium, .division=@intCast(u8, md_idx)};
+        }
+        else if (data_address < @ptrToInt(giant_pools[self.enclave_idx].bytes)) {
+            const large_pool: *LargePool = &large_pools[self.enclave_idx];
+            const lg_idx = (data_address - @ptrToInt(large_pool.bytes)) / LARGE_DIVISION_SZ;
+            return AllocPlacementInfo{.sector=.Large, .division=@intCast(u8, lg_idx)};
+        }
+        else {
+            return AllocPlacementInfo{.sector=.Giant, .division=0};
+        }
+    }
+
+    inline fn newPlacementInfo(align_sz: usize) AllocPlacementInfo {
+        if (align_sz <= SMALL_ALLOC_MAX_SZ) {
+            return AllocPlacementInfo{.sector=.Small, .division=@intCast(u8, smallSizeBracket(align_sz))};
+        }
+        else if (align_sz <= MEDIUM_ALLOC_MAX_SZ) {
+            return AllocPlacementInfo{.sector=.Medium, .division=@intCast(u8, mediumSizeBracket(align_sz))};
+        }
+        else if (align_sz <= LARGE_ALLOC_MAX_SZ) {
+            return AllocPlacementInfo{.sector=.Large, .division=@intCast(u8, largeSizeBracket(align_sz))};
+        }
+        else {
+            return AllocPlacementInfo{.sector=.Giant, .division=0};
+        }
+    }
+
+    inline fn largeAllocSzAligned(self: *const Allocator, data_address: *anyopaque, lg_idx: usize) u32 {
+        var node_list: *NodeList = &large_pools[self.enclave_idx].node_lists[lg_idx];
+        const node_list_head_address = @ptrToInt(@ptrCast(*u8, node_list.bytes));
+        const node_idx = @intCast(u32, @divTrunc((@ptrToInt(data_address) - node_list_head_address), LARGE_BLOCK_SIZES[lg_idx]));
+        const bytes_start = node_idx * LARGE_BLOCK_SIZES[lg_idx];
+        return node_list.nodes[@intCast(usize, node_idx)].alloc_sz - @intCast(u32, (@ptrToInt(data_address) - bytes_start));
     }
 
     pub inline fn enclave(self: *const Allocator) Enclave {
@@ -728,6 +839,17 @@ const LargePool = struct {
 
 const GiantPool = struct {
     bytes: [*]u8 = undefined,
+};
+
+const AllocSector = enum {Small, Medium, Large, Giant};
+
+const AllocPlacementInfo = struct {
+    sector: AllocSector,
+    division: u8,
+
+    inline fn same(self: AllocPlacementInfo, other: AllocPlacementInfo) bool {
+        return self.sector == other.sector and self.division == other.division;
+    }
 };
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

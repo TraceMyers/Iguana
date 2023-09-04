@@ -105,11 +105,11 @@ const HashTable = struct {
         };
     }
 
-    pub fn add(hash: u64) !void {
-        // if (node_ct == nodes.len) {
-        //     // TODO: realloc
-        //     // var new_nodes = 
-        // }
+    pub fn add(self: *HashTable, hash: u64) !void {
+        if (self.node_ct == self.nodes.len) {
+            // TODO: realloc
+            // var new_nodes = allocator.
+        }
         _ = hash;
     }
 
