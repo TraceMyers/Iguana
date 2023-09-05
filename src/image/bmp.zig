@@ -42,7 +42,7 @@ const ImageError = imagef.ImageError;
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub fn load(
-    file: *std.fs.File, image: *Image, allocator: memory.Allocator, options: *const imagef.ImageLoadOptions
+    file: *std.fs.File, image: *Image, allocator: std.mem.Allocator, options: *const imagef.ImageLoadOptions
 ) !void {
     var externally_allocated: bool = undefined;
     var buffer: []u8 = try loadFileAndCoreHeaders(file, allocator, bmp_min_sz, options, &externally_allocated);
@@ -97,7 +97,7 @@ pub fn load(
 
 fn loadFileAndCoreHeaders(
     file: *std.fs.File, 
-    allocator: anytype, 
+    allocator: std.mem.Allocator, 
     min_sz: usize, 
     options: *const imagef.ImageLoadOptions, 
     externally_allocated: *bool
@@ -120,7 +120,7 @@ fn loadFileAndCoreHeaders(
     }
     else {
         externally_allocated.* = false;
-        buffer = try allocator.allocExplicitAlign(u8, stat.size + 4, 4);
+        buffer = try allocator.alignedAlloc(u8, 4, stat.size + 4);
     }
 
     for (0..bmp_file_header_sz + bmp_info_header_sz_core) |i| {
@@ -133,7 +133,7 @@ fn loadFileAndCoreHeaders(
 fn redirectToPng(
     file: *std.fs.File, 
     image: *Image, 
-    allocator: memory.Allocator, 
+    allocator: std.mem.Allocator, 
     options: *const imagef.ImageLoadOptions, 
     buffer: []u8
 ) !void {
@@ -418,7 +418,7 @@ fn createImage(
     image: *Image, 
     info: *BitmapInfo, 
     color_table: *const BitmapColorTable, 
-    allocator: memory.Allocator
+    allocator: std.mem.Allocator
 ) !void {
     image.width = @intCast(u32, try std.math.absInt(info.width));
     image.height = @intCast(u32, try std.math.absInt(info.height));

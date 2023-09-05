@@ -51,7 +51,7 @@ const LocalStringBuffer = string.LocalStringBuffer;
 // !! Warning !! some OS/2 BMPs are compatible, except their width and height entries are interpreted as signed integers
 // (rather than the OS/2 standard for core headers, unsigned), which may lead to a failed read or row-inverted image.
 pub fn loadImage(
-    file_path: []const u8, format: ImageFormat, allocator: memory.Allocator, options: ImageLoadOptions
+    file_path: []const u8, format: ImageFormat, allocator: std.mem.Allocator, options: ImageLoadOptions
 ) !Image {
     var t = bench.ScopeTimer.start("loadImage", bench.getScopeTimerID());
     defer t.stop();
@@ -129,7 +129,7 @@ pub const Image = struct {
     width: u32 = 0,
     height: u32 = 0,
     pixels: ?[]graphics.RGBA32 = null,
-    allocator: ?memory.Allocator = null,
+    allocator: ?std.mem.Allocator = null,
 
     pub inline fn clear(self: *Image) void {
         std.debug.assert(self.allocator != null and self.pixels != null);
@@ -167,7 +167,7 @@ test "Load Bitmap image" {
     try memory.autoStartup();
     defer memory.shutdown();
 
-    const allocator = memory.Allocator.new(memory.Enclave.Game);
+    const allocator = memory.Allocator(memory.Enclave.Game).allocator();
 
     print("\n", .{});
 

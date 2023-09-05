@@ -1482,7 +1482,7 @@ fn physicalDeviceHasAdequateExtensionProperties(device: VkPhysicalDevice) bool {
         }
     }
 
-    var extension_props = HeapArray(c.VkExtensionProperties).new(&allocator, extension_prop_ct) catch return false;
+    var extension_props = HeapArray(c.VkExtensionProperties).new(allocator, extension_prop_ct) catch return false;
     extension_props.setCount(extension_prop_ct);
     defer extension_props.free();
 
@@ -1573,7 +1573,7 @@ fn getPhysicalDeviceQueueFamilyCapabilities(device: VkPhysicalDevice, device_int
         return false;
     }
 
-    var queue_family_props = HeapArray(c.VkQueueFamilyProperties).new(&allocator, queue_family_ct) catch return false;
+    var queue_family_props = HeapArray(c.VkQueueFamilyProperties).new(allocator, queue_family_ct) catch return false;
     defer queue_family_props.free();
 
     c.vkGetPhysicalDeviceQueueFamilyProperties(
@@ -1976,35 +1976,34 @@ pub fn vkInterfaceAllocate(
     _ = user_data;
     _ = alloc_scope;
 
-    var data = allocator.allocExplicitAlign(u8, sz, @intCast(u29, alignment)) catch return null;
-    return data.ptr;
+    return memory.alignedAlloc(cpu_alloc.enclaveIndex(), @intCast(u29, alignment), sz);
 }
 
 pub fn vkInterfaceReallocate(
     user_data: ?*anyopaque, 
-    original_alloc: ?*anyopaque, 
+    original_alloc_ptr: ?*anyopaque, 
     sz: usize, 
     alignment: usize, 
     alloc_scope: c.VkSystemAllocationScope
 ) callconv(.C) ?*anyopaque {
     _ = user_data;
     _ = alloc_scope;
-
-    var new_data: []u8 = undefined; 
-    if (original_alloc != null) {
-        new_data = allocator.reallocExplicitAlign(u8, original_alloc.?, sz, @intCast(u29, alignment)) catch return null;
+    if (original_alloc_ptr != null) {
+        var original_alloc: []u8 = @ptrCast([*]u8, @alignCast(@alignOf(u8), original_alloc_ptr.?))[0..1];
+        var new_data = memory.alignedResize(cpu_alloc.enclaveIndex(), original_alloc, sz, @intCast(u29, alignment), true) 
+            orelse return null;
+        return new_data.ptr;
     }
     else {
-        new_data = allocator.allocExplicitAlign(u8, sz, @intCast(u29, alignment)) catch return null;
+        return memory.alignedAlloc(cpu_alloc.enclaveIndex(), @intCast(u29, alignment), sz);
     }
-    return new_data.ptr;
 }
 
 pub fn vkInterfaceFree(user_data: ?*anyopaque, alloc: ?*anyopaque) callconv(.C) void {
     _ = user_data;
 
     if (alloc != null) {
-        allocator.freeOpaque(alloc.?);
+        memory.freeOpaque(cpu_alloc.enclaveIndex(), alloc.?);
     }
 }
 
@@ -2223,7 +2222,8 @@ var test_x: f32 = 0.0;
 var test_y: f32 = 0.0;
 var test_z: f32 = 2.0;
 
-const allocator = memory.Allocator.new(memory.Enclave.RenderCPU);
+const cpu_alloc = memory.EnclaveAllocator(memory.Enclave.RenderCPU);
+const allocator = cpu_alloc.allocator();
 
 const alloc_cb = c.VkAllocationCallbacks{
     .pUserData = null,

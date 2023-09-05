@@ -1,4 +1,5 @@
 // TODO: finish Array types
+// TODO: with std.mem.allocator, can probably consolidate types
 
 const std = @import("std");
 const memory = @import("memory.zig");
@@ -37,14 +38,14 @@ pub fn Array(comptime array_type: ArrayType, comptime ItemType: type, comptime l
         const Self = @This();
 
         items: if (is_local) [length]ItemType else []ItemType = undefined,
-        allocator: if (is_local) void else *const memory.Allocator = undefined, 
+        allocator: if (is_local) void else std.mem.Allocator = undefined, 
         ct: usize = 0,
 
         inline fn newLocal() Self {
             return Self{};
         }
 
-        inline fn newHeap(allocator: *const memory.Allocator, init_length: usize) !Self {
+        inline fn newHeap(allocator: std.mem.Allocator, init_length: usize) !Self {
             assert(init_length > 0);
             return Self{
                 .items = try allocator.alloc(ItemType, init_length),
@@ -52,7 +53,7 @@ pub fn Array(comptime array_type: ArrayType, comptime ItemType: type, comptime l
             };
         }
 
-        inline fn newResize(allocator: *const memory.Allocator, init_length: usize) !Self {
+        inline fn newResize(allocator: std.mem.Allocator, init_length: usize) !Self {
             if (init_length > 0) {
                 return Self{
                     .items = try allocator.alloc(ItemType, init_length),
