@@ -145,13 +145,13 @@ pub const ImageLoadBuffer = struct {
 
 pub const ImageLoadOptions = struct {
     // image loading system is not allowed to attempt to load the image as any other format than whichever
-    // is first inferred or assigned. useful internally in situations where fmt a was assigned/inferred, but
-    // the image data suggests fmt b. so, we try to load fmt b but to be 100% sure we avoid infinite recursion,
-    // we disallow attempting to load as another format.
+    // is first inferred or assigned. Also used internally when attempting to load as a fmt other than the first, to
+    // prevent infinite recursion.
     format_comitted: bool = false,
     // if you want to provide a buffer that will be used during image loading, rather than allocating and freeing
     // a loading buffer. will be ignored if too small or if alignment is incorrect for the format. WARNING: providing a
-    // load buffer with incorrectly denoted alignment can cause load issues.
+    // load buffer with incorrectly denoted alignment can cause an image to be loaded improperly or fail to load.
+    // - BMPs have an alignment of 4 bytes
     load_buffer: ImageLoadBuffer = ImageLoadBuffer{},
 };
 

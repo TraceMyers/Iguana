@@ -117,7 +117,7 @@ pub fn Vec(comptime len: comptime_int, comptime ScalarType: type) type {
         pub inline fn random(rand: anytype, minmax: ScalarType) VecType {
             var vec: VecType = undefined;
             for (0..len) |i| {
-                vec.parts[i] = rand.random().float(ScalarType) * if(rand.random().boolean()) - minmax else minmax;
+                vec.parts[i] = rand.random().float(ScalarType) * 2 * minmax - minmax;
             }
             return vec;
         }

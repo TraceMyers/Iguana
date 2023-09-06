@@ -10,6 +10,18 @@
 // used for allocations, and the highest is used to tell which pages can be freed.
 // TODO: refactor for consistent naming
 
+const std = @import("std");
+const assert = std.debug.assert;
+const print = std.debug.print;
+const windows = std.os.windows;
+const mem = std.mem;
+const expect = std.testing.expect;
+const benchmark = @import("benchmark.zig");
+const ScopeTimer = benchmark.ScopeTimer;
+const getScopeTimerID = benchmark.getScopeTimerID;
+const math = @import("math.zig");
+const c = @import("ext.zig").c;
+const builtin = @import("builtin");
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- config
@@ -331,15 +343,15 @@ pub fn alignedAlloc(enclave_idx: usize, alignment: u29, sz: usize) ?[*]u8 {
     const alloc_sz = sz + alignment - 1;
 
     if (alloc_sz <= SMALL_ALLOC_MAX_SZ) {
-        const division: usize = smallSizeBracket(alloc_sz);
+        const division: usize = smallDivision(alloc_sz);
         return allocSmall(&small_pools[enclave_idx], division, alignment);
     }
     else if (alloc_sz <= MEDIUM_ALLOC_MAX_SZ) {
-        const division: usize = mediumSizeBracket(alloc_sz);
+        const division: usize = mediumDivision(alloc_sz);
         return allocMedium(&medium_pools[enclave_idx], division, alignment);
     }
     else if (alloc_sz <= LARGE_ALLOC_MAX_SZ) {
-        const division: usize = largeSizeBracket(alloc_sz);
+        const division: usize = largeDivision(alloc_sz);
         return allocLarge(
             &large_pools[enclave_idx], division, alloc_sz, alignment, lock_memory_rules[enclave_idx]
         );
@@ -504,13 +516,13 @@ fn existingPlacementInfo(enclave_idx: usize, data: *anyopaque) AllocPlacementInf
 
 inline fn newPlacementInfo(align_sz: usize) AllocPlacementInfo {
     if (align_sz <= SMALL_ALLOC_MAX_SZ) {
-        return AllocPlacementInfo{.sector=.Small, .division=@intCast(u8, smallSizeBracket(align_sz))};
+        return AllocPlacementInfo{.sector=.Small, .division=@intCast(u8, smallDivision(align_sz))};
     }
     else if (align_sz <= MEDIUM_ALLOC_MAX_SZ) {
-        return AllocPlacementInfo{.sector=.Medium, .division=@intCast(u8, mediumSizeBracket(align_sz))};
+        return AllocPlacementInfo{.sector=.Medium, .division=@intCast(u8, mediumDivision(align_sz))};
     }
     else if (align_sz <= LARGE_ALLOC_MAX_SZ) {
-        return AllocPlacementInfo{.sector=.Large, .division=@intCast(u8, largeSizeBracket(align_sz))};
+        return AllocPlacementInfo{.sector=.Large, .division=@intCast(u8, largeDivision(align_sz))};
     }
     else {
         return AllocPlacementInfo{.sector=.Giant, .division=0};
@@ -525,7 +537,7 @@ inline fn largeAllocSzAligned(enclave_idx: usize, data_address: *anyopaque, lg_i
     return node_list.nodes[@intCast(usize, node_idx)].alloc_sz - @intCast(u32, (@ptrToInt(data_address) - bytes_start));
 }
 
-inline fn smallSizeBracket(alloc_sz: usize) usize {
+inline fn smallDivision(alloc_sz: usize) usize {
     const sz_div_min = @intCast(usize, alloc_sz >> SMALL_ALLOC_MIN_SZ_SHIFT);
     const sz_trunc = sz_div_min << SMALL_ALLOC_MIN_SZ_SHIFT;
     const sz_mod_min = alloc_sz - sz_trunc;
@@ -533,12 +545,12 @@ inline fn smallSizeBracket(alloc_sz: usize) usize {
     return sz_div_min - sz_multiple_min;
 }
 
-inline fn mediumSizeBracket(alloc_sz: usize) usize {
-    return kmath.ceilExp2(alloc_sz) - MEDIUM_MIN_EXP2;
+inline fn mediumDivision(alloc_sz: usize) usize {
+    return math.ceilExp2(alloc_sz) - MEDIUM_MIN_EXP2;
 }
 
-inline fn largeSizeBracket(alloc_sz: usize) usize {
-    return kmath.ceilExp2(alloc_sz) - LARGE_MIN_EXP2;
+inline fn largeDivision(alloc_sz: usize) usize {
+    return math.ceilExp2(alloc_sz) - LARGE_MIN_EXP2;
 }
 
 fn pullSmallBlock(page_list: *PageList, sm_idx: usize) ?u32 {
@@ -825,6 +837,7 @@ fn expandNodeList(
     node_list.free_node = @intCast(u32, page_start);
     node_list.page_ct += 1;
 }
+
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- data
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1521,20 +1534,3 @@ test "Large Alloc" {
         allocator.free(testalloc);
     }
 }
-
-// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// -------------------------------------------------------------------------------------------------------------- import
-// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-const std = @import("std");
-const assert = std.debug.assert;
-const print = std.debug.print;
-const windows = std.os.windows;
-const mem = std.mem;
-const expect = std.testing.expect;
-const benchmark = @import("benchmark.zig");
-const ScopeTimer = benchmark.ScopeTimer;
-const getScopeTimerID = benchmark.getScopeTimerID;
-const kmath = @import("math.zig");
-const c = @import("ext.zig").c;
-const builtin = @import("builtin");

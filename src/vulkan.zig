@@ -429,14 +429,20 @@ fn createInstance() !void {
     const glfw_required_extensions: [*c][*c]const u8 = c.glfwGetRequiredInstanceExtensions(&glfw_extension_ct);
 
     var extension_ct: u32 = 0;
-    var extensions = LocalArray(c.VkExtensionProperties, 512).new();
-    _ = c.vkEnumerateInstanceExtensionProperties(null, &extension_ct, &extensions.items);
-    extensions.setCount(extension_ct);
+    _ = c.vkEnumerateInstanceExtensionProperties(null, &extension_ct, null);
+
+    var extensions = try std.ArrayList(c.VkExtensionProperties).initCapacity(allocator, extension_ct);
+    defer extensions.deinit();
+    extensions.expandToCapacity();
+    _ = c.vkEnumerateInstanceExtensionProperties(null, &extension_ct, &extensions.items[0]);
 
     var layer_ct: u32 = 0;
-    var available_layers = LocalArray(c.VkLayerProperties, 512).new();
-    _ = c.vkEnumerateInstanceLayerProperties(&layer_ct, &available_layers.items);
-    available_layers.setCount(layer_ct);
+    _ = c.vkEnumerateInstanceLayerProperties(&layer_ct, null);
+
+    var available_layers = try std.ArrayList(c.VkLayerProperties).initCapacity(allocator, extension_ct);
+    defer available_layers.deinit();
+    available_layers.expandToCapacity();
+    _ = c.vkEnumerateInstanceLayerProperties(&layer_ct, &available_layers.items[0]);
 
     // TODO: multiple layers?
     const validation_layer: [*c]const u8 = "VK_LAYER_KHRONOS_validation";
@@ -471,11 +477,7 @@ fn createSurface() !void {
 fn getPhysicalDevice() !void {
     var physical_device_ct: u32 = 0;
     {
-        const result = c.vkEnumeratePhysicalDevices(
-            vk_instance, 
-            &physical_device_ct, 
-            null
-        );
+        const result = c.vkEnumeratePhysicalDevices(vk_instance, &physical_device_ct, null);
         if (result != VK_SUCCESS) {
             return VkError.GetPhysicalDevices;
         }
@@ -485,17 +487,15 @@ fn getPhysicalDevice() !void {
         return VkError.ZeroPhysicalDevices;
     }
 
-    var physical_devices = LocalArray(VkPhysicalDevice, 128).new();
-    if (physical_device_ct > 128) {
-        return VkError.NotEnoughPhysicalDeviceStorage;
-    }
-    physical_devices.setCount(physical_device_ct);
+    var physical_devices = try std.ArrayList(VkPhysicalDevice).initCapacity(allocator, physical_device_ct);
+    defer physical_devices.deinit();
+    physical_devices.expandToCapacity();
 
     {
         const result = c.vkEnumeratePhysicalDevices(
             vk_instance, 
             &physical_device_ct, 
-            physical_devices.cptr()
+            &physical_devices.items[0]
         );
         if (result != VK_SUCCESS) {
             return VkError.GetPhysicalDevices;
@@ -506,7 +506,7 @@ fn getPhysicalDevice() !void {
     var best_device_vram_sz: c.VkDeviceSize = 0;
     var best_device_type: c.VkPhysicalDeviceType = c.VK_PHYSICAL_DEVICE_TYPE_OTHER;
 
-    for (physical_devices.items[0..physical_devices.count()]) |device| {
+    for (physical_devices.items) |device| {
         if (!getPhysicalDeviceCapabilities(device, &swapchain, &physical)) {
             continue;
         }
