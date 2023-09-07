@@ -58,8 +58,8 @@ pub fn cleanup() void {
     c.vkDestroyDescriptorSetLayout(vk_logical, vk_descriptor_set_layout, &alloc_cb);
     c.vkDestroyBuffer(vk_logical, index_buffer, &alloc_cb);
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
-        c.vkDestroyBuffer(vk_logical, uniform_buffers.items[i], &alloc_cb);
-        c.vkFreeMemory(vk_logical, uniform_buffers_memory.items[i], &alloc_cb);
+        c.vkDestroyBuffer(vk_logical, uniform_buffers.buffer[i], &alloc_cb);
+        c.vkFreeMemory(vk_logical, uniform_buffers_memory.buffer[i], &alloc_cb);
     }
     c.vkFreeMemory(vk_logical, index_buffer_memory, &alloc_cb);
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
@@ -83,10 +83,6 @@ pub fn cleanup() void {
     c.vkDestroyDevice(vk_logical, &alloc_cb);
     c.vkDestroySurfaceKHR(vk_instance, vk_surface, &alloc_cb);
     c.vkDestroyInstance(vk_instance, &alloc_cb);
-
-    if (direct_image != null) {
-        // direct_image.?.deinit();
-    }
 }
 
 pub fn drawFrame(delta_time: f32) !void {
@@ -229,7 +225,7 @@ fn updateUniformBuffer(current_image: u32, delta_time: f32) !void {
         print("\nproj\n{s}\n", .{mvp.projection});
         print("\nproduct\n{s}\n", .{product});
     }
-    @memcpy(@ptrCast([*]fMVP, @alignCast(16, (uniform_buffers_mapped.items[current_image].?)))[0..1], @ptrCast([*]fMVP, &mvp)[0..1]);
+    @memcpy(@ptrCast([*]fMVP, @alignCast(16, (uniform_buffers_mapped.buffer[current_image].?)))[0..1], @ptrCast([*]fMVP, &mvp)[0..1]);
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -259,7 +255,7 @@ fn recordCommandBuffer(command_buffer: VkCommandBuffer, image_idx: u32) !void {
         .sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
         .pNext = null,
         .renderPass = vk_render_pass,
-        .framebuffer = swapchain.framebuffers.items[image_idx],
+        .framebuffer = swapchain.framebuffers.buffer[image_idx],
         .renderArea = c.VkRect2D { 
             .offset = c.VkOffset2D { .x = 0, .y = 0 },
             .extent = swapchain.extent
@@ -348,10 +344,10 @@ fn recreateSwapchain() !void {
 }
 
 fn cleanupSwapchain() void {
-    for (swapchain.framebuffers.items[0..swapchain.framebuffers.count()]) |buf| {
+    for (swapchain.framebuffers.items()) |buf| {
         c.vkDestroyFramebuffer(vk_logical, buf, &alloc_cb);
     }
-    for (swapchain.image_views.items[0..swapchain.image_views.count()]) |view| {
+    for (swapchain.image_views.items()) |view| {
         c.vkDestroyImageView(vk_logical, view, &alloc_cb);
     }
     c.vkDestroySwapchainKHR(vk_logical, swapchain.vk_swapchain, &alloc_cb);
@@ -364,7 +360,7 @@ fn createBuffer(
     buffer: *c.VkBuffer,
     buffer_memory: *c.VkDeviceMemory
 ) !void {
-    const qfam_indices: *LocalArray(u32, 4) = physical.getUniqueQueueFamilyIndices();
+    const qfam_indices: *LocalBuffer(u32, 4) = physical.getUniqueQueueFamilyIndices();
     const buffer_info = c.VkBufferCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .pNext = null,
@@ -372,7 +368,7 @@ fn createBuffer(
         .size = size,
         .usage = usage,
         .sharingMode = c.VK_SHARING_MODE_CONCURRENT,
-        .queueFamilyIndexCount = @intCast(u32, qfam_indices.count()),
+        .queueFamilyIndexCount = @intCast(u32, qfam_indices.len),
         .pQueueFamilyIndices = qfam_indices.cptr(),
     };
 
@@ -550,16 +546,16 @@ fn getPhysicalDevice() !void {
 }
 
 fn createLogicalDevice() !void {
-    var unique_qfam_indices: *LocalArray(u32, 4) = physical.getUniqueQueueFamilyIndices();
+    var unique_qfam_indices: *LocalBuffer(u32, 4) = physical.getUniqueQueueFamilyIndices();
 
-    var queue_infos = LocalArray(c.VkDeviceQueueCreateInfo, 4).new();
-    queue_infos.setCount(unique_qfam_indices.count());
+    var queue_infos = LocalBuffer(c.VkDeviceQueueCreateInfo, 4).new();
+    queue_infos.setLen(unique_qfam_indices.len);
 
     const queue_priority: f32 = 1.0;
-    for (0..unique_qfam_indices.count()) |i| {
-        queue_infos.items[i] = c.VkDeviceQueueCreateInfo {
+    for (queue_infos.items(), unique_qfam_indices.items()) |*info, *index| {
+        info.* = c.VkDeviceQueueCreateInfo {
             .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-            .queueFamilyIndex = unique_qfam_indices.items[i],
+            .queueFamilyIndex = index.*,
             .queueCount = 1,
             .pQueuePriorities = &queue_priority,
             .pNext = null,
@@ -573,7 +569,7 @@ fn createLogicalDevice() !void {
         .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .pNext = null,
         .flags = 0,
-        .queueCreateInfoCount = @intCast(u32, unique_qfam_indices.count()),
+        .queueCreateInfoCount = @intCast(u32, unique_qfam_indices.len),
         .pQueueCreateInfos = queue_infos.cptr(),
         .enabledLayerCount = 0,
         .ppEnabledLayerNames = null,
@@ -607,8 +603,8 @@ fn createSwapchain() !void {
         return VkError.CreateSwapchain;
     }
 
-    var qfam_indices_array: *LocalArray(u32, 4) = physical.getUniqueQueueFamilyIndices();
-    const unique_qfam_idx_ct = @intCast(u32, qfam_indices_array.count());
+    var qfam_indices_array: *LocalBuffer(u32, 4) = physical.getUniqueQueueFamilyIndices();
+    const unique_qfam_idx_ct = @intCast(u32, qfam_indices_array.len);
 
     var image_share_mode: c.VkSharingMode = undefined;
     var qfam_index_ct: u32 = undefined;
@@ -654,15 +650,15 @@ fn createSwapchain() !void {
     if (result != VK_SUCCESS) {
         return VkError.CreateSwapchain;
     }
-    swapchain.images.setCount(image_ct);
+    swapchain.images.setLen(image_ct);
 
     swapchain.extent = extent;
     swapchain.image_fmt = surface_format.format;
 }
 
 fn createImageViews() !void {
-    swapchain.image_views.sZero();
-    swapchain.image_views.setCount(swapchain.images.count());
+    swapchain.image_views.zeroFill();
+    swapchain.image_views.setLen(swapchain.images.len);
 
     var create_info = c.VkImageViewCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -686,9 +682,9 @@ fn createImageViews() !void {
         },
     };
 
-    for (0..swapchain.image_views.count()) |i| {
-        create_info.image = swapchain.images.items[i];
-        const result = c.vkCreateImageView(vk_logical, &create_info, &alloc_cb, &swapchain.image_views.items[i]);
+    for (0..swapchain.image_views.len) |i| {
+        create_info.image = swapchain.images.items()[i];
+        const result = c.vkCreateImageView(vk_logical, &create_info, &alloc_cb, &swapchain.image_views.items()[i]);
         if (result != VK_SUCCESS) {
             return VkError.CreateImageViews;
         }
@@ -943,11 +939,11 @@ fn createGraphicsPipeline() !void {
 }
 
 fn createFramebuffers() !void {
-    swapchain.framebuffers.sZero();
-    swapchain.framebuffers.setCount(swapchain.images.count());
+    swapchain.framebuffers.zeroFill();
+    swapchain.framebuffers.setLen(swapchain.images.len);
 
-    for (0..swapchain.framebuffers.count()) |i| {
-        var attachment: *c.VkImageView = &swapchain.image_views.items[i];
+    for (0..swapchain.framebuffers.len) |i| {
+        var attachment: *c.VkImageView = &swapchain.image_views.items()[i];
 
         const frame_buffer_info = c.VkFramebufferCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
@@ -961,7 +957,7 @@ fn createFramebuffers() !void {
             .layers = 1,
         };
 
-        const result = c.vkCreateFramebuffer(vk_logical, &frame_buffer_info, &alloc_cb, &swapchain.framebuffers.items[i]);
+        const result = c.vkCreateFramebuffer(vk_logical, &frame_buffer_info, &alloc_cb, &swapchain.framebuffers.items()[i]);
         if (result != VK_SUCCESS) {
             return VkError.CreateFramebuffers;
         }
@@ -1233,11 +1229,13 @@ fn createUniformBuffers() !void {
             buffer_size, 
             c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
             c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            &uniform_buffers.items[i],
-            &uniform_buffers_memory.items[i]
+            &uniform_buffers.buffer[i],
+            &uniform_buffers_memory.buffer[i]
         );
 
-        const result = c.vkMapMemory(vk_logical, uniform_buffers_memory.items[i], 0, buffer_size, 0, &uniform_buffers_mapped.items[i]);
+        const result = c.vkMapMemory(
+            vk_logical, uniform_buffers_memory.buffer[i], 0, buffer_size, 0, &uniform_buffers_mapped.buffer[i]
+        );
         if (result != VK_SUCCESS) {
             return VkError.CreateUniformBuffers;
         }
@@ -1273,7 +1271,7 @@ fn createDescriptorPool() !void {
 }
 
 fn createDescriptorSets() !void {
-    var layouts = LocalArray(c.VkDescriptorSetLayout, MAX_FRAMES_IN_FLIGHT).new();
+    var layouts = LocalBuffer(c.VkDescriptorSetLayout, MAX_FRAMES_IN_FLIGHT).new();
     layouts.fill(vk_descriptor_set_layout);
     const alloc_info = c.VkDescriptorSetAllocateInfo{
         .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -1290,7 +1288,7 @@ fn createDescriptorSets() !void {
 
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
         const buffer_info = c.VkDescriptorBufferInfo{
-            .buffer = uniform_buffers.items[i],
+            .buffer = uniform_buffers.buffer[i],
             .offset = 0,
             .range = @sizeOf(fMVP),
         };
@@ -1482,16 +1480,15 @@ fn physicalDeviceHasAdequateExtensionProperties(device: VkPhysicalDevice) bool {
         }
     }
 
-    var extension_props = HeapArray(c.VkExtensionProperties).new(allocator, extension_prop_ct) catch return false;
-    extension_props.setCount(extension_prop_ct);
-    defer extension_props.free();
-
+    var extension_props = std.ArrayList(c.VkExtensionProperties).initCapacity(allocator, extension_prop_ct) catch return false;
+    defer extension_props.deinit();
+    extension_props.expandToCapacity();
     {
         const result = c.vkEnumerateDeviceExtensionProperties(
             device, 
             null, 
             &extension_prop_ct, 
-            @ptrCast([*c]c.VkExtensionProperties, extension_props.items)
+            &extension_props.items[0]
         );
         if (result != VK_SUCCESS) {
             return false;
@@ -1528,7 +1525,7 @@ fn getPhysicalDeviceSurfaceCapabilities(device: VkPhysicalDevice, swapc_details:
     if (format_ct > Swapchain.MAX_FORMAT_CT) {
         return false;
     }
-    swapc_details.surface_formats.setCount(format_ct);
+    swapc_details.surface_formats.setLen(format_ct);
 
     {
         const result = c.vkGetPhysicalDeviceSurfaceFormatsKHR(
@@ -1550,7 +1547,7 @@ fn getPhysicalDeviceSurfaceCapabilities(device: VkPhysicalDevice, swapc_details:
     if (present_mode_ct > Swapchain.MAX_MODE_CT) {
         return false;
     }
-    swapc_details.present_modes.setCount(present_mode_ct);
+    swapc_details.present_modes.setLen(present_mode_ct);
 
     {
         const result = c.vkGetPhysicalDeviceSurfacePresentModesKHR(
@@ -1573,8 +1570,9 @@ fn getPhysicalDeviceQueueFamilyCapabilities(device: VkPhysicalDevice, device_int
         return false;
     }
 
-    var queue_family_props = HeapArray(c.VkQueueFamilyProperties).new(allocator, queue_family_ct) catch return false;
-    defer queue_family_props.free();
+    var queue_family_props = std.ArrayList(c.VkQueueFamilyProperties).initCapacity(allocator, queue_family_ct) catch return false;
+    defer queue_family_props.deinit();
+    queue_family_props.expandToCapacity();
 
     c.vkGetPhysicalDeviceQueueFamilyProperties(
         device, &queue_family_ct, @ptrCast([*c]c.VkQueueFamilyProperties, queue_family_props.items)
@@ -1685,16 +1683,16 @@ fn getPhysicalDeviceVRAMSize(device: VkPhysicalDevice) c.VkDeviceSize {
 }
 
 fn chooseSwapchainSurfaceFormat(swapc: *Swapchain) c.VkSurfaceFormatKHR {
-    for (swapc.surface_formats.items[0..swapc.surface_formats.count()]) |*format| {
+    for (swapc.surface_formats.items()[0..swapc.surface_formats.len]) |*format| {
         if (format.format == c.VK_FORMAT_B8G8R8A8_SRGB and format.colorSpace == c.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
             return format.*;
         }
     }
-    return swapc.surface_formats.items[0];
+    return swapc.surface_formats.items()[0];
 }
 
 fn chooseSwapchainPresentMode(swapc: *Swapchain) c.VkPresentModeKHR {
-    for (swapc.present_modes.items[0..swapc.present_modes.count()]) |mode| {
+    for (swapc.present_modes.items()[0..swapc.present_modes.len]) |mode| {
         if (mode == c.VK_PRESENT_MODE_MAILBOX_KHR) {
             return mode;
         }
@@ -1906,13 +1904,13 @@ fn createImage(
     image: [*c]c.VkImage,
     image_memory: [*c]c.VkDeviceMemory
 ) !void {
-    var qfam_indices_gt = LocalArray(u32, 2).new();
+    var qfam_indices_gt = LocalBuffer(u32, 2).new();
     if (physical.transfer_idx == null or physical.transfer_idx.? == physical.graphics_idx.?) {
-        qfam_indices_gt.push(physical.graphics_idx.?);
+        qfam_indices_gt.append(physical.graphics_idx.?);
     }
     else {
-        qfam_indices_gt.push(physical.graphics_idx.?);
-        qfam_indices_gt.push(physical.transfer_idx.?);
+        qfam_indices_gt.append(physical.graphics_idx.?);
+        qfam_indices_gt.append(physical.transfer_idx.?);
     }
 
     const image_info = c.VkImageCreateInfo{
@@ -1928,7 +1926,7 @@ fn createImage(
         .tiling = tiling,
         .usage = usage,
         .sharingMode = c.VK_SHARING_MODE_CONCURRENT,
-        .queueFamilyIndexCount = @intCast(u32, qfam_indices_gt.count()),
+        .queueFamilyIndexCount = @intCast(u32, qfam_indices_gt.len),
         .pQueueFamilyIndices = qfam_indices_gt.cptr(),
         .initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED,
     };
@@ -2067,25 +2065,25 @@ const PhysicalDevice = struct {
     compute_idx: ?u32 = null,
     transfer_idx: ?u32 = null,
     qfam_capabilities: QFamCapabilities = QFamCapabilities.None,
-    qfam_unique_indices: LocalArray(u32, 4) = LocalArray(u32, 4).new(),
+    qfam_unique_indices: LocalBuffer(u32, 4) = LocalBuffer(u32, 4).new(),
 
     pub fn reset(self: *PhysicalDevice) void {
         self.* = PhysicalDevice{};
     }
 
-    pub fn getUniqueQueueFamilyIndices(self: *PhysicalDevice) *LocalArray(u32, 4) {
-        if (self.qfam_unique_indices.count() == 0) {
+    pub fn getUniqueQueueFamilyIndices(self: *PhysicalDevice) *LocalBuffer(u32, 4) {
+        if (self.qfam_unique_indices.len == 0) {
             if (self.present_idx != null) {
-                self.qfam_unique_indices.push(self.present_idx.?);
+                self.qfam_unique_indices.append(self.present_idx.?);
             }
             if (self.graphics_idx != null and self.qfam_unique_indices.find(self.graphics_idx.?) == null) {
-                self.qfam_unique_indices.push(self.graphics_idx.?);
+                self.qfam_unique_indices.append(self.graphics_idx.?);
             }
             if (self.compute_idx != null and self.qfam_unique_indices.find(self.compute_idx.?) == null) {
-                self.qfam_unique_indices.push(self.compute_idx.?);
+                self.qfam_unique_indices.append(self.compute_idx.?);
             }
             if (self.transfer_idx != null and self.qfam_unique_indices.find(self.transfer_idx.?) == null) {
-                self.qfam_unique_indices.push(self.transfer_idx.?);
+                self.qfam_unique_indices.append(self.transfer_idx.?);
             }
         }
         return &self.qfam_unique_indices;
@@ -2102,10 +2100,10 @@ const Swapchain = struct {
         .width = 0,
         .height = 0,
     },
-    images: LocalArray(c.VkImage, MAX_IMAGE_CT) = LocalArray(c.VkImage, MAX_IMAGE_CT).new(),
+    images: LocalBuffer(c.VkImage, MAX_IMAGE_CT) = LocalBuffer(c.VkImage, MAX_IMAGE_CT).new(),
     image_fmt: c.VkFormat = undefined,
-    image_views: LocalArray(c.VkImageView, MAX_IMAGE_CT) = LocalArray(c.VkImageView, MAX_IMAGE_CT).new(),
-    framebuffers: LocalArray(c.VkFramebuffer, MAX_IMAGE_CT) = LocalArray(c.VkFramebuffer, MAX_IMAGE_CT).new(),
+    image_views: LocalBuffer(c.VkImageView, MAX_IMAGE_CT) = LocalBuffer(c.VkImageView, MAX_IMAGE_CT).new(),
+    framebuffers: LocalBuffer(c.VkFramebuffer, MAX_IMAGE_CT) = LocalBuffer(c.VkFramebuffer, MAX_IMAGE_CT).new(),
     surface_capabilities: c.VkSurfaceCapabilitiesKHR = c.VkSurfaceCapabilitiesKHR {
         .minImageCount = 0,
         .maxImageCount = 0,
@@ -2127,8 +2125,8 @@ const Swapchain = struct {
         .supportedCompositeAlpha = 0,
         .supportedUsageFlags = 0,
     },
-    surface_formats : LocalArray(c.VkSurfaceFormatKHR, MAX_FORMAT_CT) = LocalArray(c.VkSurfaceFormatKHR, MAX_FORMAT_CT).new(),
-    present_modes : LocalArray(c.VkPresentModeKHR, MAX_MODE_CT) = LocalArray(c.VkPresentModeKHR, MAX_MODE_CT).new(),
+    surface_formats : LocalBuffer(c.VkSurfaceFormatKHR, MAX_FORMAT_CT) = LocalBuffer(c.VkSurfaceFormatKHR, MAX_FORMAT_CT).new(),
+    present_modes : LocalBuffer(c.VkPresentModeKHR, MAX_MODE_CT) = LocalBuffer(c.VkPresentModeKHR, MAX_MODE_CT).new(),
 
     pub fn reset(self: *Swapchain) void {
         self.* = Swapchain{};
@@ -2202,15 +2200,14 @@ const vertices: [4]Vertex = .{
 
 const indices: [6]u16 = .{0, 1, 2, 2, 3, 0};
 
-var direct_image: ?HeapArray(RGBA32) = null;
 var texture_image_host: VkImage = null;
 var texture_image_host_memory: VkDeviceMemory = null;
 var texture_image_host_view: c.VkImageView = null;
 var texture_image_host_sampler: c.VkSampler = null;
 
-var uniform_buffers = LocalArray(VkBuffer, MAX_FRAMES_IN_FLIGHT).new();
-var uniform_buffers_memory = LocalArray(c.VkDeviceMemory, MAX_FRAMES_IN_FLIGHT).new();
-var uniform_buffers_mapped = LocalArray(?*anyopaque, MAX_FRAMES_IN_FLIGHT).new();
+var uniform_buffers = LocalBuffer(VkBuffer, MAX_FRAMES_IN_FLIGHT).new();
+var uniform_buffers_memory = LocalBuffer(c.VkDeviceMemory, MAX_FRAMES_IN_FLIGHT).new();
+var uniform_buffers_mapped = LocalBuffer(?*anyopaque, MAX_FRAMES_IN_FLIGHT).new();
 
 var descriptor_sets: [MAX_FRAMES_IN_FLIGHT]c.VkDescriptorSet = undefined;
 
@@ -2318,7 +2315,7 @@ const loadImage = imagef.loadImage;
 const ImageFormat = imagef.ImageFormat;
 const print = std.debug.print;
 const c = @import("ext.zig").c;
-const LocalArray = array.LocalArray;
+const LocalBuffer = array.LocalBuffer;
 const ScopeTimer = bench.ScopeTimer;
 const getScopeTimerID = bench.getScopeTimerID;
 const Vertex = graphics.Vertex;
@@ -2348,4 +2345,3 @@ const VkDeviceMemory = c.VkDeviceMemory;
 const VkImage = c.VkImage;
 const VkDescriptorSetLayout = c.VkDescriptorSetLayout;
 const VkDescriptorPool = c.VkDescriptorPool;
-const HeapArray = array.HeapArray;

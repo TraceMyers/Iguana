@@ -126,8 +126,7 @@ pub inline fn waitUntil(timer: *std.time.Timer, nanoseconds: u64) u64 {
 
 pub fn printAllScopeTimers() void {
     print("\n", .{});
-    for (0..timers.count()) |idx| {
-        var timer = &timers.items[idx];
+    for (timers.items()) |timer| {
         if (timer.initialized) {
             var total_time_f = @intToFloat(f64, timer.total_time);
             var ticks_f = @intToFloat(f64, timer.log_ct);
@@ -167,15 +166,15 @@ const InternalTimer = struct {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // TODO: resize array
-var timers = LocalArray(InternalTimer, 128).new();
+var timers = LocalBuffer(InternalTimer, 128).new();
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ------------------------------------------------------------------------------------------------------------- private
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 inline fn addTimer(idx: usize, name: []const u8) void {
-    if (!timers.items[idx].initialized) {
-        var timer = &timers.items[idx];
+    if (!timers.buffer[idx].initialized) {
+        var timer = &timers.buffer[idx];
         timer.* = InternalTimer{};
         for (0..name.len) |c| {
             if (c >= 63) {
@@ -184,15 +183,15 @@ inline fn addTimer(idx: usize, name: []const u8) void {
             timer.name[c] = name[c];
         }
         timer.name[name.len] = 0;
-        if (idx >= timers.count()) {
-            timers.setCount(idx + 1);
+        if (idx >= timers.len) {
+            timers.setLen(idx + 1);
         }
         timer.initialized = true;
     }
 }
 
 inline fn logEndTime(id: usize, time_ns: u64) void {
-    var timer = &timers.items[id];
+    var timer = &timers.items()[id];
 
     timer.total_time += time_ns;
     timer.log_ct += 1;
@@ -212,7 +211,7 @@ inline fn logEndTime(id: usize, time_ns: u64) void {
 const std = @import("std");
 const print = std.debug.print;
 const array = @import("array.zig");
-const LocalArray = array.LocalArray;
+const LocalBuffer = array.LocalBuffer;
 const assert = std.debug.assert;
 const time = std.time;
 const RandGen = std.rand.DefaultPrng;
