@@ -1,3 +1,7 @@
+// TODO: getScopeTimerID() is not thread-safe + they're still currently statically allocated.
+// each enclave needs its own array of timers.
+// TODO: resize array of timers... ? (how to keep times from getting skewed by allocations)
+
 // :::::::::::::::::: For easy scope-based benchmarking. 
 // ::: ScopeTimer ::: 
 // ::::::::::::::::::
@@ -13,9 +17,6 @@
 //
 // At the end of the program (or whenever you're interested in the times), call printAllScopeTimers().
 
-// TODO: getScopeTimerID() is not thread-safe + they're still currently statically allocated.
-// each enclave needs its own array of timers.
-// TODO: resize array of timers... ? (how to keep times from getting skewed by allocations)
 
 pub inline fn getScopeTimerID() usize {
     const LocalID = struct {

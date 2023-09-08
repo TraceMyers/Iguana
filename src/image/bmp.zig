@@ -682,7 +682,7 @@ noinline fn readRunLengthEncodedImage(
                 try reader.repeatPixel(color_table, image);
             },
             .Move => {
-                try reader.moveImagePosition(pixel_buf);
+                try reader.changeCoordinates(pixel_buf);
             },
             .EndRow => {
                 reader.incrementRow();
@@ -926,7 +926,7 @@ fn RLEReader(comptime IntType: type) type {
             return self.img_row * self.img_width + self.img_col;
         }
 
-        pub fn moveImagePosition(self: *RLEReaderType, buffer: []const u8) !void {
+        pub fn changeCoordinates(self: *RLEReaderType, buffer: []const u8) !void {
             if (self.byte_pos + 1 >= buffer.len) {
                 return ImageError.UnexpectedEOF;
             }

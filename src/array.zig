@@ -27,7 +27,7 @@ pub fn LocalBuffer(comptime ItemType: type, comptime buflen: usize) type {
         }
         
         pub fn cptr(self: *Self) [*c]ItemType {
-            return @ptrCast([*]ItemType, &self.buffer[0]);
+            return @ptrCast([*c]ItemType, &self.buffer[0]);
         }
 
         pub inline fn items(self: *Self) []ItemType {

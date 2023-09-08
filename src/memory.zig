@@ -1,13 +1,6 @@
-// TODO: decommitting solution will require dealing with the fact that free allocation tracking nodes can and will point
-// in and out of individual pages at any frequency. So, decommitting a page means detangling the web. one set of 
-// solutions requires regularly scheduled maintenance. one solution in that set might iterate over nodes and put
-// 'next frees' in order, which would at the same time allow easier decommitting of any pages.
-// Another possible solution is: the page list's 'free_block' just always takes the highest value. when the free block
-// is the first block of a page, decommit.
-// Another solution is to never decommit in small and medium allocations, which would probably work fine. combine this
-// this the page list always taking the lowest block idx and it probably stays defragmented pretty well.
-// Yet another solution is to keep track of the lowest and highest free block in a page list. the lowest is what is
-// used for allocations, and the highest is used to tell which pages can be freed.
+// TODO: cleanup thread that counts how many frames pages have been unused and decommits them. each enclave
+// can have its own policy (RenderCPU = 2 frames, Game = 16000 frames, etc). You should also be able to force a cleanup
+// of an enclave.
 // TODO: refactor for consistent naming
 
 const std = @import("std");
@@ -33,7 +26,7 @@ const builtin = @import("builtin");
 // space, thus providing a measure of thread safety. Separating two modules in the same thread into two enclaves *might*
 // have speed benefits, but it will possibly lead to more memory fragmentation.
 
-pub const Enclave = enum {
+pub const Enclave = enum(u8) {
     RenderCPU,
     RenderTransfer,
     Game,
@@ -371,7 +364,7 @@ pub fn alignedResize(
     const new_placement_info: AllocPlacementInfo = newPlacementInfo(align_sz);
     
     if (std.meta.eql(old_placement_info, new_placement_info)) {
-        const not_large_or_enough_space = blk: {
+        const enough_space = blk: {
             if (new_placement_info.sector == .Large) {
                 const prev_full_align_sz = largeAllocSzAligned(enclave_idx, prev_buf.ptr, old_placement_info.division);
                 if (prev_full_align_sz >= align_sz) {
@@ -381,7 +374,7 @@ pub fn alignedResize(
             }   
             break :blk true;
         };
-        if (not_large_or_enough_space) {
+        if (enough_space) {
             return @ptrCast([*]u8, prev_buf.ptr)[0..new_sz];
         }
     }

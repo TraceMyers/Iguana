@@ -38,6 +38,7 @@ const memory = @import("../memory.zig");
 const bmp = @import("bmp.zig");
 const bench = @import("../benchmark.zig");
 const png = @import("png.zig");
+const tga = @import("tga.zig");
 
 const print = std.debug.print;
 const LocalStringBuffer = string.LocalStringBuffer;
@@ -81,11 +82,18 @@ pub fn loadImage(
         if (string.same(extension_lower, "bmp") or string.same(extension_lower, "dib")) {
             try bmp.load(&file, &image, allocator, &options);
         }
-        else if (string.same(extension_lower, "jpg") or string.same(extension_lower, "jpeg")) {
-            return ImageError.FormatUnsupported;
+        else if (string.same(extension_lower, "tga")
+            or string.same(extension_lower, "icb")
+            or string.same(extension_lower, "vda")
+            or string.same(extension_lower, "vst")
+        ) {
+            try tga.load(&file, &image, allocator, &options);
         }
         else if (string.same(extension_lower, "png")) {
             try png.load(&file, &image, allocator, &options);
+        }
+        else if (string.same(extension_lower, "jpg") or string.same(extension_lower, "jpeg")) {
+            return ImageError.FormatUnsupported;
         }
         else {
             return ImageError.InvalidFileExtension;
@@ -95,6 +103,7 @@ pub fn loadImage(
         .Bmp => try bmp.load(&file, &image, allocator, &options),
         .Jpg => return ImageError.FormatUnsupported,
         .Png => try png.load(&file, &image, allocator, &options),
+        .Tga => try tga.load(&file, &image, allocator, &options),
         else => unreachable,
     }
     return image;
@@ -117,7 +126,7 @@ pub const png_identifier: []const u8 = "\x89PNG\x0d\x0a\x1a\x0a";
 // --------------------------------------------------------------------------------------------------------------- enums
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub const ImageFormat = enum { Infer, Bmp, Jpg, Png };
+pub const ImageFormat = enum { Infer, Bmp, Jpg, Png, Tga };
 
 pub const ImageType = enum { None, RGB, RGBA };
 
@@ -163,11 +172,11 @@ pub const ImageLoadOptions = struct {
 
 // zig test src/image/image.zig -lc --test-filter image --main-pkg-path ../
 // pub fn LoadImageTest() !void {
-test "Load Bitmap image" {
+test "load bitmap [image]" {
     try memory.autoStartup();
     defer memory.shutdown();
 
-    const allocator = memory.Allocator(memory.Enclave.Game).allocator();
+    const allocator = memory.EnclaveAllocator(memory.Enclave.Game).allocator();
 
     print("\n", .{});
 
@@ -184,7 +193,7 @@ test "Load Bitmap image" {
         "d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/corrupt/",
     };
 
-    var filename_lower = LocalStringBuffer(128).new();
+    var filename_lower = LocalStringBuffer(64).new();
     var valid_total: u32 = 0;
     var valid_supported: u32 = 0;
     var questionable_total: u32 = 0;
@@ -196,7 +205,7 @@ test "Load Bitmap image" {
     const load_options = ImageLoadOptions{
         .load_buffer = ImageLoadBuffer{
             .alignment = 4,
-            .allocation = try allocator.allocExplicitAlign(u8, alloc_sz, 4)
+            .allocation = try allocator.alignedAlloc(u8, 4, alloc_sz)
         },
     };
 
@@ -261,4 +270,35 @@ test "Load Bitmap image" {
 
     bench.printAllScopeTimers();
     // try std.testing.expect(passed_all);
+}
+
+test "load targa [image]" {
+    try memory.autoStartup();
+    defer memory.shutdown();
+
+    const allocator = memory.GameAllocator.allocator();
+
+    print("\n", .{});
+
+    var path_buf = LocalStringBuffer(128).new();
+    try path_buf.append("d:/projects/zig/core/test/nocommit/mytgatestsuite/good/");
+    path_buf.setAnchor();
+
+    var filename_lower = LocalStringBuffer(64).new();
+
+    var test_dir = try std.fs.openIterableDirAbsolute(path_buf.string(), .{});
+    var dir_it = test_dir.iterate();
+
+    while(try dir_it.next()) |entry| {
+        try filename_lower.replaceLower(entry.name);
+        try path_buf.append(filename_lower.string());
+        defer path_buf.revertToAnchor();
+
+        var image = loadImage(path_buf.string(), ImageFormat.Infer, allocator, .{}) 
+            catch |e| blk: {
+                print("error {any} loading tga file {s}\n", .{e, filename_lower.string()});
+                break :blk Image{};
+            };
+        _ = image;
+    }
 }
