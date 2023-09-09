@@ -588,7 +588,7 @@ fn readInlinePixelImage(
 }
 
 // bmps can have a form of compression, RLE, which does the simple trick of encoding repeating pixels via
-// a number n (repeat ct) and pixel p in contiguous bytes. as of 8/26/23, only RLE8 is supported.
+// a number n (repeat ct) and pixel p in contiguous bytes. 
 fn readRunLengthEncodedImage(
     comptime PixelType: type,
     pbuf: [*]const u8,
@@ -1082,4 +1082,3 @@ fn RLEReader(comptime IntType: type) type {
         }
     };
 }
-
