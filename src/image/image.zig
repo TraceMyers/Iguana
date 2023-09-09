@@ -11,6 +11,7 @@ pub const ImageError = error{
     UnexpectedEOF,
     FormatUnsupported,
     DimensionTooLarge,
+    OverlappingData,
     BmpFlavorUnsupported,
     BmpInvalidBytesInFileHeader,
     BmpInvalidBytesInInfoHeader,
@@ -29,6 +30,9 @@ pub const ImageError = error{
     BmpInvalidColorMasks,
     BmpRLECoordinatesOutOfBounds,
     BmpInvalidRLEData,
+    TgaInvalidTableSize,
+    TgaImageTypeUnsupported,
+    TgaColorMapDataInNonColorMapImage
 };
 
 const graphics = @import("../graphics.zig");
@@ -134,6 +138,13 @@ pub const ImageType = enum { None, RGB, RGBA };
 // --------------------------------------------------------------------------------------------------------------- types
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+pub const ARGB64 = extern struct {
+    a: u16,
+    r: u16,
+    g: u16,
+    b: u16,
+};
+
 pub const Image = struct {
     width: u32 = 0,
     height: u32 = 0,
@@ -141,8 +152,10 @@ pub const Image = struct {
     allocator: ?std.mem.Allocator = null,
 
     pub inline fn clear(self: *Image) void {
-        std.debug.assert(self.allocator != null and self.pixels != null);
-        self.allocator.?.free(self.pixels.?);
+        if (self.pixels != null) {
+            std.debug.assert(self.allocator != null);
+            self.allocator.?.free(self.pixels.?);
+        }
         self.* = Image{};
     }
 };
@@ -175,7 +188,6 @@ pub const ImageLoadOptions = struct {
 test "load bitmap [image]" {
     try memory.autoStartup();
     defer memory.shutdown();
-
     const allocator = memory.EnclaveAllocator(memory.Enclave.Game).allocator();
 
     print("\n", .{});
@@ -209,7 +221,7 @@ test "load bitmap [image]" {
         },
     };
 
-    inline for (0..6) |i| {
+    for (0..6) |i| {
         try path_buf.replace(test_paths[i]);
         path_buf.setAnchor();
         var test_dir = try std.fs.openIterableDirAbsolute(path_buf.string(), .{ .access_sub_paths = false });
@@ -224,6 +236,9 @@ test "load bitmap [image]" {
             ) {
                 continue;
             }
+
+            var t = bench.ScopeTimer.start("loadBmp", bench.getScopeTimerID());
+            defer t.stop();
 
             try path_buf.append(entry.name);
             defer path_buf.revertToAnchor();
@@ -268,7 +283,7 @@ test "load bitmap [image]" {
     print("[QUESTIONABLE] total: {}, passed: {}, passed percentage: {d:0.1}%\n", .{ questionable_total, questionable_supported, quest_perc });
     print("[CORRUPT]      total: {}, passed: {}, passed percentage: {d:0.1}%\n", .{ corrupt_total, corrupt_supported, corpt_perc });
 
-    bench.printAllScopeTimers();
+    // bench.printAllScopeTimers();
     // try std.testing.expect(passed_all);
 }
 
@@ -294,6 +309,9 @@ test "load targa [image]" {
         try path_buf.append(filename_lower.string());
         defer path_buf.revertToAnchor();
 
+        var t = bench.ScopeTimer.start("loadTga", bench.getScopeTimerID());
+        defer t.stop();
+
         var image = loadImage(path_buf.string(), ImageFormat.Infer, allocator, .{}) 
             catch |e| blk: {
                 print("error {any} loading tga file {s}\n", .{e, filename_lower.string()});
@@ -301,4 +319,6 @@ test "load targa [image]" {
             };
         _ = image;
     }
+
+    bench.printAllScopeTimers();
 }

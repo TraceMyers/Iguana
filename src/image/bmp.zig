@@ -44,6 +44,8 @@ const ImageError = imagef.ImageError;
 pub fn load(
     file: *std.fs.File, image: *Image, allocator: std.mem.Allocator, options: *const imagef.ImageLoadOptions
 ) !void {
+    errdefer image.clear();
+
     var externally_allocated: bool = undefined;
     var buffer: []u8 = try loadFileAndCoreHeaders(file, allocator, bmp_min_sz, options, &externally_allocated);
     defer if (!externally_allocated) allocator.free(buffer);
@@ -380,7 +382,7 @@ fn readColorTable(
     }
 }
 
-inline fn colorSpaceSupported(info: *const BitmapInfo) bool {
+pub fn colorSpaceSupported(info: *const BitmapInfo) bool {
     return switch(info.color_space) {
         // calibration information is unused because it doesn't make sense to calibrate individual textures in a game engine
         .CalibratedRGB => true, 
@@ -393,7 +395,7 @@ inline fn colorSpaceSupported(info: *const BitmapInfo) bool {
     };
 }
 
-inline fn compressionSupported(info: *const BitmapInfo) bool {
+pub fn compressionSupported(info: *const BitmapInfo) bool {
     return switch(info.compression) {
         .RGB => true,
         .RLE8 => true,
@@ -440,7 +442,6 @@ fn createImage(
 
     image.allocator = allocator;
     image.pixels = try image.allocator.?.alloc(graphics.RGBA32, image.width * image.height);
-    errdefer image.clear();
 
     // get row length in bytes as a multiple of 4 (rows are padded to 4 byte increments)
     const row_length = ((image.width * info.color_depth + 31) & ~@as(u32, 31)) >> 3;    
@@ -716,13 +717,13 @@ const BitmapColorTableType = enum { None, RGB24, RGB32 };
 
 const BitmapHeaderType = enum(u32) { None, Core, V1, V4, V5 };
 
-const BitmapCompression = enum(u32) { 
+pub const BitmapCompression = enum(u32) { 
     RGB, RLE8, RLE4, BITFIELDS, JPEG, PNG, ALPHABITFIELDS, CMYK, CMYKRLE8, CMYKRLE4, None 
 };
 
 const BitmapReadDirection = enum(u8) { BottomUp=0, TopDown=1 };
 
-const BitmapColorSpace = enum(u32) {
+pub const BitmapColorSpace = enum(u32) {
     CalibratedRGB = 0x0,
     ProfileLinked = 0x4c494e4b,
     ProfileEmbedded = 0x4d424544,

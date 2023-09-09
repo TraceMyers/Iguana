@@ -33,6 +33,10 @@ pub fn LocalBuffer(comptime ItemType: type, comptime buflen: usize) type {
         pub inline fn items(self: *Self) []ItemType {
             return self.buffer[0..self.len];
         }
+
+        pub inline fn constItems(self: *const Self) []const ItemType {
+            return self.buffer[0..self.len];
+        }
         
         pub inline fn zeroItems(self: *Self) void {
             @memset(self.buffer[0..self.len], std.mem.zeroes(ItemType));
