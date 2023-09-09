@@ -178,7 +178,7 @@ fn loadTable(
 }
 
 fn readImageId(file: *std.fs.File, info: *TgaInfo, extents: *ExtentBuffer) !void {
-    file.seekTo(tga_header_sz);
+    try file.seekTo(tga_header_sz);
 
     if (info.header.info.id_length == 0) {
         return;

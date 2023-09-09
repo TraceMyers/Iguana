@@ -195,8 +195,9 @@ test "load bitmap [image]" {
     // 2.7 has coverage over core, v1, v4, and v5
     // 0.9 is V1 only
 
+    const directory_ct = 6;
     var path_buf = LocalStringBuffer(128).new();
-    const test_paths: [6][]const u8 = .{
+    const test_paths: [directory_ct][]const u8 = .{
         "d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/",
         "d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/",
         "d:/projects/zig/core/test/nocommit/bmpsuite-2.7/q/",
@@ -221,7 +222,7 @@ test "load bitmap [image]" {
         },
     };
 
-    for (0..6) |i| {
+    for (0..directory_ct) |i| {
         try path_buf.replace(test_paths[i]);
         path_buf.setAnchor();
         var test_dir = try std.fs.openIterableDirAbsolute(path_buf.string(), .{ .access_sub_paths = false });
