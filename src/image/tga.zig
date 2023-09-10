@@ -7,6 +7,8 @@ const print = std.debug.print;
 const string = @import("../string.zig");
 const LocalBuffer = @import("../array.zig").LocalBuffer;
 const ARGB64 = imagef.ARGB64;
+const graphics = @import("../graphics.zig");
+const RGBA32 = graphics.RGBA32;
 
 // TODO: test images for color correction table
 
@@ -22,19 +24,16 @@ pub fn load(
     errdefer image.clear();
 
     var info = TgaInfo{};
-    defer freeAllocations(&info, allocator);
-
+    var buffer: []u8 = &.{};
     var extents = ExtentBuffer.new();
+    defer freeAllocations(&info, buffer, allocator);
 
     try readFooter(file, &info, &extents);
     try readHeader(file, &info, &extents);
-
-    if (!typeSupported(info.header.info.image_type)) {
-        return ImageError.TgaImageTypeUnsupported;
-    }
-
     try readExtensionData(file, &info, allocator, &extents);
     try readImageId(file, &info, &extents);
+    try loadColorMapAndImageData(file, &info, allocator, &extents, &buffer);
+    try readColorMapData(&info, allocator, buffer);
 
     _ = options;
 }
@@ -57,19 +56,14 @@ fn readFooter(file: *std.fs.File, info: *TgaInfo, extents: *ExtentBuffer) !void 
     if (string.same(info.footer.?.signature[0..], tga_signature)) {
         info.file_type = TgaFileType.V2;
         extents.append(BlockExtent{ .begin=footer_loc, .end=info.file_sz });
-    }
-    else {
+    } else {
         info.file_type = TgaFileType.V1;
         info.footer = null;
     }
 }
 
 fn readHeader(file: *std.fs.File, info: *TgaInfo, extents: *ExtentBuffer) !void {
-    if (extentOverlap(extents, 0, tga_header_sz)) {
-        return ImageError.OverlappingData;
-    }
-    extents.append(BlockExtent{ .begin=0, .end=tga_header_sz});
-
+    try validateAndAddExtent(extents, info, 0, tga_header_sz);
     // reading three structs rather than one so we're not straddling boundaries on any of the data.
     try file.seekTo(0);
     info.header.info = try file.reader().readStruct(TgaHeaderInfo);
@@ -77,6 +71,9 @@ fn readHeader(file: *std.fs.File, info: *TgaInfo, extents: *ExtentBuffer) !void 
     // colormap_spec has 1 byte padding
     try file.seekTo(tga_image_spec_offset);
     info.header.image_spec = try file.reader().readStruct(TgaImageSpec);
+    if (!typeSupported(info.header.info.image_type)) {
+        return ImageError.TgaImageTypeUnsupported;
+    }
 }
 
 fn readExtensionData(file: *std.fs.File, info: *TgaInfo, allocator: std.mem.Allocator, extents: *ExtentBuffer) !void {
@@ -84,28 +81,24 @@ fn readExtensionData(file: *std.fs.File, info: *TgaInfo, allocator: std.mem.Allo
         return;
     }
 
-    const extension_area_loc = info.footer.?.extension_area_offset;
-    const extension_area_end = extension_area_loc + extension_area_file_sz;
-    if (extension_area_loc == 0 or extension_area_end > info.file_sz) {
+    const extension_area_begin = info.footer.?.extension_area_offset;
+    const extension_area_end = extension_area_begin + extension_area_file_sz;
+    if (extension_area_begin == 0 or extension_area_end > info.file_sz) {
         return;
     }
 
-    try file.seekTo(extension_area_loc);
+    try file.seekTo(extension_area_begin);
     info.extension_area = ExtensionArea{};
     info.extension_area.?.extension_sz = try file.reader().readIntNative(u16);
 
-    if (extension_area_loc + info.extension_area.?.extension_sz > info.file_sz
+    if (extension_area_begin + info.extension_area.?.extension_sz > info.file_sz
         or info.extension_area.?.extension_sz != extension_area_file_sz
     ) {
         info.extension_area = null;
         return;
     }
 
-    if (extentOverlap(extents, extension_area_loc, extension_area_end)) {
-        return ImageError.OverlappingData;
-    }
-    extents.append(BlockExtent{ .begin=extension_area_loc, .end=extension_area_end });
-
+    try validateAndAddExtent(extents, info, extension_area_begin, extension_area_end);
     try readExtensionArea(file, info);
 
     if (info.extension_area.?.scanline_offset != 0) {
@@ -159,14 +152,7 @@ fn loadTable(
 ) ![]TableType {
     const sz = @sizeOf(TableType) * table_ct;
     const end = offset + sz;
-
-    if (end > info.file_sz) {
-        return ImageError.TgaInvalidTableSize;
-    }
-    if (extentOverlap(extents, offset, end)) {
-        return ImageError.OverlappingData;
-    }
-    extents.append(BlockExtent{ .begin=offset, .end=end });
+    try validateAndAddExtent(extents, info, offset, end);
 
     var table: []TableType = try allocator.alloc(TableType, table_ct);
     var bytes_ptr = @ptrCast([*]u8, @alignCast(@alignOf(u8), &table[0]));
@@ -184,15 +170,9 @@ fn readImageId(file: *std.fs.File, info: *TgaInfo, extents: *ExtentBuffer) !void
         return;
     }
 
-    const id_start = tga_header_sz;
-    const id_end = id_start + info.header.info.id_length;
-    if (id_end > info.file_sz) {
-        return ImageError.UnexpectedEOF;
-    }
-    if (extentOverlap(extents, id_start, id_end)) {
-        return ImageError.OverlappingData;
-    }
-    extents.append(BlockExtent{ .begin=id_start, .end=id_end });
+    const id_begin = tga_header_sz;
+    const id_end = id_begin + info.header.info.id_length;
+    try validateAndAddExtent(extents, info, id_begin, id_end); 
 
     try file.reader().readNoEof(info.id[0..info.header.info.id_length]);
 }
@@ -211,10 +191,15 @@ pub fn typeSupported(image_type: TgaImageType) bool {
     };
 }
 
-fn readColorMapData(file: *std.fs.File, info: *TgaInfo, extents: *ExtentBuffer) !void {
-    _ = file;
-    _ = extents;
-
+fn loadColorMapAndImageData(
+    file: *std.fs.File, 
+    info: *TgaInfo, 
+    allocator: std.mem.Allocator,
+    extents: *ExtentBuffer, 
+    buffer: *[]u8
+) !void {
+    var ct_start: u32 = tga_header_sz + info.header.info.id_length;
+    var ct_end: u32 = ct_start;
     switch(info.header.info.image_type) {
         .NoData, .TrueColor, .Greyscale, .RleTrueColor, .RleGreyscale => {
             if (info.header.colormap_spec.entry_bit_ct != 0
@@ -225,13 +210,93 @@ fn readColorMapData(file: *std.fs.File, info: *TgaInfo, extents: *ExtentBuffer) 
             }
         },
         .ColorMap, .RleColorMap => {
-
+            info.color_map.step_sz = try switch(info.header.colormap_spec.entry_bit_ct) {
+                15, 16 => @as(u32, 2),
+                24 => @as(u32, 3),
+                32 => @as(u32, 4),
+                else => ImageError.TgaNonStandardColorTableUnsupported,
+            };
+            ct_end = ct_start + info.color_map.step_sz * info.header.colormap_spec.len;
         },
         else => unreachable,
     }
+    info.color_map.buffer_sz = ct_end - ct_start;
+
+    const image_spec = info.header.image_spec;
+    switch (image_spec.color_depth) {
+        8, 16, 24, 32 => {},
+        else => return ImageError.TgaNonStandardColorDepthUnsupported,
+    }
+    var img_start = ct_end;
+    var img_end = img_start 
+        + @intCast(u32, image_spec.color_depth >> 3) 
+        * @intCast(u32, image_spec.image_width) 
+        * @intCast(u32, image_spec.image_height);
+    if (img_start == img_end) {
+        return ImageError.TgaNoData;
+    }
+
+    try validateAndAddExtent(extents, info, ct_start, img_end);
+
+    buffer.* = try allocator.alloc(u8, img_end - ct_start);
+    try file.seekTo(ct_start);
+    try file.reader().readNoEof(buffer.*);
 }
 
-fn freeAllocations(info: *TgaInfo, allocator: std.mem.Allocator) void {
+fn readColorMapData(info: *TgaInfo, allocator: std.mem.Allocator, buffer: []const u8) !void {
+    if (info.color_map.buffer_sz == 0) {
+        return;
+    }
+
+    const cm_spec = info.header.colormap_spec;
+    info.color_map.table = try allocator.alloc(RGBA32, cm_spec.len);
+
+    var alpha_present: u8 = 0;
+    if (info.file_type == .V2) {
+        const alpha_identifier = info.extension_area.?.attributes_type;
+        if (alpha_identifier == 3) {
+            info.alpha = .Normal;
+            alpha_present = 1;
+        }
+        else if (alpha_identifier == 4) {
+            info.alpha = .Premultiplied;
+            alpha_present = 1;
+        }
+    }
+
+    var offset: usize = 0;
+    var i: usize = 0;
+    while (offset < info.color_map.buffer_sz) {
+        var entry: *RGBA32 = &info.color_map.table.?[i];
+        var buf = buffer;
+        switch (cm_spec.entry_bit_ct) {
+            15, 16 => {
+                const color: u16 = std.mem.readIntNative(u16, @ptrCast(*const [2]u8, &buf[offset..]));
+                entry.r = @intCast(u8, (color & 0xf800) >> 11);
+                entry.g = @intCast(u8, (color & 0x07c0) >> 6);
+                entry.b = @intCast(u8, (color & 0x003e) >> 1);
+                entry.a = 255;
+            },
+            24 => {
+                entry.r = buffer[offset];
+                entry.g = buffer[offset+1];
+                entry.b = buffer[offset+2];
+                entry.a = 255;
+            },
+            32 => {
+                entry.a = buffer[offset] * alpha_present + (1 - alpha_present) * 255;
+                entry.r = buffer[offset+1];
+                entry.g = buffer[offset+2];
+                entry.b = buffer[offset+3];
+            },
+            else => unreachable,
+        }
+        offset += info.color_map.step_sz;
+        i += 1;
+    }
+}
+
+fn freeAllocations(info: *TgaInfo, buffer: []u8, allocator: std.mem.Allocator) void {
     if (info.scanline_table != null) {
         allocator.free(info.scanline_table.?);
     }
@@ -241,6 +306,22 @@ fn freeAllocations(info: *TgaInfo, allocator: std.mem.Allocator) void {
     if (info.color_correction_table != null) {
         allocator.free(info.color_correction_table.?);
     }
+    if (info.color_map.table != null) {
+        allocator.free(info.color_map.table.?);
+    }
+    if (buffer.len > 0) {
+        allocator.free(buffer);
+    }
+}
+
+fn validateAndAddExtent(extents: *ExtentBuffer, info: *const TgaInfo, begin: u32, end: u32) !void {
+    if (end > info.file_sz) {
+        return ImageError.UnexpectedEOF;
+    }
+    if (extentOverlap(extents, begin, end)) {
+        return ImageError.OverlappingData;
+    }
+    extents.append(BlockExtent{ .begin=begin, .end=end });
 }
 
 fn extentOverlap(extents: *const ExtentBuffer, begin: u32, end: u32) bool {
@@ -317,6 +398,14 @@ const TgaFooter = extern struct {
     signature: [16]u8
 };
 
+const TgaColorMap = struct {
+    buffer_sz: u32 = 0,
+    step_sz: u32 = 0,
+    table: ?[]RGBA32 = null,
+};
+
+const TgaAlpha = enum { None, Normal, Premultiplied };
+
 const TgaInfo = struct {
     id: [256]u8 = std.mem.zeroes([256]u8),
     file_type: TgaFileType = .None,
@@ -327,6 +416,9 @@ const TgaInfo = struct {
     scanline_table: ?[]u32 = null,
     postage_stamp_table: ?[]u8 = null,
     color_correction_table: ?[]ARGB64 = null,
+    color_map: TgaColorMap = TgaColorMap{},
+    pixel_data: ?[]u8 = null,
+    alpha: TgaAlpha = TgaAlpha.None,
 };
 
 const BlockExtent = struct {

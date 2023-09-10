@@ -116,8 +116,7 @@ fn loadFileAndCoreHeaders(
     ) {
         externally_allocated.* = true;
         buffer = options.load_buffer.allocation.?;
-    } 
-    else {
+    } else {
         externally_allocated.* = false;
         buffer = try allocator.alignedAlloc(u8, 4, stat.size + 4);
     }
@@ -195,8 +194,7 @@ fn validateIdentity(buffer: []const u8) !imagef.ImageFormat {
         or string.same(identity, "PT")
     ) {
         return ImageError.BmpFlavorUnsupported;
-    } 
-    else {
+    } else {
         return ImageError.BmpInvalidBytesInFileHeader;
     }
 }
@@ -780,8 +778,7 @@ fn BitmapColorMask(comptime IntType: type) type {
             const shr: i32 = @as(i32, target_leading_zero_ct) - @intCast(i32, @clz(@intCast(IntType, in_mask)));
             if (shr > 0) {
                 return MaskType{ .mask = @intCast(IntType, in_mask), .rshift = @intCast(ShiftType, shr) };
-            }
-            else {
+            } else {
                 return MaskType{ .mask = @intCast(IntType, in_mask), .lshift = @intCast(ShiftType, try std.math.absInt(shr)) };
             }
         }

@@ -32,7 +32,10 @@ pub const ImageError = error{
     BmpInvalidRLEData,
     TgaInvalidTableSize,
     TgaImageTypeUnsupported,
-    TgaColorMapDataInNonColorMapImage
+    TgaColorMapDataInNonColorMapImage,
+    TgaNonStandardColorTableUnsupported,
+    TgaNonStandardColorDepthUnsupported,
+    TgaNoData,
 };
 
 const graphics = @import("../graphics.zig");
@@ -150,6 +153,7 @@ pub const Image = struct {
     height: u32 = 0,
     pixels: ?[]graphics.RGBA32 = null,
     allocator: ?std.mem.Allocator = null,
+    premultiplied_alpha: bool = false,
 
     pub inline fn clear(self: *Image) void {
         if (self.pixels != null) {
