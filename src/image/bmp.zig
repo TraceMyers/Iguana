@@ -41,8 +41,6 @@ const ImageError = imagef.ImageError;
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub fn load(file: *std.fs.File, image: *Image, allocator: std.mem.Allocator, options: *const imagef.ImageLoadOptions) !void {
-    errdefer image.clear();
-
     var externally_allocated: bool = undefined;
     var buffer: []u8 = try loadFileAndCoreHeaders(file, allocator, bmp_min_sz, options, &externally_allocated);
     defer if (!externally_allocated) allocator.free(buffer);
@@ -222,8 +220,7 @@ fn readV1Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !
     if (info.compression == BitmapCompression.BITFIELDS) {
         readColorMasks(buffer, info, false);
         mask_offset = 12;
-    }
-    else if (info.compression == BitmapCompression.ALPHABITFIELDS) {
+    } else if (info.compression == BitmapCompression.ALPHABITFIELDS) {
         readColorMasks(buffer, info, true);
         mask_offset = 16;
     }
@@ -747,8 +744,7 @@ const BitmapDirectionInfo = struct {
                 .begin = (@intCast(i32, height) - 1) * @intCast(i32, width),
                 .increment = -@intCast(i32, width),
             };
-        }
-        else {
+        } else {
             return BitmapDirectionInfo{
                 .begin = 0,
                 .increment = @intCast(i32, width),
@@ -758,6 +754,7 @@ const BitmapDirectionInfo = struct {
 };
 
 fn BitmapColorMask(comptime IntType: type) type {
+
     const ShiftType = switch (IntType) {
         u16 => u4,
         u24 => u5,

@@ -2,6 +2,7 @@
 // can have its own policy (RenderCPU = 2 frames, Game = 16000 frames, etc). You should also be able to force a cleanup
 // of an enclave.
 // TODO: refactor for consistent naming
+// TODO: page size host environment dependent
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -94,6 +95,15 @@ pub inline fn startup(in_enclave_ct: usize) !void {
     try startupExec();
 }
 
+inline fn alignToPage(address: [*]u8) [*]u8 {
+    const addr_int: usize = @ptrToInt(address);
+    return @intToPtr([*]u8, (addr_int + @as(usize, 16383)) & ~@as(usize, 16383));
+}
+
+inline fn alignIntToPage(address: usize) usize {
+    return (address + @as(usize, 16383)) & ~@as(usize, 16383);
+}
+
 pub fn startupExec() !void {
     // if (!builtin.is_test) {
     //     c.handle
@@ -112,21 +122,22 @@ pub fn startupExec() !void {
         null, 0xfffffffffff, windows.MEM_RESERVE, windows.PAGE_READWRITE
     );
     var address_bytes = @ptrCast([*]u8, address_space);
+    address_bytes = alignToPage(address_bytes);
 
     var begin: usize = 0;
     for (0..enclave_ct) |i| {
         small_pools[i].bytes = @ptrCast([*]u8, &address_bytes[begin]);
-        begin += SMALL_POOL_SZ;
+        begin = alignIntToPage(begin + SMALL_POOL_SZ);
         medium_pools[i].bytes = @ptrCast([*]u8, &address_bytes[begin]);
-        begin += MEDIUM_POOL_SZ;
+        begin = alignIntToPage(begin + MEDIUM_POOL_SZ);
         large_pools[i].bytes = @ptrCast([*]u8, &address_bytes[begin]);
-        begin += LARGE_POOL_SZ;
+        begin = alignIntToPage(begin + LARGE_POOL_SZ);
         giant_pools[i].bytes = @ptrCast([*]u8, &address_bytes[begin]);
-        begin += GIANT_POOL_SZ;
+        begin = alignIntToPage(begin + GIANT_POOL_SZ);
         all_records[i].bytes = @ptrCast([*]u8, &address_bytes[begin]);
-        begin += RECORDS_SZ;
+        begin = alignIntToPage(begin + RECORDS_SZ);
         all_free_lists[i].bytes = @ptrCast([*]u8, &address_bytes[begin]);
-        begin += FREE_LISTS_SZ;
+        begin = alignIntToPage(begin + FREE_LISTS_SZ);
 
         try initAllocators(i);
     }
@@ -687,30 +698,34 @@ fn freeMedium(medium_pool: *MediumPool, data: *u8, md_idx: usize) void {
 fn allocLarge(large_pool: *LargePool, lg_idx: usize, alloc_sz: usize, alignment: u29, lock_memory: bool) ?[*]u8 {
     var node_list: *NodeList = &large_pool.node_lists[lg_idx];
 
-    node_list.mutex.lock();
+    var node_idx: u32 = undefined;
+    var page_alloc_sz: usize = undefined;
+    var bytes_start: usize = undefined;
+    {
+        node_list.mutex.lock();
+        defer node_list.mutex.unlock();
 
-    if (node_list.free_node == null) {
-        expandNodeList(node_list, SMALL_PAGE_SZ, LARGE_NODES_PER_PAGE, lock_memory) catch return null;
+        if (node_list.free_node == null) {
+            expandNodeList(node_list, SMALL_PAGE_SZ, LARGE_NODES_PER_PAGE, lock_memory) catch return null;
+        }
+
+        node_idx = node_list.free_node.?;
+        const next_free_idx = node_list.nodes[node_idx].next_free;
+        if (next_free_idx == NO_BLOCK) {
+            node_list.free_node = null;
+        }
+        else {
+            node_list.free_node = next_free_idx;
+        }
+
+        const alloc_mod_page_not_zero = @intCast(usize, @boolToInt(alloc_sz % SMALL_PAGE_SZ != 0));
+        const alloc_page_ct = @divTrunc(alloc_sz, SMALL_PAGE_SZ) + alloc_mod_page_not_zero;
+
+        page_alloc_sz = alloc_page_ct * SMALL_PAGE_SZ;
+        bytes_start = node_idx * LARGE_BLOCK_SIZES[lg_idx];
+        var alloc_bytes = &node_list.bytes[bytes_start];
+        _ = windows.VirtualAlloc(alloc_bytes, page_alloc_sz, windows.MEM_COMMIT, windows.PAGE_READWRITE) catch return null;
     }
-
-    const node_idx = node_list.free_node.?;
-    const next_free_idx = node_list.nodes[node_idx].next_free;
-    if (next_free_idx == NO_BLOCK) {
-        node_list.free_node = null;
-    }
-    else {
-        node_list.free_node = next_free_idx;
-    }
-
-    const alloc_mod_page_not_zero = @intCast(usize, @boolToInt(alloc_sz % SMALL_PAGE_SZ != 0));
-    const alloc_page_ct = @divTrunc(alloc_sz, SMALL_PAGE_SZ) + alloc_mod_page_not_zero;
-
-    const page_alloc_sz = alloc_page_ct * SMALL_PAGE_SZ;
-    var bytes_start = node_idx * LARGE_BLOCK_SIZES[lg_idx];
-    var alloc_bytes = &node_list.bytes[bytes_start];
-    _ = windows.VirtualAlloc(alloc_bytes, page_alloc_sz, windows.MEM_COMMIT, windows.PAGE_READWRITE) catch return null;
-
-    node_list.mutex.unlock();
 
     // if (lock_memory) {
     //     _ = c.VirtualLock(alloc_bytes, page_alloc_sz);

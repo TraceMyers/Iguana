@@ -103,6 +103,28 @@ pub fn LocalBuffer(comptime ItemType: type, comptime buflen: usize) type {
             self.len += 1;
         }
 
+        pub fn orderedInsert(self: *Self, new_item: ItemType) void {
+            assert(self.len < buflen);
+            for (0..self.len) |i| {
+                if (new_item < self.buffer[i]) {
+                    self.insert(new_item, i);
+                    return;
+                }
+            }
+            self.append(new_item);
+        }
+
+        pub fn compareInsert(self: *Self, new_item: ItemType) void {
+            assert(self.len < buflen);
+            for (0..self.len) |i| {
+                if (new_item.compare(self.buffer[i])) {
+                    self.insert(new_item, i);
+                    return;
+                }
+            }
+            self.append(new_item);
+        }
+
         pub inline fn appendNTimes(self: *Self, new_item: ItemType, n: usize) void {
             const new_len = self.len + n;
             assert(new_len <= buflen);

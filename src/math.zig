@@ -2314,8 +2314,6 @@ pub fn VAResult(
 //      - are based on measurements gotten from tests using 128 and 1024 vectors in a tight loop on my machine.  the
 //        rate of increasing advantage to SIMD depends on host specs and the program's performance characteristics.
 
-// TODO: continue work om mem6 so this can move away from using zig allocator
-
 // ------------------------------------------------------------------------------------------------- convenience aliases
 
 // ------ 128 bit ------
@@ -2594,35 +2592,35 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
 
 // ---------------------------------------------------------------------------------------------------------------- math
 
-        pub inline fn mul(self: *const VecArrayType, vec: anytype) void {
+        pub fn mul(self: *const VecArrayType, vec: anytype) void {
             var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (0..self.items.len) |i| {
                 multiMul(&self.items[i], &vec_multi, &self.items[i]);
             }
         }
 
-        pub inline fn add(self: *const VecArrayType, vec: anytype) void {
+        pub fn add(self: *const VecArrayType, vec: anytype) void {
             var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (0..self.items.len) |i| {
                 multiAdd(&self.items[i], &vec_multi, &self.items[i]);
             }
         }
 
-        pub inline fn sub(self: *const VecArrayType, vec: anytype) void {
+        pub fn sub(self: *const VecArrayType, vec: anytype) void {
             var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (0..self.items.len) |i| {
                 multiSub(&self.items[i], &vec_multi, &self.items[i]);
             }
         }
 
-        pub inline fn subFrom(self: *const VecArrayType, vec: anytype) void {
+        pub fn subFrom(self: *const VecArrayType, vec: anytype) void {
             var vec_multi = MultiVec(vec_len, vec_width, ScalarType).fromVec(vec);
             for (0..self.items.len) |i| {
                 multiSub(&vec_multi, &self.items[i], &self.items[i]);
             }
         }
 
-        pub inline fn mulc(
+        pub fn mulc(
             self: *const VecArrayType, 
             vec: anytype, 
             result: *VAResult(vec_len, vec_width, ScalarType, MultiVec(vec_len, vec_width, ScalarType))
@@ -2633,7 +2631,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
             }
         }
 
-        pub inline fn addc(
+        pub fn addc(
             self: *const VecArrayType, 
             vec: anytype, 
             result: *VAResult(vec_len, vec_width, ScalarType, MultiVec(vec_len, vec_width, ScalarType))
@@ -2644,7 +2642,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
             }
         }
 
-        pub inline fn subc(
+        pub fn subc(
             self: *const VecArrayType, 
             vec: anytype, 
             result: *VAResult(vec_len, vec_width, ScalarType, MultiVec(vec_len, vec_width, ScalarType))
@@ -2655,7 +2653,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
             }
         }
 
-        pub inline fn subFromc(
+        pub fn subFromc(
             self: *const VecArrayType, 
             vec: anytype, 
             result: *VAResult(vec_len, vec_width, ScalarType, MultiVec(vec_len, vec_width, ScalarType))
@@ -2666,7 +2664,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
             }
         }
 
-        pub inline fn dot(
+        pub fn dot(
             self: *const VecArrayType, 
             vec: anytype, 
             result: *VAResult(vec_len, vec_width, ScalarType, ScalarType)
@@ -2677,7 +2675,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
             }
         }
 
-        pub inline fn cross(
+        pub fn cross(
             self: *const VecArrayType, 
             vec: anytype, 
             result: *VAResult(vec_len, vec_width, ScalarType, MultiVec(vec_len, vec_width, ScalarType))
@@ -2688,7 +2686,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
             }
         }
 
-        pub inline fn sizeSq(
+        pub fn sizeSq(
             self: *const VecArrayType, 
             result: *VAResult(vec_len, vec_width, ScalarType, ScalarType)
         ) void {
@@ -2697,7 +2695,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
             }
         }
 
-        pub inline fn size(
+        pub fn size(
             self: *const VecArrayType, 
             result: *VAResult(vec_len, vec_width, ScalarType, ScalarType)
         ) void {
@@ -2706,7 +2704,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
             }
         }
 
-        pub inline fn distSq(
+        pub fn distSq(
             self: *const VecArrayType, 
             vec: anytype, 
             result: *VAResult(vec_len, vec_width, ScalarType, ScalarType)
@@ -2717,7 +2715,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
             }
         }
 
-        pub inline fn dist(
+        pub fn dist(
             self: *const VecArrayType, 
             vec: anytype, 
             result: *VAResult(vec_len, vec_width, ScalarType, ScalarType)
@@ -2728,7 +2726,7 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
             }
         }
 
-        pub inline fn nearlyEqual(
+        pub fn nearlyEqual(
             self: *const VecArrayType, 
             vec: anytype, 
             result: *VAResult(vec_len, vec_width, ScalarType, bool)
@@ -2739,13 +2737,13 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
             }
         }
 
-        pub inline fn isNorm(self: *const VecArrayType, result: *VAResult(vec_len, vec_width, ScalarType, bool)) void {
+        pub fn isNorm(self: *const VecArrayType, result: *VAResult(vec_len, vec_width, ScalarType, bool)) void {
             for (result.range.start..result.range.end + 1) |i| {
                 multiIsNorm(&self.items[i], (result.items.?[i*vec_width..(i+1)*vec_width])[0..vec_width]);
             }
         }
 
-        pub inline fn nearlyZero(
+        pub fn nearlyZero(
             self: *const VecArrayType, 
             result: *VAResult(vec_len, vec_width, ScalarType, bool)
         ) void {
@@ -2754,31 +2752,31 @@ pub fn VecArray(comptime vec_len: comptime_int, comptime vec_width: comptime_int
             }
         }
 
-        pub inline fn abs(self: *VecArrayType) void {
+        pub fn abs(self: *VecArrayType) void {
             for (0..self.items.len) |i| {
                 multiAbs(&self.items[i]);
             }
         }
 
-        pub inline fn negate(self: *VecArrayType) void {
+        pub fn negate(self: *VecArrayType) void {
             for (0..self.items.len) |i| {
                 multiNegate(&self.items[i]);
             }
         }
 
-        pub inline fn normalizeSafe(self: *VecArrayType) void {
+        pub fn normalizeSafe(self: *VecArrayType) void {
             for (0..self.items.len) |i| {
                 multiNormalizeSafe(&self.items[i]);
             }
         }
 
-        pub inline fn normalizeUnsafe(self: *VecArrayType) void {
+        pub fn normalizeUnsafe(self: *VecArrayType) void {
             for (0..self.items.len) |i| {
                 multiNormalizeUnsafe(&self.items[i]);
             }
         }
 
-        pub inline fn clampSize(self: *VecArrayType, scalar: ScalarType) void {
+        pub fn clampSize(self: *VecArrayType, scalar: ScalarType) void {
             for (0..self.items.len) |i| {
                 multiClampSize(&self.items[i], scalar);
             }

@@ -15,25 +15,25 @@ const RGBA32 = graphics.RGBA32;
 /// - Color Types
 ///     - PsuedoColor: pixels are indices to a color table/map
 ///     - TrueColor: pixels are subdivided into rgb fields
-///     - DirectColor: pixels are subdivided into r, g, and b indices to independent color tables defining intensity
+///     - DirectColor: pixels are subdivided into r, g, and b indices to independent color table entries defining intensity
 /// - TGA files are little-endian
 
 pub fn load(
     file: *std.fs.File, image: *Image, allocator: std.mem.Allocator, options: *const imagef.ImageLoadOptions
 ) !void {
-    errdefer image.clear();
-
     var info = TgaInfo{};
-    var buffer: []u8 = &.{};
     var extents = ExtentBuffer.new();
-    defer freeAllocations(&info, buffer, allocator);
+    defer freeAllocations(&info, allocator);
 
     try readFooter(file, &info, &extents);
     try readHeader(file, &info, &extents);
     try readExtensionData(file, &info, allocator, &extents);
     try readImageId(file, &info, &extents);
-    try loadColorMapAndImageData(file, &info, allocator, &extents, &buffer);
-    try readColorMapData(&info, allocator, buffer);
+
+    var buffer: []u8 = try loadColorMapAndImageData(file, &info, allocator, &extents);
+    defer allocator.free(buffer);
+
+    try createImage(&info, image, allocator, buffer);
 
     _ = options;
 }
@@ -49,13 +49,13 @@ fn readFooter(file: *std.fs.File, info: *TgaInfo, extents: *ExtentBuffer) !void 
         return ImageError.InvalidSizeForFormat;
     }
 
-    const footer_loc: u32 = info.file_sz - footer_end_offset;
-    try file.seekTo(footer_loc);
+    const footer_begin: u32 = info.file_sz - footer_end_offset;
+    try file.seekTo(footer_begin);
     info.footer = try file.reader().readStruct(TgaFooter);
 
     if (string.same(info.footer.?.signature[0..], tga_signature)) {
         info.file_type = TgaFileType.V2;
-        extents.append(BlockExtent{ .begin=footer_loc, .end=info.file_sz });
+        extents.append(BlockExtent{ .begin=footer_begin, .end=info.file_sz });
     } else {
         info.file_type = TgaFileType.V1;
         info.footer = null;
@@ -107,7 +107,7 @@ fn readExtensionData(file: *std.fs.File, info: *TgaInfo, allocator: std.mem.Allo
         );
     }
     if (info.extension_area.?.postage_stamp_offset != 0) {
-        // TODO: read postage stamp. uses safe format as image
+        // TODO: read postage stamp. uses same format as image
     }
     if (info.extension_area.?.color_correction_offset != 0) {
         info.color_correction_table = try loadTable(
@@ -164,8 +164,6 @@ fn loadTable(
 }
 
 fn readImageId(file: *std.fs.File, info: *TgaInfo, extents: *ExtentBuffer) !void {
-    try file.seekTo(tga_header_sz);
-
     if (info.header.info.id_length == 0) {
         return;
     }
@@ -174,6 +172,7 @@ fn readImageId(file: *std.fs.File, info: *TgaInfo, extents: *ExtentBuffer) !void
     const id_end = id_begin + info.header.info.id_length;
     try validateAndAddExtent(extents, info, id_begin, id_end); 
 
+    try file.seekTo(tga_header_sz);
     try file.reader().readNoEof(info.id[0..info.header.info.id_length]);
 }
 
@@ -195,52 +194,73 @@ fn loadColorMapAndImageData(
     file: *std.fs.File, 
     info: *TgaInfo, 
     allocator: std.mem.Allocator,
-    extents: *ExtentBuffer, 
-    buffer: *[]u8
-) !void {
+    extents: *ExtentBuffer
+) ![]u8 {
+    const image_type = info.header.info.image_type;
+    const image_spec = info.header.image_spec;
+    const colormap_spec = info.header.colormap_spec;
+
     var ct_start: u32 = tga_header_sz + info.header.info.id_length;
     var ct_end: u32 = ct_start;
-    switch(info.header.info.image_type) {
+    switch(image_type) {
         .NoData, .TrueColor, .Greyscale, .RleTrueColor, .RleGreyscale => {
-            if (info.header.colormap_spec.entry_bit_ct != 0
-                or info.header.colormap_spec.first_idx != 0
-                or info.header.colormap_spec.len != 0
+            if (colormap_spec.entry_bit_ct != 0
+                or colormap_spec.first_idx != 0
+                or colormap_spec.len != 0
             ) {
                 return ImageError.TgaColorMapDataInNonColorMapImage;
             }
         },
         .ColorMap, .RleColorMap => {
-            info.color_map.step_sz = try switch(info.header.colormap_spec.entry_bit_ct) {
+            info.color_map.step_sz = try switch(colormap_spec.entry_bit_ct) {
                 15, 16 => @as(u32, 2),
                 24 => @as(u32, 3),
                 32 => @as(u32, 4),
                 else => ImageError.TgaNonStandardColorTableUnsupported,
             };
-            ct_end = ct_start + info.color_map.step_sz * info.header.colormap_spec.len;
+            ct_end = ct_start + info.color_map.step_sz * colormap_spec.len;
         },
         else => unreachable,
     }
     info.color_map.buffer_sz = ct_end - ct_start;
 
-    const image_spec = info.header.image_spec;
     switch (image_spec.color_depth) {
         8, 16, 24, 32 => {},
         else => return ImageError.TgaNonStandardColorDepthUnsupported,
     }
-    var img_start = ct_end;
-    var img_end = img_start 
-        + @intCast(u32, image_spec.color_depth >> 3) 
-        * @intCast(u32, image_spec.image_width) 
-        * @intCast(u32, image_spec.image_height);
-    if (img_start == img_end) {
+
+    const img_start: u32 = ct_end;
+    const img_end: u32 = findImageEnd(info, extents);
+    if (img_start >= img_end) {
         return ImageError.TgaNoData;
     }
 
     try validateAndAddExtent(extents, info, ct_start, img_end);
-
-    buffer.* = try allocator.alloc(u8, img_end - ct_start);
+    
+    var buffer: []u8 = try allocator.alignedAlloc(u8, 4, img_end - ct_start);
     try file.seekTo(ct_start);
-    try file.reader().readNoEof(buffer.*);
+
+    if (info.color_map.buffer_sz > 0) {
+        try file.reader().readNoEof(buffer[0..info.color_map.buffer_sz]);
+        try readColorMapData(info, allocator, buffer);
+    }
+    const img_buffer_sz = buffer.len - info.color_map.buffer_sz;
+    try file.reader().readNoEof(buffer[0..img_buffer_sz]);
+    return buffer;
+}
+
+fn findImageEnd(info: *const TgaInfo, extents: *const ExtentBuffer) u32 {
+    var start_extent: usize = undefined;
+    if (info.header.info.id_length == 0) {
+        start_extent = 0;
+    } else {
+        start_extent = 1;
+    }
+    if (extents.len > start_extent + 1) {
+        return extents.buffer[start_extent+1].begin;
+    } else {
+        return info.file_sz;
+    }
 }
 
 fn readColorMapData(info: *TgaInfo, allocator: std.mem.Allocator, buffer: []const u8) !void {
@@ -257,24 +277,25 @@ fn readColorMapData(info: *TgaInfo, allocator: std.mem.Allocator, buffer: []cons
         if (alpha_identifier == 3) {
             info.alpha = .Normal;
             alpha_present = 1;
-        }
-        else if (alpha_identifier == 4) {
+        } else if (alpha_identifier == 4) {
             info.alpha = .Premultiplied;
             alpha_present = 1;
         }
     }
 
-    var offset: usize = 0;
     var i: usize = 0;
+    var offset: usize = 0;
     while (offset < info.color_map.buffer_sz) {
         var entry: *RGBA32 = &info.color_map.table.?[i];
-        var buf = buffer;
         switch (cm_spec.entry_bit_ct) {
             15, 16 => {
-                const color: u16 = std.mem.readIntNative(u16, @ptrCast(*const [2]u8, &buf[offset..]));
-                entry.r = @intCast(u8, (color & 0xf800) >> 11);
-                entry.g = @intCast(u8, (color & 0x07c0) >> 6);
-                entry.b = @intCast(u8, (color & 0x003e) >> 1);
+                const color: u16 = std.mem.readIntNative(u16, @ptrCast(*const [2]u8, &buffer[offset..]));
+                const rf = @intToFloat(f32, (color & 0xf800) >> 8) * 1.03;
+                const gf = @intToFloat(f32, (color & 0x07c0) >> 3) * 1.03;
+                const bf = @intToFloat(f32, (color & 0x003e) << 2) * 1.03;
+                entry.r = @floatToInt(u8, rf); 
+                entry.g = @floatToInt(u8, gf);
+                entry.b = @floatToInt(u8, bf);
                 entry.a = 255;
             },
             24 => {
@@ -296,7 +317,59 @@ fn readColorMapData(info: *TgaInfo, allocator: std.mem.Allocator, buffer: []cons
     }
 }
 
-fn freeAllocations(info: *TgaInfo, buffer: []u8, allocator: std.mem.Allocator) void {
+fn createImage(info: *const TgaInfo, image: *Image, allocator: std.mem.Allocator, buffer: []const u8) !void {
+    if (info.header.info.image_type != .TrueColor and info.header.info.image_type != .Greyscale) {
+        return;
+    }
+
+    const image_spec = info.header.image_spec;
+    const pixel_ct: usize = @intCast(u32, image_spec.image_width) * @intCast(u32, image_spec.image_height);
+    const image_sz = pixel_ct * (image_spec.color_depth >> 3);
+    if (image_sz > buffer.len) {
+        print("width: {}, height: {}, image_sz: {}, buflen: {}\n", .{image_spec.image_width, image_spec.image_height, image_sz, buffer.len});
+        return ImageError.UnexpectedEOF;
+    }
+
+    image.width = image_spec.image_width;
+    image.height = image_spec.image_height;
+    image.allocator = allocator;
+    image.pixels = try allocator.alloc(RGBA32, pixel_ct);
+    print("byte len: {}\n", .{image.pixels.?.len * (image_spec.color_depth >> 3)});
+
+    switch (info.header.info.image_type) {
+        .TrueColor, .Greyscale => try switch(image_spec.color_depth) {
+            8 => readInlinePixelImage(info, image, buffer[0..image_sz], u8),
+            15, 16 => readInlinePixelImage(info, image, buffer[0..image_sz], u16),
+            24 => readInlinePixelImage(info, image, buffer[0..image_sz], u24),
+            32 => readInlinePixelImage(info, image, buffer[0..image_sz], u32),
+            else => unreachable,
+        },
+        else => unreachable,
+    }
+}
+
+inline fn coordinatesToIndex(x: i32, y: i32, width: u32) usize {
+    return @intCast(usize, x * @intCast(i32, width) + y);
+}
+
+fn readInlinePixelImage(info: *const TgaInfo, image: *Image, buffer: []const u8, comptime PixelType: type) !void {
+    const image_spec = info.header.image_spec;
+    var read_x: i32 = @intCast(i32, image_spec.origin_x);
+    var read_y: i32 = @intCast(i32, image_spec.origin_y);
+    var read_idx = coordinatesToIndex(read_x, read_y, image.width);
+    const pixel_ct = image.width * image.height;
+
+    if (read_idx + image.width != pixel_ct) {
+        print("read idx: {}, width: {}, height: {}, pixel_ct: {}\n", .{read_idx, image.width, image.height, pixel_ct});
+        return ImageError.UnexpectedEOF;
+    }
+
+    const buffer_pixels = @ptrCast([*]const PixelType, @alignCast(@alignOf(PixelType), &buffer[0]))[0..pixel_ct];
+
+    _ = buffer_pixels;
+}
+
+fn freeAllocations(info: *TgaInfo, allocator: std.mem.Allocator) void {
     if (info.scanline_table != null) {
         allocator.free(info.scanline_table.?);
     }
@@ -309,9 +382,6 @@ fn freeAllocations(info: *TgaInfo, buffer: []u8, allocator: std.mem.Allocator) v
     if (info.color_map.table != null) {
         allocator.free(info.color_map.table.?);
     }
-    if (buffer.len > 0) {
-        allocator.free(buffer);
-    }
 }
 
 fn validateAndAddExtent(extents: *ExtentBuffer, info: *const TgaInfo, begin: u32, end: u32) !void {
@@ -321,7 +391,7 @@ fn validateAndAddExtent(extents: *ExtentBuffer, info: *const TgaInfo, begin: u32
     if (extentOverlap(extents, begin, end)) {
         return ImageError.OverlappingData;
     }
-    extents.append(BlockExtent{ .begin=begin, .end=end });
+    extents.compareInsert(BlockExtent{ .begin=begin, .end=end });
 }
 
 fn extentOverlap(extents: *const ExtentBuffer, begin: u32, end: u32) bool {
@@ -417,13 +487,16 @@ const TgaInfo = struct {
     postage_stamp_table: ?[]u8 = null,
     color_correction_table: ?[]ARGB64 = null,
     color_map: TgaColorMap = TgaColorMap{},
-    pixel_data: ?[]u8 = null,
     alpha: TgaAlpha = TgaAlpha.None,
 };
 
 const BlockExtent = struct {
     begin: u32,
     end: u32,
+
+    pub fn compare(self: *const BlockExtent, other: BlockExtent) bool {
+        return self.begin < other.begin;
+    }
 };
 
 const TgaFileType = enum(u8) { None, V1, V2 };

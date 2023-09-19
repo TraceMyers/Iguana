@@ -2,6 +2,8 @@
 // :: Image ::
 // :::::::::::
 
+// TODO: allocator-related free error on large alloc
+
 pub const ImageError = error{
     NoFileExtension,
     InvalidFileExtension,
@@ -68,6 +70,7 @@ pub fn loadImage(
     defer file.close();
 
     var image = Image{};
+    errdefer image.clear();
 
     if (format == ImageFormat.Infer) {
         var extension_idx: ?usize = string.findR(file_path, '.');
@@ -93,6 +96,7 @@ pub fn loadImage(
             or string.same(extension_lower, "icb")
             or string.same(extension_lower, "vda")
             or string.same(extension_lower, "vst")
+            or string.same(extension_lower, "tpic")
         ) {
             try tga.load(&file, &image, allocator, &options);
         }
@@ -155,7 +159,7 @@ pub const Image = struct {
     allocator: ?std.mem.Allocator = null,
     premultiplied_alpha: bool = false,
 
-    pub inline fn clear(self: *Image) void {
+    pub fn clear(self: *Image) void {
         if (self.pixels != null) {
             std.debug.assert(self.allocator != null);
             self.allocator.?.free(self.pixels.?);
@@ -292,10 +296,10 @@ test "load bitmap [image]" {
     // try std.testing.expect(passed_all);
 }
 
-test "load targa [image]" {
+pub fn targaTest() !void {
+// test "load targa [image]" {
     try memory.autoStartup();
     defer memory.shutdown();
-
     const allocator = memory.GameAllocator.allocator();
 
     print("\n", .{});
@@ -314,6 +318,8 @@ test "load targa [image]" {
         try path_buf.append(filename_lower.string());
         defer path_buf.revertToAnchor();
 
+        print("loading {s}\n", .{filename_lower.string()});
+
         var t = bench.ScopeTimer.start("loadTga", bench.getScopeTimerID());
         defer t.stop();
 
@@ -322,7 +328,8 @@ test "load targa [image]" {
                 print("error {any} loading tga file {s}\n", .{e, filename_lower.string()});
                 break :blk Image{};
             };
-        _ = image;
+
+        image.clear();
     }
 
     bench.printAllScopeTimers();

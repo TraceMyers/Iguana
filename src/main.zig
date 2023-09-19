@@ -1,34 +1,35 @@
 pub fn main() !void {
-    defer memory.shutdown();
-    try memory.autoStartup();
+    // defer memory.shutdown();
+    // try memory.autoStartup();
 
-    defer window.cleanup();
-    try window.init(1024, 768, "yay");
+    // defer window.cleanup();
+    // try window.init(1024, 768, "yay");
 
-    input.init();
+    // input.init();
 
-    defer vk.cleanup();
-    try vk.init(vk.RenderMethod.Direct);
+    // defer vk.cleanup();
+    // try vk.init(vk.RenderMethod.Direct);
 
-    var should_run: bool = true;
-    var delta_time: f32 = 1.0 / 60.0;
+    // var should_run: bool = true;
+    // var delta_time: f32 = 1.0 / 60.0;
 
-    while (should_run) {
-        var t = ScopeTimer.start("frame", bench.getScopeTimerID());
-        var frame_timer = try std.time.Timer.start();
-        defer endFrame(&frame_timer, &t, &delta_time);
+    // while (should_run) {
+    //     var t = ScopeTimer.start("frame", bench.getScopeTimerID());
+    //     var frame_timer = try std.time.Timer.start();
+    //     defer endFrame(&frame_timer, &t, &delta_time);
 
-        window.pollEvents();
-        if (window.shouldClose()) {
-            should_run = false;
-        }
+    //     window.pollEvents();
+    //     if (window.shouldClose()) {
+    //         should_run = false;
+    //     }
 
-        input.frameUpdate();
-        try vk.drawFrame(delta_time);
-    }
+    //     input.frameUpdate();
+    //     try vk.drawFrame(delta_time);
+    // }
 
-    bench.printAllScopeTimers();
+    // bench.printAllScopeTimers();
     // try img.LoadImageTest();
+    try image.targaTest();
 }
 
 inline fn endFrame(frame_timer: *std.time.Timer, scope_timer: *ScopeTimer, delta_time: *f32) void {
@@ -75,3 +76,4 @@ const vk = @import("vulkan.zig");
 const str = @import("string.zig");
 const input = @import("io/input.zig");
 const convert = @import("convert.zig");
+const image = @import("image/image.zig");
