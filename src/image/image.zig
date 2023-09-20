@@ -39,6 +39,7 @@ pub const ImageError = error{
     TgaNonStandardColorDepthUnsupported,
     TgaNoData,
     TgaUnexpectedReadStartIndex,
+    TgaUnsupportedImageOrigin,
 };
 
 const graphics = @import("../graphics.zig");
@@ -319,8 +320,6 @@ test "load targa [image]" {
         try path_buf.append(filename_lower.string());
         defer path_buf.revertToAnchor();
 
-        print("loading {s}\n", .{filename_lower.string()});
-
         var t = bench.ScopeTimer.start("loadTga", bench.getScopeTimerID());
         defer t.stop();
 
@@ -329,6 +328,10 @@ test "load targa [image]" {
                 print("error {any} loading tga file {s}\n", .{e, filename_lower.string()});
                 break :blk Image{};
             };
+
+        if (image.pixels != null) {
+            print("loaded tga file {s} successfully\n", .{filename_lower.string()});
+        }
 
         image.clear();
     }
