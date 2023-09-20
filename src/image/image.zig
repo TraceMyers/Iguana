@@ -38,6 +38,7 @@ pub const ImageError = error{
     TgaNonStandardColorTableUnsupported,
     TgaNonStandardColorDepthUnsupported,
     TgaNoData,
+    TgaUnexpectedReadStartIndex,
 };
 
 const graphics = @import("../graphics.zig");
@@ -296,8 +297,8 @@ test "load bitmap [image]" {
     // try std.testing.expect(passed_all);
 }
 
-pub fn targaTest() !void {
-// test "load targa [image]" {
+// pub fn targaTest() !void {
+test "load targa [image]" {
     try memory.autoStartup();
     defer memory.shutdown();
     const allocator = memory.GameAllocator.allocator();

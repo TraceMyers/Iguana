@@ -564,7 +564,7 @@ fn readInlinePixelImage(
 
     const direction_info = BitmapDirectionInfo.new(info, image.width, image.height);
     const mask_set =
-        if (standard_masks) try BitmapColorMaskSet(PixelType).standard(info) 
+        if (standard_masks) try BitmapColorMaskSet(PixelType).standard(info.alpha_mask) 
         else try BitmapColorMaskSet(PixelType).fromInfo(info);
 
     var px_start: usize = 0;
@@ -576,7 +576,7 @@ fn readInlinePixelImage(
         var file_buffer_row = pixel_buf[px_start .. px_start + row_sz];
 
         // apply custom or standard rgb/rgba masks to each u16, u24 or u32 pixel in the row, store in RGBA32 image
-        mask_set.extractRow(image_row, file_buffer_row, alpha_mask_present);
+        mask_set.extractRow(image_row, file_buffer_row, alpha_mask_present, false);
 
         px_start += row_sz;
     }
@@ -737,7 +737,7 @@ const BitmapDirectionInfo = struct {
 
     // bitmaps are stored bottom to top, meaning the top-left corner of the image is idx 0 of the last row, unless the
     // height param is negative. we always read top to bottom and write up or down depending.
-    inline fn new(info: *const BitmapInfo, width: u32, height: u32) BitmapDirectionInfo {
+    fn new(info: *const BitmapInfo, width: u32, height: u32) BitmapDirectionInfo {
         const write_direction = @intToEnum(BitmapReadDirection, @intCast(u8, @boolToInt(info.height < 0)));
         if (write_direction == .BottomUp) {
             return BitmapDirectionInfo{
@@ -756,6 +756,7 @@ const BitmapDirectionInfo = struct {
 fn BitmapColorMask(comptime IntType: type) type {
 
     const ShiftType = switch (IntType) {
+        u8 => u4,
         u16 => u4,
         u24 => u5,
         u32 => u5,
@@ -783,10 +784,23 @@ fn BitmapColorMask(comptime IntType: type) type {
         inline fn extractColor(self: *const MaskType, pixel: IntType) u8 {
             return @intCast(u8, ((pixel & self.mask) >> self.rshift) << self.lshift);
         }
+
+        inline fn shiftType() type {
+            return ShiftType;
+        }
     };
 }
 
-fn BitmapColorMaskSet(comptime IntType: type) type {
+pub fn BitmapColorMaskSet(comptime IntType: type) type {
+
+    const ShiftType = switch (IntType) {
+        u8 => u4,
+        u16 => u4,
+        u24 => u5,
+        u32 => u5,
+        else => undefined,
+    };
+
     return struct {
         const SetType = @This();
 
@@ -795,30 +809,34 @@ fn BitmapColorMaskSet(comptime IntType: type) type {
         b_mask: BitmapColorMask(IntType) = BitmapColorMask(IntType){},
         a_mask: BitmapColorMask(IntType) = BitmapColorMask(IntType){},
 
-        inline fn standard(info: *const BitmapInfo) !SetType {
+        pub fn standard(alpha_mask: u32) !SetType {
             return SetType{
                 .r_mask = switch (IntType) {
+                    u8 => try BitmapColorMask(IntType).new(0),
                     u16 => try BitmapColorMask(IntType).new(0x7c00),
                     u24 => try BitmapColorMask(IntType).new(0),
                     u32 => try BitmapColorMask(IntType).new(0x00ff0000),
                     else => unreachable,
                 },
                 .g_mask = switch (IntType) {
+                    u8 => try BitmapColorMask(IntType).new(0),
                     u16 => try BitmapColorMask(IntType).new(0x03e0),
                     u24 => try BitmapColorMask(IntType).new(0),
                     u32 => try BitmapColorMask(IntType).new(0x0000ff00),
                     else => unreachable,
                 },
                 .b_mask = switch (IntType) {
+                    u8 => try BitmapColorMask(IntType).new(0),
                     u16 => try BitmapColorMask(IntType).new(0x001f),
                     u24 => try BitmapColorMask(IntType).new(0),
                     u32 => try BitmapColorMask(IntType).new(0x000000ff),
                     else => unreachable,
                 },
                 .a_mask = switch (IntType) {
-                    u16 => try BitmapColorMask(IntType).new(info.alpha_mask),
+                    u8 => try BitmapColorMask(IntType).new(0),
+                    u16 => try BitmapColorMask(IntType).new(alpha_mask),
                     u24 => try BitmapColorMask(IntType).new(0),
-                    u32 => try BitmapColorMask(IntType).new(info.alpha_mask),
+                    u32 => try BitmapColorMask(IntType).new(alpha_mask),
                     else => unreachable,
                 },
             };
@@ -851,15 +869,38 @@ fn BitmapColorMaskSet(comptime IntType: type) type {
             };
         }
 
-        inline fn extractRow(self: *const SetType, image_row: []RGBA32, pixel_row: []const u8, mask_alpha: bool) void {
-            if (mask_alpha) {
+        pub inline fn extractRow(
+            self: *const SetType, image_row: []RGBA32, pixel_row: []const u8, mask_alpha: bool, greyscale: bool
+        ) void {
+            if (greyscale) {
+                self.extractRowGreyscale(image_row, pixel_row);
+            } else if (mask_alpha) {
                 self.extractRowRGBA(image_row, pixel_row);
             } else {
                 self.extractRowRGB(image_row, pixel_row);
             }
         }
 
-        inline fn extractRowRGB(self: *const SetType, image_row: []RGBA32, pixel_row: []const u8) void {
+        fn extractRowGreyscale(self: *const SetType, image_row: []RGBA32, pixel_row: []const u8) void {
+            _ = self;
+            const shift: comptime_int = switch(IntType) {
+                u8 => 0,
+                u16 => 1,
+                u32 => 2,
+                else => unreachable,
+            };
+            var pixels = @ptrCast([*]const IntType, @alignCast(@alignOf(IntType), &pixel_row[0]))[0..image_row.len];
+            for (0..image_row.len) |j| {
+                const read_pixel = @intCast(u8, pixels[j] >> @as(ShiftType, shift));
+                var write_pixel: *RGBA32 = &image_row[j];
+                write_pixel.r = read_pixel;
+                write_pixel.g = read_pixel;
+                write_pixel.b = read_pixel;
+                write_pixel.a = 255;
+            }
+        }
+
+        fn extractRowRGB(self: *const SetType, image_row: []RGBA32, pixel_row: []const u8) void {
             switch (IntType) {
                 u16, u32 => {
                     var pixels = @ptrCast([*]const IntType, @alignCast(@alignOf(IntType), &pixel_row[0]))[0..image_row.len];
@@ -882,7 +923,7 @@ fn BitmapColorMaskSet(comptime IntType: type) type {
             }
         }
 
-        inline fn extractRowRGBA(self: *const SetType, image_row: []RGBA32, pixel_row: []const u8) void {
+        fn extractRowRGBA(self: *const SetType, image_row: []RGBA32, pixel_row: []const u8) void {
             var pixels = @ptrCast([*]const IntType, @alignCast(@alignOf(IntType), &pixel_row[0]))[0..image_row.len];
             for (0..image_row.len) |j| {
                 image_row[j] = self.extractRGBA(pixels[j]);

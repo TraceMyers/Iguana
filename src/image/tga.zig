@@ -9,6 +9,7 @@ const LocalBuffer = @import("../array.zig").LocalBuffer;
 const ARGB64 = imagef.ARGB64;
 const graphics = @import("../graphics.zig");
 const RGBA32 = graphics.RGBA32;
+const BitmapColorMaskSet = @import("bmp.zig").BitmapColorMaskSet;
 
 // TODO: test images for color correction table
 
@@ -225,7 +226,7 @@ fn loadColorMapAndImageData(
     info.color_map.buffer_sz = ct_end - ct_start;
 
     switch (image_spec.color_depth) {
-        8, 16, 24, 32 => {},
+        8, 15, 16, 24, 32 => {},
         else => return ImageError.TgaNonStandardColorDepthUnsupported,
     }
 
@@ -337,12 +338,17 @@ fn createImage(info: *const TgaInfo, image: *Image, allocator: std.mem.Allocator
     print("byte len: {}\n", .{image.pixels.?.len * (image_spec.color_depth >> 3)});
 
     switch (info.header.info.image_type) {
-        .TrueColor, .Greyscale => try switch(image_spec.color_depth) {
-            8 => readInlinePixelImage(info, image, buffer[0..image_sz], u8),
-            15, 16 => readInlinePixelImage(info, image, buffer[0..image_sz], u16),
-            24 => readInlinePixelImage(info, image, buffer[0..image_sz], u24),
-            32 => readInlinePixelImage(info, image, buffer[0..image_sz], u32),
-            else => unreachable,
+        .TrueColor => try switch(image_spec.color_depth) {
+            15, 16 => readInlinePixelImage(info, image, buffer[0..image_sz], u16, false),
+            24 => readInlinePixelImage(info, image, buffer[0..image_sz], u24, false),
+            32 => readInlinePixelImage(info, image, buffer[0..image_sz], u32, false),
+            else => return ImageError.TgaNonStandardColorDepthUnsupported,
+        },
+        .Greyscale => try switch(image_spec.color_depth) {
+            8 => readInlinePixelImage(info, image, buffer[0..image_sz], u8, true),
+            15, 16 => readInlinePixelImage(info, image, buffer[0..image_sz], u16, true),
+            32 => readInlinePixelImage(info, image, buffer[0..image_sz], u32, true),
+            else => return ImageError.TgaNonStandardColorDepthUnsupported,
         },
         else => unreachable,
     }
@@ -352,22 +358,9 @@ inline fn coordinatesToIndex(x: i32, y: i32, width: u32) usize {
     return @intCast(usize, x * @intCast(i32, width) + y);
 }
 
-fn readInlinePixelImage(info: *const TgaInfo, image: *Image, buffer: []const u8, comptime PixelType: type) !void {
-    const image_spec = info.header.image_spec;
-    var read_x: i32 = @intCast(i32, image_spec.origin_x);
-    var read_y: i32 = @intCast(i32, image_spec.origin_y);
-    var read_idx = coordinatesToIndex(read_x, read_y, image.width);
-    const pixel_ct = image.width * image.height;
-
-    if (read_idx + image.width != pixel_ct) {
-        print("read idx: {}, width: {}, height: {}, pixel_ct: {}\n", .{read_idx, image.width, image.height, pixel_ct});
-        return ImageError.UnexpectedEOF;
-    }
-
-    const buffer_pixels = @ptrCast([*]const PixelType, @alignCast(@alignOf(PixelType), &buffer[0]))[0..pixel_ct];
-
-    _ = buffer_pixels;
-}
+// inline fn readInlinePixelImage(info: *const TgaInfo, image: *Image, buffer: []const u8, reader: anytype) !void {
+//     try reader.extractImage(info, buffer, image);
+// }
 
 fn freeAllocations(info: *TgaInfo, allocator: std.mem.Allocator) void {
     if (info.scanline_table != null) {
@@ -403,6 +396,65 @@ fn extentOverlap(extents: *const ExtentBuffer, begin: u32, end: u32) bool {
         }
     }
     return false;
+}
+
+fn readInlinePixelImage(
+    info: *const TgaInfo, image: *Image, buffer: []const u8, comptime PixelType: type, comptime greyscale: bool
+) !void {
+    const pixel_sz: comptime_int = @sizeOf(PixelType); 
+    const image_spec = info.header.image_spec;
+    const width_sz = image.width * pixel_sz;
+
+    var read_x: i32 = @intCast(i32, image_spec.origin_x);
+    var read_y: i32 = @intCast(i32, image_spec.origin_y);
+    var read_start: i32 = @intCast(i32, coordinatesToIndex(read_x, read_y, width_sz));
+    var read_step: i32 = @intCast(i32, width_sz);
+
+    if (@mod(read_start, @intCast(i32, image.width)) != 0) {
+        return ImageError.TgaUnexpectedReadStartIndex;
+    }
+
+    const pixel_ct = image.width * image.height;
+
+    var write_start: i32 = undefined;
+    var write_step: i32 = undefined;
+
+    if (read_start == 0) {
+        write_start = @intCast(i32, pixel_ct - image.width);
+        write_step = -@intCast(i32, image.width);
+    }
+    else if (read_start + @intCast(i32, image.width) == pixel_ct) {
+        write_start = 0;
+        write_step = @intCast(i32, image.width);
+    }
+    else {
+        return ImageError.TgaUnexpectedReadStartIndex;
+    }
+    read_start = 0;
+
+    print("reading tga\n", .{});
+
+    const alpha_mask = if (PixelType == u32) 0xff000000 else 0;
+    var mask_set = try BitmapColorMaskSet(PixelType).standard(alpha_mask);
+
+    while (read_start < @intCast(i32, pixel_ct)) {
+        const read_end: i32 = read_start + read_step;
+        const write_end: i32 = write_start + @intCast(i32, image.width);
+
+        if (write_end < 0 or write_end > image.pixels.?.len or read_end < 0 or read_end > buffer.len) {
+            return ImageError.UnexpectedEOF;
+        }
+
+        var buffer_row = buffer[@intCast(usize, read_start)..@intCast(usize, read_end)];
+        var image_row = image.pixels.?[@intCast(usize, write_start)..@intCast(usize, write_end)];
+
+        mask_set.extractRow(image_row, buffer_row, alpha_mask != 0, greyscale);
+
+        read_start += read_step;
+        write_start += write_step;
+    }
+    print("read tga\n", .{});
+
 }
 
 pub const TgaImageType = enum(u8) {
