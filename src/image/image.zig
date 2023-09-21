@@ -11,6 +11,7 @@ pub const ImageError = error{
     InvalidSizeForFormat,
     PartialRead,
     UnexpectedEOF,
+    UnexpectedEndOfImageBuffer,
     FormatUnsupported,
     DimensionTooLarge,
     OverlappingData,
@@ -40,6 +41,7 @@ pub const ImageError = error{
     TgaNoData,
     TgaUnexpectedReadStartIndex,
     TgaUnsupportedImageOrigin,
+    TgaColorTableImageNot8BitColorDepth,
 };
 
 const graphics = @import("../graphics.zig");

@@ -18,6 +18,7 @@ const InlinePixelReader = readerf.InlinePixelReader;
 const RLEReader = readerf.RLEReader;
 const RLEAction = readerf.RLEAction;
 const ColorLayout = readerf.ColorLayout;
+const readColorTableImageRow = readerf.readColorTableImageRow;
 
 // calibration notes for when it becomes useful:
 
@@ -403,37 +404,6 @@ inline fn bytesPerRow(comptime PixelType: type, image_width: u32) u32 {
     return byte_ct_floor + row_remainder_exists;
 }
 
-fn readColorTableImageRow(
-    index_row: []const u8, 
-    image_row: []RGBA32, 
-    colors: []const RGBA32, 
-    row_byte_ct: u32, 
-    comptime base_mask: comptime_int,
-    comptime PixelType: type,
-) !void {
-    const bit_width: comptime_int = @typeInfo(PixelType).Int.bits;
-    const colors_per_byte: comptime_int = 8 / bit_width;
-
-    var img_idx: usize = 0;
-    for (0..row_byte_ct) |byte| {
-        const idx_byte = index_row[byte];
-        inline for (0..colors_per_byte) |j| {
-            if (img_idx + j >= image_row.len) {
-                return;
-            }
-            const mask_shift: comptime_int = j * bit_width;
-            const result_shift: comptime_int = ((colors_per_byte - 1) - j) * bit_width;
-            const mask = @as(u8, base_mask) >> mask_shift;
-            const col_idx: u8 = (idx_byte & mask) >> result_shift;
-            if (col_idx >= colors.len) {
-                return ImageError.BmpInvalidColorTableIndex;
-            }
-            image_row[img_idx + j] = colors[col_idx];
-        }
-        img_idx += colors_per_byte;
-    }
-}
-
 // valid masks don't intersect, can't overflow their type (ie 17 bits used w/ 16 bit color), and according to the
 // standard, they should also be contiguous, but I don't see why that matters.
 fn validColorMasks(comptime PixelType: type, info: *const BitmapInfo) bool {
@@ -519,7 +489,7 @@ fn readColorTableImage(
         return ImageError.BmpInvalidColorTable;
     }
     if (!bufferLongEnough(pixel_buf, image, row_sz)) {
-        return ImageError.UnexpectedEOF;
+        return ImageError.UnexpectedEndOfImageBuffer;
     }
 
     const direction_info = BitmapDirectionInfo.new(info, image.width, image.height);
@@ -556,7 +526,7 @@ fn readInlinePixelImage(
     var alpha_mask_present = info.compression == .ALPHABITFIELDS or info.alpha_mask > 0;
 
     if (!bufferLongEnough(pixel_buf, image, row_sz)) {
-        return ImageError.UnexpectedEOF;
+        return ImageError.UnexpectedEndOfImageBuffer;
     }
     if (!standard_masks or alpha_mask_present) {
         if (PixelType == u24) {

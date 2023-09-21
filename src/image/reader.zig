@@ -385,3 +385,35 @@ pub fn RLEReader(comptime IntType: type) type {
         }
     };
 }
+
+pub fn readColorTableImageRow(
+    index_row: []const u8, 
+    image_row: []RGBA32, 
+    colors: []const RGBA32, 
+    row_byte_ct: u32, 
+    comptime base_mask: comptime_int,
+    comptime PixelType: type,
+) !void {
+    const bit_width: comptime_int = @typeInfo(PixelType).Int.bits;
+    const colors_per_byte: comptime_int = 8 / bit_width;
+
+    var img_idx: usize = 0;
+    for (0..row_byte_ct) |byte| {
+        const idx_byte = index_row[byte];
+        inline for (0..colors_per_byte) |j| {
+            if (img_idx + j >= image_row.len) {
+                return;
+            }
+            const mask_shift: comptime_int = j * bit_width;
+            const result_shift: comptime_int = ((colors_per_byte - 1) - j) * bit_width;
+            const mask = @as(u8, base_mask) >> mask_shift;
+            const col_idx: u8 = (idx_byte & mask) >> result_shift;
+            if (col_idx >= colors.len) {
+                return ImageError.BmpInvalidColorTableIndex;
+            }
+            image_row[img_idx + j] = colors[col_idx];
+        }
+        img_idx += colors_per_byte;
+    }
+}
+
