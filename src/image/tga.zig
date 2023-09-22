@@ -11,6 +11,7 @@ const graphics = @import("../graphics.zig");
 const RGBA32 = graphics.RGBA32;
 const readerf = @import("reader.zig");
 const BitmapColorMaskSet = readerf.InlinePixelReader;
+const TgaReadInfo = readerf.TgaReadInfo;
 const readColorTableImageRow = readerf.readColorTableImageRow;
 const iVec2 = @import("../math.zig").iVec2;
 
@@ -93,7 +94,7 @@ fn readExtensionData(file: *std.fs.File, info: *TgaInfo, allocator: std.mem.Allo
 
     try file.seekTo(extension_area_begin);
     info.extension_area = ExtensionArea{};
-    info.extension_area.?.extension_sz = try file.reader().readIntNative(u16);
+    info.extension_area.?.extension_sz = try file.reader().readIntLittle(u16);
 
     if (extension_area_begin + info.extension_area.?.extension_sz > info.file_sz
         or info.extension_area.?.extension_sz != extension_area_file_sz
@@ -128,20 +129,20 @@ fn readExtensionArea(file: *std.fs.File, info: *TgaInfo) !void {
     info.extension_area.?.timestamp = timestamp_slice.*;
     info.extension_area.?.job_name = extbuf[377..418].*;
     inline for(0..3) |i| {
-        info.extension_area.?.job_time[i] = std.mem.readIntNative(u16, extbuf[418+(i*2)..420+(i*2)]);
+        info.extension_area.?.job_time[i] = std.mem.readIntLittle(u16, extbuf[418+(i*2)..420+(i*2)]);
     }
     info.extension_area.?.software_id = extbuf[424..465].*;
     info.extension_area.?.software_version = extbuf[465..468].*;
-    info.extension_area.?.key_color = std.mem.readIntNative(u32, extbuf[468..472]);
+    info.extension_area.?.key_color = std.mem.readIntLittle(u32, extbuf[468..472]);
     inline for(0..2) |i| {
-        info.extension_area.?.pixel_aspect_ratio[i] = std.mem.readIntNative(u16, extbuf[472+(i*2)..474+(i*2)]);
+        info.extension_area.?.pixel_aspect_ratio[i] = std.mem.readIntLittle(u16, extbuf[472+(i*2)..474+(i*2)]);
     }
     inline for(0..2) |i| {
-        info.extension_area.?.gamma[i] = std.mem.readIntNative(u16, extbuf[476+(i*2)..478+(i*2)]);
+        info.extension_area.?.gamma[i] = std.mem.readIntLittle(u16, extbuf[476+(i*2)..478+(i*2)]);
     }
-    info.extension_area.?.color_correction_offset = std.mem.readIntNative(u32, extbuf[480..484]);
-    info.extension_area.?.postage_stamp_offset = std.mem.readIntNative(u32, extbuf[484..488]);
-    info.extension_area.?.scanline_offset = std.mem.readIntNative(u32, extbuf[488..492]);
+    info.extension_area.?.color_correction_offset = std.mem.readIntLittle(u32, extbuf[480..484]);
+    info.extension_area.?.postage_stamp_offset = std.mem.readIntLittle(u32, extbuf[484..488]);
+    info.extension_area.?.scanline_offset = std.mem.readIntLittle(u32, extbuf[488..492]);
     info.extension_area.?.attributes_type = extbuf[492];
 }
 
@@ -186,7 +187,7 @@ pub fn typeSupported(image_type: TgaImageType) bool {
         .ColorMap => true,
         .TrueColor => true,
         .Greyscale => true,
-        .RleColorMap => false,
+        .RleColorMap => true,
         .RleTrueColor => false,
         .RleGreyscale => false,
         .HuffmanDeltaRleColorMap => false,
@@ -208,7 +209,6 @@ fn loadColorMapAndImageData(
     var ct_end: u32 = ct_start;
     switch(image_type) {
         .NoData, .TrueColor, .Greyscale, .RleTrueColor, .RleGreyscale => {
-            print("x\n", .{});
             if (colormap_spec.entry_bit_ct != 0
                 or colormap_spec.first_idx != 0
                 or colormap_spec.len != 0
@@ -217,7 +217,6 @@ fn loadColorMapAndImageData(
             }
         },
         .ColorMap, .RleColorMap => {
-            print("** color map image **, bit ct {}\n", .{colormap_spec.entry_bit_ct});
             info.color_map.step_sz = try switch(colormap_spec.entry_bit_ct) {
                 15, 16 => @as(u32, 2),
                 24 => @as(u32, 3),
@@ -295,7 +294,7 @@ fn readColorMapData(info: *TgaInfo, allocator: std.mem.Allocator, buffer: []cons
         var entry: *RGBA32 = &info.color_map.table.?[i];
         switch (cm_spec.entry_bit_ct) {
             15, 16 => {
-                const color: u16 = std.mem.readIntSliceNative(u16, buffer[offset..offset+2]);
+                const color: u16 = std.mem.readIntSliceLittle(u16, buffer[offset..offset+2]);
                 entry.r = @intCast(u8, (color & 0x7c00) >> 7);
                 entry.g = @intCast(u8, (color & 0x03e0) >> 2);
                 entry.b = @intCast(u8, (color & 0x001f) << 3);
@@ -403,7 +402,7 @@ fn readInlinePixelImage(
     const mask_set = try BitmapColorMaskSet(PixelType, .ABGR).standard(alpha_mask);
 
     while (read_info.read_start < read_info.image_sz) {
-        const read_end: i32 = read_info.read_start + read_info.read_step;
+        const read_end: i32 = read_info.read_start + read_info.read_row_step;
         const write_end: i32 = read_info.write_start + @intCast(i32, image.width);
 
         if (write_end < 0 or write_end > image.pixels.?.len or read_end < 0 or read_end > read_info.image_sz) {
@@ -415,8 +414,8 @@ fn readInlinePixelImage(
 
         mask_set.extractRow(image_row, buffer_row, using_alpha, greyscale);
 
-        read_info.read_start += read_info.read_step;
-        read_info.write_start += read_info.write_step;
+        read_info.read_start += read_info.read_row_step;
+        read_info.write_start += read_info.write_row_step;
     }
 }
 
@@ -426,7 +425,7 @@ fn readColorMapImage(
     var read_info = try TgaReadInfo(PixelType).new(info, image);
 
     while (read_info.read_start < read_info.image_sz) {
-        const read_end: i32 = read_info.read_start + read_info.read_step;
+        const read_end: i32 = read_info.read_start + read_info.read_row_step;
         const write_end: i32 = read_info.write_start + @intCast(i32, image.width);
 
         if (write_end < 0 or write_end > image.pixels.?.len or read_end < 0 or read_end > read_info.image_sz) {
@@ -436,88 +435,21 @@ fn readColorMapImage(
         var buffer_row = buffer[@intCast(usize, read_info.read_start)..@intCast(usize, read_end)];
         var image_row = image.pixels.?[@intCast(usize, read_info.write_start)..@intCast(usize, write_end)];
 
-        readColorTableImageRow(
-            buffer_row, image_row, info.color_map.table.?, @intCast(u32, read_info.read_step), 0xff, PixelType
+        try readColorTableImageRow(
+            buffer_row, image_row, info.color_map.table.?, @intCast(u32, read_info.read_row_step), 0xff, PixelType
         );
 
-        read_info.read_start += read_info.read_step;
-        read_info.write_start += read_info.write_step;
+        read_info.read_start += read_info.read_row_step;
+        read_info.write_start += read_info.write_row_step;
     }
 }
 
-pub fn imageOrigin(image_spec: *const TgaImageSpec) iVec2(i32) {
-    const bit4: bool = (image_spec.descriptor & 0x10) != 0;
-    const bit5: bool = (image_spec.descriptor & 0x20) != 0;
-    if (bit4) {
-        if (bit5) {
-            // top right
-            return iVec2(i32).init(.{image_spec.image_width - 1, image_spec.image_height - 1});
-        } else {
-            // bottom right
-            return iVec2(i32).init(.{image_spec.image_width - 1, 0});
-        }
-    } else {
-        if (bit5) {
-            // top left
-            return iVec2(i32).init(.{0, image_spec.image_height - 1});
-        } else {
-            // bottom left
-            return iVec2(i32).init(.{0, 0});
-        }
-    }
+fn readRunLengthEncodedImage(
+    info: *const TgaInfo, image: *Image, buffer: [*]const u8, comptime PixelType: type
+) !void {
+
 }
 
-fn TgaReadInfo (comptime PixelType: type) type {
-
-    const pixel_sz: comptime_int = switch(PixelType) { // sizeOf(u24) gives 4
-        u8 => 1,
-        u15, u16 => 2,
-        u24 => 3,
-        u32 => 4,
-        else => unreachable,
-    };
-
-    return struct {
-        const TRIType = @This();
-
-        read_start: i32 = undefined,
-        image_sz: i32 = undefined,
-        read_step: i32 = undefined,
-        write_start: i32 = undefined,
-        write_step: i32 = undefined,
-        pixel_ct: u32 = undefined,
-
-        fn new(info: *const TgaInfo, image: *const Image) !TRIType {
-            var read_info = TRIType{};
-            
-            const image_spec = info.header.image_spec;
-            const width_sz = image.width * pixel_sz;
-            read_info.image_sz = @intCast(i32, width_sz * image.height);
-            read_info.pixel_ct = image.width * image.height;
-            read_info.read_step = @intCast(i32, width_sz);
-            read_info.read_start = 0;
-
-            const image_origin: iVec2(i32) = imageOrigin(&image_spec);
-
-            if (image_origin.x() != 0) {
-                return ImageError.TgaUnsupportedImageOrigin;
-            } 
-
-            if (image_origin.y() == 0) {
-                // image rows stored bottom-to-top
-                read_info.write_start = @intCast(i32, read_info.pixel_ct - image.width);
-                read_info.write_step = -@intCast(i32, image.width);
-            }
-            else {
-                // image rows stored top-to-bottom
-                read_info.write_start = 0;
-                read_info.write_step = @intCast(i32, image.width);
-            }
-
-            return read_info;
-        }
-    };
-}
 
 pub const TgaImageType = enum(u8) {
     NoData = 0,
@@ -537,7 +469,7 @@ const TgaColorMapSpec = extern struct {
     entry_bit_ct: u8,
 };
 
-const TgaImageSpec = extern struct {
+pub const TgaImageSpec = extern struct {
     origin_x: u16,
     origin_y: u16,
     image_width: u16,

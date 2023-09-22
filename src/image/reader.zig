@@ -4,6 +4,10 @@ const BitmapColorTable = @import("bmp.zig").BitmapColorTable;
 const RGBA32 = @import("../graphics.zig").RGBA32;
 const Image = @import("image.zig").Image;
 const ImageError = @import("image.zig").ImageError;
+const tga = @import("tga.zig");
+const TgaImageSpec = tga.TgaImageSpec;
+const TgaInfo = tga.TgaInfo;
+const iVec2 = @import("../math.zig").iVec2;
 
 pub const RLEAction = enum {
     EndRow, // 0
@@ -200,7 +204,52 @@ pub fn InlinePixelReader(comptime IntType: type, comptime layout: ColorLayout) t
     };
 }
 
-pub fn RLEReader(comptime IntType: type) type {
+pub fn TgaRLEReader(comptime IntType: type) type {
+    return struct {
+        const RLEReaderType = @This();
+
+        read_info: TgaReadInfo(IntType) = undefined,
+        byte_pos: u32 = 0,
+        action_ct: u32 = 0,
+        repeat_pixel: IntType = 0,
+
+        pub fn new(info: *const TgaInfo, image: *const Image) RLEReaderType {
+            return RLEReaderType {
+                .read_info = TgaReadInfo(IntType).new(info, image),
+            };
+        }
+
+        pub fn imageIndex(self: *const RLEReaderType, image: *const Image) i32 {
+            return self.read_info.coords.y() * @intCast(i32, image.width) + self.read_info.coords.x();
+        }
+
+        pub fn readAction(self: *RLEReaderType, buffer: []const u8) !RLEAction {
+            if (self.byte_pos >= buffer.len) {
+                return RLEAction.EndImage;
+            }
+
+            const action_byte = buffer[self.byte_pos];
+            self.byte_pos += 1;
+            self.action_ct = (action_byte & 0x7f) + 1;
+            const action_bit = action_byte & 0x80;
+
+            if (action_bit > 0) {
+                const new_byte_pos = self.byte_pos + self.read_info.pixelSz();
+                if (new_byte_pos >= buffer.len) {
+                    return ImageError.UnexpectedEndOfImageBuffer;
+                }
+                self.repeat_pixel = std.mem.readIntSliceLIttle(IntType, buffer[self.byte_pos..new_byte_pos]);
+                self.byte_pos = new_byte_pos;
+                return RLEAction.RepeatPixels;
+            }
+            else {
+                return RLEAction.ReadPixels;
+            }
+        }
+    };
+}
+
+pub fn BmpRLEReader(comptime IntType: type) type {
     return struct {
         const RLEReaderType = @This();
 
@@ -228,7 +277,7 @@ pub fn RLEReader(comptime IntType: type) type {
             else => unreachable,
         };
 
-        pub fn new(image_width: u32, image_height: u32) !RLEReaderType {
+        pub fn new(image_width: u32, image_height: u32) RLEReaderType {
             return RLEReaderType{
                 .img_row = image_height - 1,
                 .img_width = image_width,
@@ -239,7 +288,7 @@ pub fn RLEReader(comptime IntType: type) type {
 
         pub fn readAction(self: *RLEReaderType, buffer: []const u8) !RLEAction {
             if (self.byte_pos + 1 >= buffer.len) {
-                return ImageError.UnexpectedEOF;
+                return ImageError.UnexpectedEndOfImageBuffer;
             }
             self.action_bytes[0] = buffer[self.byte_pos];
             self.action_bytes[1] = buffer[self.byte_pos + 1];
@@ -318,7 +367,7 @@ pub fn RLEReader(comptime IntType: type) type {
             const byte_read_end = self.byte_pos + (word_aligned_read_ct >> byte_shift); //  add 4
 
             if (byte_read_end >= buffer.len) {
-                return ImageError.UnexpectedEOF;
+                return ImageError.UnexpectedEndOfImageBuffer;
             }
 
             var img_idx = self.imageIndex();
@@ -360,7 +409,7 @@ pub fn RLEReader(comptime IntType: type) type {
 
         pub fn changeCoordinates(self: *RLEReaderType, buffer: []const u8) !void {
             if (self.byte_pos + 1 >= buffer.len) {
-                return ImageError.UnexpectedEOF;
+                return ImageError.UnexpectedEndOfImageBuffer;
             }
             self.img_col += buffer[self.byte_pos];
             const new_row = @intCast(i32, self.img_row) - @intCast(i32, buffer[self.byte_pos + 1]);
@@ -417,3 +466,86 @@ pub fn readColorTableImageRow(
     }
 }
 
+
+fn tgaImageOrigin(image_spec: *const TgaImageSpec) iVec2(i32) {
+    const bit4: bool = (image_spec.descriptor & 0x10) != 0;
+    const bit5: bool = (image_spec.descriptor & 0x20) != 0;
+    // imagine the image buffer is invariably stored in in a 2d array of rows stacked upward, on an xy plane with the
+    // first buffer pixel at (0, 0). This might take a little brain jiu-jitsu since we normally thing of arrays as 
+    // top-down. If the origin (top left of output image) is also at (0, 0), we should read left-to-right, bottom-to-top.
+    // In practice, we read the buffer from beginning to end and write depending on the origin.
+    if (bit4) {
+        if (bit5) {
+            // top right
+            return iVec2(i32).init(.{image_spec.image_width - 1, image_spec.image_height - 1});
+        } else {
+            // bottom right
+            return iVec2(i32).init(.{image_spec.image_width - 1, 0});
+        }
+    } else {
+        if (bit5) {
+            // top left
+            return iVec2(i32).init(.{0, image_spec.image_height - 1});
+        } else {
+            // bottom left
+            return iVec2(i32).init(.{0, 0});
+        }
+    }
+}
+
+pub fn TgaReadInfo (comptime PixelType: type) type {
+
+    const pixel_sz: comptime_int = switch(PixelType) { // sizeOf(u24) gives 4
+        u8 => 1,
+        u15, u16 => 2,
+        u24 => 3,
+        u32 => 4,
+        else => unreachable,
+    };
+
+    return struct {
+        const TRIType = @This();
+
+        image_sz: i32 = undefined,
+        pixel_ct: u32 = undefined,
+        read_start: i32 = undefined,
+        read_row_step: i32 = undefined,
+        coords: iVec2(i32) = undefined,
+        write_start: i32 = undefined,
+        write_row_step: i32 = undefined,
+
+        pub fn new(info: *const TgaInfo, image: *const Image) !TRIType {
+            var read_info = TRIType{};
+            
+            const image_spec = info.header.image_spec;
+            const width_sz = image.width * pixel_sz;
+            read_info.image_sz = @intCast(i32, width_sz * image.height);
+            read_info.pixel_ct = image.width * image.height;
+            read_info.read_start = 0;
+            read_info.read_row_step = @intCast(i32, width_sz);
+
+            read_info.coords = tgaImageOrigin(&image_spec);
+
+            if (read_info.coords.x() != 0) {
+                return ImageError.TgaUnsupportedImageOrigin;
+            } 
+
+            if (read_info.coords.y() == 0) {
+                // image rows stored bottom-to-top
+                read_info.write_start = @intCast(i32, read_info.pixel_ct - image.width);
+                read_info.write_row_step = -@intCast(i32, image.width);
+            }
+            else {
+                // image rows stored top-to-bottom
+                read_info.write_start = 0;
+                read_info.write_row_step = @intCast(i32, image.width);
+            }
+
+            return read_info;
+        }
+
+        pub inline fn pixelSz() u32 {
+            return @intCast(u32, pixel_sz);
+        }
+    };
+}

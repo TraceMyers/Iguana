@@ -15,7 +15,7 @@ const print = std.debug.print;
 const Image = imagef.Image;
 const ImageError = imagef.ImageError;
 const InlinePixelReader = readerf.InlinePixelReader;
-const RLEReader = readerf.RLEReader;
+const BmpRLEReader = readerf.BmpRLEReader;
 const RLEAction = readerf.RLEAction;
 const ColorLayout = readerf.ColorLayout;
 const readColorTableImageRow = readerf.readColorTableImageRow;
@@ -573,7 +573,7 @@ fn readRunLengthEncodedImage(
         return ImageError.BmpInvalidCompression;
     }
 
-    var reader = try RLEReader(PixelType).new(image.width, image.height);
+    var reader = BmpRLEReader(PixelType).new(image.width, image.height);
 
     var i: usize = 0;
     const iter_max: usize = image.width * image.height;
