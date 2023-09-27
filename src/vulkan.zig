@@ -960,7 +960,8 @@ fn createTextureImage() !void {
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/32bpp-101110-320x240.bmp", ImageFormat.Infer, allocator);
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/565-321x240-topdown.bmp", ImageFormat.Infer, allocator, .{});
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/pal1.bmp", ImageFormat.Infer, allocator, .{});
-    var texture = try loadImage("d:/projects/zig/core/test/nocommit/mytgatestsuite/good/ucm8.tga", ImageFormat.Tga, allocator, .{});
+    // var texture = try loadImage("d:/projects/zig/core/test/nocommit/mytgatestsuite/good/ucm8.tga", ImageFormat.Tga, allocator, .{});
+    var texture = try loadImage("d:/projects/zig/core/test/nocommit/mytgatestsuite/good/xing_b24.tga", ImageFormat.Tga, allocator, .{});
     defer texture.clear();
 
     if (texture.height > 32_768 or texture.width > 32_768) {

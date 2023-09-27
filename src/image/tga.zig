@@ -7,11 +7,13 @@ const print = std.debug.print;
 const string = @import("../string.zig");
 const LocalBuffer = @import("../array.zig").LocalBuffer;
 const ARGB64 = imagef.ARGB64;
+const ImageAlpha = imagef.ImageAlpha;
 const graphics = @import("../graphics.zig");
 const RGBA32 = graphics.RGBA32;
 const readerf = @import("reader.zig");
 const BitmapColorMaskSet = readerf.InlinePixelReader;
 const TgaReadInfo = readerf.TgaReadInfo;
+const TgaRLEReader = readerf.TgaRLEReader;
 const readColorTableImageRow = readerf.readColorTableImageRow;
 const iVec2 = @import("../math.zig").iVec2;
 
@@ -188,8 +190,8 @@ pub fn typeSupported(image_type: TgaImageType) bool {
         .TrueColor => true,
         .Greyscale => true,
         .RleColorMap => true,
-        .RleTrueColor => false,
-        .RleGreyscale => false,
+        .RleTrueColor => true,
+        .RleGreyscale => true,
         .HuffmanDeltaRleColorMap => false,
         .HuffmanDeltaRleQuadtreeColorMap => false,
     };
@@ -307,10 +309,10 @@ fn readColorMapData(info: *TgaInfo, allocator: std.mem.Allocator, buffer: []cons
                 entry.a = 255;
             },
             32 => {
-                entry.a = buffer[offset] * alpha_present + (1 - alpha_present) * 255;
-                entry.b = buffer[offset+1];
-                entry.g = buffer[offset+2];
-                entry.r = buffer[offset+3];
+                entry.b = buffer[offset];
+                entry.g = buffer[offset+1];
+                entry.r = buffer[offset+2];
+                entry.a = buffer[offset+3];
             },
             else => unreachable,
         }
@@ -323,7 +325,11 @@ fn createImage(info: *const TgaInfo, image: *Image, allocator: std.mem.Allocator
     const image_spec = info.header.image_spec;
     const pixel_ct: usize = @intCast(u32, image_spec.image_width) * @intCast(u32, image_spec.image_height);
     const image_sz = pixel_ct * (image_spec.color_depth >> 3);
-    if (image_sz > buffer.len) {
+    const image_type: TgaImageType = info.header.info.image_type;
+    if (image_sz > buffer.len 
+        and image_type != .RleColorMap 
+        and image_type != .RleTrueColor 
+        and image_type != .RleGreyscale) {
         return ImageError.UnexpectedEndOfImageBuffer;
     }
 
@@ -350,6 +356,21 @@ fn createImage(info: *const TgaInfo, image: *Image, allocator: std.mem.Allocator
         .ColorMap => try switch(image_spec.color_depth) {
             8 => readColorMapImage(info, image, bufptr, u8),
             else => return ImageError.TgaColorTableImageNot8BitColorDepth,
+        },
+        .RleColorMap => try switch(image_spec.color_depth) {
+            8 => readRunLengthEncodedImage(info, image, bufptr, u8, true, false),
+            else => return ImageError.TgaColorTableImageNot8BitColorDepth,
+        },
+        .RleTrueColor => try switch(image_spec.color_depth) {
+            8 => readRunLengthEncodedImage(info, image, bufptr, u8, false, false),
+            15, 16 => readRunLengthEncodedImage(info, image, bufptr, u16, false, false),
+            24 => readRunLengthEncodedImage(info, image, bufptr, u24, false, false),
+            32 => readRunLengthEncodedImage(info, image, bufptr, u32, false, false),
+            else => return ImageError.TgaNonStandardColorDepthUnsupported,
+        },
+        .RleGreyscale => try switch(image_spec.color_depth) {
+            8 => readRunLengthEncodedImage(info, image, bufptr, u8, false, true),
+            else => return ImageError.TgaGreyscale8BitOnly,
         },
         else => unreachable,
     }
@@ -394,7 +415,6 @@ fn extentOverlap(extents: *const ExtentBuffer, begin: u32, end: u32) bool {
 fn readInlinePixelImage(
     info: *const TgaInfo, image: *Image, buffer: [*]const u8, comptime PixelType: type, comptime greyscale: bool
 ) !void {
-
     var read_info = try TgaReadInfo(PixelType).new(info, image);
 
     const alpha_mask = if (PixelType == u32) 0xff000000 else 0;
@@ -445,11 +465,29 @@ fn readColorMapImage(
 }
 
 fn readRunLengthEncodedImage(
-    info: *const TgaInfo, image: *Image, buffer: [*]const u8, comptime PixelType: type
+    info: *const TgaInfo, 
+    image: *Image, 
+    buffer: [*]const u8, 
+    comptime PixelType: type, 
+    comptime color_table_img: bool,
+    comptime greyscale: bool
 ) !void {
+    var reader = try TgaRLEReader(PixelType, color_table_img, greyscale).new(info, image);
 
+    var i: usize = 0;
+    const iter_max: usize = image.width * image.height;
+    const pixel_buf = buffer[0..@intCast(usize, reader.read_info.image_sz)];
+
+    while (i < iter_max) : (i += 1) {
+        const action = try reader.readAction(image, info, pixel_buf);
+        switch (action) {
+            .ReadPixels =>      try reader.readPixels(pixel_buf, info, image),
+            .RepeatPixels =>    try reader.repeatPixel(image),
+            .EndImage =>        break,
+            else =>             unreachable,
+        }
+    }
 }
-
 
 pub const TgaImageType = enum(u8) {
     NoData = 0,
@@ -520,9 +558,7 @@ const TgaColorMap = struct {
     table: ?[]RGBA32 = null,
 };
 
-const TgaAlpha = enum { None, Normal, Premultiplied };
-
-const TgaInfo = struct {
+pub const TgaInfo = struct {
     id: [256]u8 = std.mem.zeroes([256]u8),
     file_type: TgaFileType = .None,
     file_sz: u32 = 0,
@@ -533,7 +569,7 @@ const TgaInfo = struct {
     postage_stamp_table: ?[]u8 = null,
     color_correction_table: ?[]ARGB64 = null,
     color_map: TgaColorMap = TgaColorMap{},
-    alpha: TgaAlpha = TgaAlpha.None,
+    alpha: ImageAlpha = ImageAlpha.None,
 };
 
 const BlockExtent = struct {

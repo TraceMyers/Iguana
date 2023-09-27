@@ -15,6 +15,8 @@ pub const ImageError = error{
     FormatUnsupported,
     DimensionTooLarge,
     OverlappingData,
+    ColorTableImageEmptyTable,
+    InvalidColorTableIndex,
     BmpFlavorUnsupported,
     BmpInvalidBytesInFileHeader,
     BmpInvalidBytesInInfoHeader,
@@ -25,7 +27,6 @@ pub const ImageError = error{
     BmpInvalidColorDepth,
     BmpInvalidColorCount,
     BmpInvalidColorTable,
-    BmpInvalidColorTableIndex,
     BmpColorSpaceUnsupported,
     BmpCompressionUnsupported,
     Bmp24BitCustomMasksUnsupported,
@@ -42,6 +43,7 @@ pub const ImageError = error{
     TgaUnexpectedReadStartIndex,
     TgaUnsupportedImageOrigin,
     TgaColorTableImageNot8BitColorDepth,
+    TgaGreyscale8BitOnly,
 };
 
 const graphics = @import("../graphics.zig");
@@ -144,6 +146,8 @@ pub const png_identifier: []const u8 = "\x89PNG\x0d\x0a\x1a\x0a";
 pub const ImageFormat = enum { Infer, Bmp, Jpg, Png, Tga };
 
 pub const ImageType = enum { None, RGB, RGBA };
+
+pub const ImageAlpha = enum { None, Normal, Premultiplied };
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // --------------------------------------------------------------------------------------------------------------- types
@@ -300,8 +304,8 @@ test "load bitmap [image]" {
     // try std.testing.expect(passed_all);
 }
 
-// pub fn targaTest() !void {
-test "load targa [image]" {
+pub fn targaTest() !void {
+// test "load targa [image]" {
     try memory.autoStartup();
     defer memory.shutdown();
     const allocator = memory.GameAllocator.allocator();

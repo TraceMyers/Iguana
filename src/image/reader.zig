@@ -2,8 +2,10 @@ const std = @import("std");
 const BitmapInfo = @import("bmp.zig").BitmapInfo;
 const BitmapColorTable = @import("bmp.zig").BitmapColorTable;
 const RGBA32 = @import("../graphics.zig").RGBA32;
-const Image = @import("image.zig").Image;
-const ImageError = @import("image.zig").ImageError;
+const imagef = @import("image.zig");
+const Image = imagef.Image;
+const ImageError = imagef.ImageError;
+const ImageAlpha = imagef.ImageAlpha;
 const tga = @import("tga.zig");
 const TgaImageSpec = tga.TgaImageSpec;
 const TgaInfo = tga.TgaInfo;
@@ -204,27 +206,33 @@ pub fn InlinePixelReader(comptime IntType: type, comptime layout: ColorLayout) t
     };
 }
 
-pub fn TgaRLEReader(comptime IntType: type) type {
+pub fn TgaRLEReader(comptime IntType: type, comptime color_table_img: bool, comptime greyscale: bool) type {
     return struct {
         const RLEReaderType = @This();
+        const ReadInfoType = TgaReadInfo(IntType);
 
         read_info: TgaReadInfo(IntType) = undefined,
         byte_pos: u32 = 0,
         action_ct: u32 = 0,
-        repeat_pixel: IntType = 0,
+        cur_color: RGBA32 = RGBA32{},
+        alpha_present: u8 = 0,
 
-        pub fn new(info: *const TgaInfo, image: *const Image) RLEReaderType {
+        pub fn new(info: *const TgaInfo, image: *const Image) !RLEReaderType {
+            if (color_table_img and info.color_map.table == null) {
+                return ImageError.ColorTableImageEmptyTable;
+            }
+            if (greyscale and IntType != u8) {
+                return ImageError.TgaGreyscale8BitOnly;
+            }
             return RLEReaderType {
-                .read_info = TgaReadInfo(IntType).new(info, image),
+                .read_info = try TgaReadInfo(IntType).new(info, image),
+                .alpha_present = @intCast(u8, @boolToInt(info.alpha != ImageAlpha.None)),
             };
         }
 
-        pub fn imageIndex(self: *const RLEReaderType, image: *const Image) i32 {
-            return self.read_info.coords.y() * @intCast(i32, image.width) + self.read_info.coords.x();
-        }
-
-        pub fn readAction(self: *RLEReaderType, buffer: []const u8) !RLEAction {
-            if (self.byte_pos >= buffer.len) {
+        pub fn readAction(self: *RLEReaderType, image: *const Image, info: *const TgaInfo, buffer: []const u8) !RLEAction {
+            const image_index = self.imageIndex(image);
+            if (self.byte_pos >= buffer.len or image_index <= 0 or image_index >= image.pixels.?.len) {
                 return RLEAction.EndImage;
             }
 
@@ -234,18 +242,116 @@ pub fn TgaRLEReader(comptime IntType: type) type {
             const action_bit = action_byte & 0x80;
 
             if (action_bit > 0) {
-                const new_byte_pos = self.byte_pos + self.read_info.pixelSz();
-                if (new_byte_pos >= buffer.len) {
-                    return ImageError.UnexpectedEndOfImageBuffer;
+                if (color_table_img) {
+                    try self.readNextColorTableColor(info, buffer);
+                } else {
+                    try self.readNextInlineColor(buffer);
                 }
-                self.repeat_pixel = std.mem.readIntSliceLIttle(IntType, buffer[self.byte_pos..new_byte_pos]);
-                self.byte_pos = new_byte_pos;
                 return RLEAction.RepeatPixels;
             }
             else {
                 return RLEAction.ReadPixels;
             }
         }
+
+        pub fn repeatPixel(self: *RLEReaderType, image: *Image) !void {
+            for (0..@intCast(usize, self.action_ct)) |i| {
+                _ = i;
+                const image_idx: usize = try self.imageIndexChecked(image);
+                image.pixels.?[image_idx] = self.cur_color;
+                self.pixelStep(image);
+            }
+        }
+
+        pub fn readPixels(self: *RLEReaderType, buffer: []const u8, info: *const TgaInfo, image: *Image) !void {
+            for (0..@intCast(usize, self.action_ct)) |i| {
+                _ = i;
+                const image_idx: usize = try self.imageIndexChecked(image);
+                if (color_table_img) {
+                    try self.readNextColorTableColor(info, buffer);
+                } else {
+                    try self.readNextInlineColor(buffer);
+                }
+                image.pixels.?[image_idx] = self.cur_color;
+                self.pixelStep(image);
+            }
+        }
+
+        inline fn imageIndex(self: *const RLEReaderType, image: *const Image) i32 {
+            return self.read_info.coords.y() * @intCast(i32, image.width) + self.read_info.coords.x();
+        }
+
+        fn imageIndexChecked(self: *const RLEReaderType, image: *const Image) !usize {
+            const image_idx_signed: i32 = self.imageIndex(image);
+            if (image_idx_signed < 0) {
+                return ImageError.UnexpectedEndOfImageBuffer;
+            }
+            const image_idx = @intCast(usize, image_idx_signed);
+            if (image_idx >= self.read_info.pixel_ct) {
+                return ImageError.UnexpectedEndOfImageBuffer;
+            }
+            return image_idx;
+        }
+
+        inline fn pixelStep(self: *RLEReaderType, image: *const Image) void {
+            self.read_info.coords.xAdd(1);
+            if (self.read_info.coords.x() >= image.width) {
+                self.read_info.coords.setX(0);
+                self.read_info.coords.setY(self.read_info.coords.y() + self.read_info.write_dir);
+            }
+        }
+
+        fn readNextInlineColor(self: *RLEReaderType, buffer: []const u8) !void {
+            const new_byte_pos = self.byte_pos + ReadInfoType.pixelSz();
+            if (new_byte_pos > buffer.len) {
+                return ImageError.UnexpectedEndOfImageBuffer;
+            }
+            switch (IntType) {
+                u8 => {
+                    const grey_color = buffer[self.byte_pos];
+                    self.cur_color.r = grey_color;
+                    self.cur_color.g = grey_color;
+                    self.cur_color.b = grey_color;
+                    self.cur_color.a = 255;
+                },
+                u16 => {
+                    const pixel = std.mem.readIntSliceLittle(IntType, buffer[self.byte_pos..new_byte_pos]);
+                    self.cur_color.r = @intCast(u8, (pixel & 0x7c00) >> 7);
+                    self.cur_color.g = @intCast(u8, (pixel & 0x03e0) >> 2);
+                    self.cur_color.b = @intCast(u8, (pixel & 0x001f) << 3);
+                    self.cur_color.a = 255;
+                },
+                u24 => {
+                    self.cur_color.b = buffer[self.byte_pos];
+                    self.cur_color.g = buffer[self.byte_pos+1];
+                    self.cur_color.r = buffer[self.byte_pos+2];
+                    self.cur_color.a = 255;
+                },
+                u32 => {
+                    self.cur_color.b = buffer[self.byte_pos];
+                    self.cur_color.g = buffer[self.byte_pos+1];
+                    self.cur_color.r = buffer[self.byte_pos+2];
+                    self.cur_color.a = buffer[self.byte_pos+3];
+                },
+                else => unreachable,
+            }
+            self.byte_pos = new_byte_pos;
+        }
+
+        fn readNextColorTableColor(self: *RLEReaderType, info: *const TgaInfo, buffer: []const u8) !void {
+            const new_byte_pos = self.byte_pos + ReadInfoType.pixelSz();
+            if (new_byte_pos > buffer.len) {
+                return ImageError.UnexpectedEndOfImageBuffer;
+            }
+            const color_table = info.color_map.table.?;
+            const pixel = std.mem.readIntSliceLittle(IntType, buffer[self.byte_pos..new_byte_pos]);
+            if (pixel >= color_table.len) {
+                return ImageError.InvalidColorTableIndex;
+            }
+            self.cur_color = info.color_map.table.?[pixel];
+            self.byte_pos = new_byte_pos;
+        }
+
     };
 }
 
@@ -319,7 +425,7 @@ pub fn BmpRLEReader(comptime IntType: type) type {
                 u4 => {
                     const color_indices: [2]u8 = .{ (self.action_bytes[1] & 0xf0) >> 4, self.action_bytes[1] & 0x0f };
                     if (color_indices[0] >= color_table.length or color_indices[1] >= color_table.length) {
-                        return ImageError.BmpInvalidColorTableIndex;
+                        return ImageError.InvalidColorTableIndex;
                     }
 
                     var color_idx: u8 = 0;
@@ -332,7 +438,7 @@ pub fn BmpRLEReader(comptime IntType: type) type {
                 u8 => {
                     const color_idx = self.action_bytes[1];
                     if (color_idx >= color_table.length) {
-                        return ImageError.BmpInvalidColorTableIndex;
+                        return ImageError.InvalidColorTableIndex;
                     }
 
                     const color = color_table.buffer[color_idx];
@@ -380,7 +486,7 @@ pub fn BmpRLEReader(comptime IntType: type) type {
                     while (img_idx < img_idx_end) : (img_idx += 1) {
                         const color_idx = (buffer[byte_idx] & masks[high_low]) >> shifts[high_low];
                         if (color_idx >= color_table.length) {
-                            return ImageError.BmpInvalidColorTableIndex;
+                            return ImageError.InvalidColorTableIndex;
                         }
                         image.pixels.?[img_idx] = color_table.buffer[color_idx];
                         byte_idx += high_low;
@@ -391,7 +497,7 @@ pub fn BmpRLEReader(comptime IntType: type) type {
                     while (img_idx < img_idx_end) : (img_idx += 1) {
                         const color_idx: IntType = buffer[byte_idx];
                         if (color_idx >= color_table.length) {
-                            return ImageError.BmpInvalidColorTableIndex;
+                            return ImageError.InvalidColorTableIndex;
                         }
                         image.pixels.?[img_idx] = color_table.buffer[color_idx];
                         byte_idx += 1;
@@ -458,7 +564,7 @@ pub fn readColorTableImageRow(
             const mask = @as(u8, base_mask) >> mask_shift;
             const col_idx: u8 = (idx_byte & mask) >> result_shift;
             if (col_idx >= colors.len) {
-                return ImageError.BmpInvalidColorTableIndex;
+                return ImageError.InvalidColorTableIndex;
             }
             image_row[img_idx + j] = colors[col_idx];
         }
@@ -513,6 +619,7 @@ pub fn TgaReadInfo (comptime PixelType: type) type {
         coords: iVec2(i32) = undefined,
         write_start: i32 = undefined,
         write_row_step: i32 = undefined,
+        write_dir: i32 = 1,
 
         pub fn new(info: *const TgaInfo, image: *const Image) !TRIType {
             var read_info = TRIType{};
@@ -534,11 +641,16 @@ pub fn TgaReadInfo (comptime PixelType: type) type {
                 // image rows stored bottom-to-top
                 read_info.write_start = @intCast(i32, read_info.pixel_ct - image.width);
                 read_info.write_row_step = -@intCast(i32, image.width);
+                // if coordinates are used, they will be used for writing in the opposite direction
+                read_info.coords.setY(@intCast(i32, image.height) - 1);
+                read_info.write_dir = -1;
             }
             else {
                 // image rows stored top-to-bottom
                 read_info.write_start = 0;
                 read_info.write_row_step = @intCast(i32, image.width);
+                // if coordinates are used, they will be used for writing in the opposite direction
+                read_info.coords.setY(0);
             }
 
             return read_info;
