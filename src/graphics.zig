@@ -35,11 +35,17 @@ pub const Vertex = struct {
     }
 };
 
-pub const RGBA32 = extern struct {
-    r: u8 = 0,
-    g: u8 = 0,
-    b: u8 = 0,
-    a: u8 = 0,
+// --- Image pixel types ---
+
+pub const PixelTag = enum { RGB24, RGBA32, R8, R16, R32, RA16, RA32 };
+pub const PixelSlice = union(PixelTag) {
+    RGB24: ?[]RGB24,
+    RGBA32: ?[]RGBA32,
+    R8: ?[]R8,
+    R16: ?[]R16,
+    R32: ?[]R32,
+    RA16: ?[]RA16,
+    RA32: ?[]RA32,
 };
 
 pub const RGB24 = extern struct {
@@ -47,6 +53,37 @@ pub const RGB24 = extern struct {
     g: u8 = 0,
     b: u8 = 0,
 };
+
+pub const RGBA32 = extern struct {
+    r: u8 = 0,
+    g: u8 = 0,
+    b: u8 = 0,
+    a: u8 = 0,
+};
+
+pub const R8 = extern struct {
+    r: u8 = 0,
+};
+
+pub const R16 = extern struct {
+    r: u16 = 0,
+};
+
+pub const R32 = extern struct {
+    r: u32 = 0,
+};
+
+pub const RA16 = extern struct {
+    r: u8 = 0,
+    a: u8 = 0,
+};
+
+pub const RA32 = extern struct {
+    r: u16 = 0,
+    a: u16 = 0,
+};
+
+// ------------------------
 
 pub const RGB32 = extern struct {
     r: u8 = 0,

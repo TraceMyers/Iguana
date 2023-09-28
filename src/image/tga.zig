@@ -336,7 +336,7 @@ fn createImage(info: *const TgaInfo, image: *Image, allocator: std.mem.Allocator
     image.width = image_spec.image_width;
     image.height = image_spec.image_height;
     image.allocator = allocator;
-    image.pixels = try allocator.alloc(RGBA32, pixel_ct);
+    image.pixels.RGBA32 = try allocator.alloc(RGBA32, pixel_ct);
 
     const bufptr = @ptrCast([*]const u8, &buffer[0]);
 
@@ -425,12 +425,12 @@ fn readInlinePixelImage(
         const read_end: i32 = read_info.read_start + read_info.read_row_step;
         const write_end: i32 = read_info.write_start + @intCast(i32, image.width);
 
-        if (write_end < 0 or write_end > image.pixels.?.len or read_end < 0 or read_end > read_info.image_sz) {
+        if (write_end < 0 or write_end > image.pixels.RGBA32.?.len or read_end < 0 or read_end > read_info.image_sz) {
             return ImageError.UnexpectedEndOfImageBuffer;
         }
 
         var buffer_row = buffer[@intCast(usize, read_info.read_start)..@intCast(usize, read_end)];
-        var image_row = image.pixels.?[@intCast(usize, read_info.write_start)..@intCast(usize, write_end)];
+        var image_row = image.pixels.RGBA32.?[@intCast(usize, read_info.write_start)..@intCast(usize, write_end)];
 
         mask_set.extractRow(image_row, buffer_row, using_alpha, greyscale);
 
@@ -448,12 +448,12 @@ fn readColorMapImage(
         const read_end: i32 = read_info.read_start + read_info.read_row_step;
         const write_end: i32 = read_info.write_start + @intCast(i32, image.width);
 
-        if (write_end < 0 or write_end > image.pixels.?.len or read_end < 0 or read_end > read_info.image_sz) {
+        if (write_end < 0 or write_end > image.pixels.RGBA32.?.len or read_end < 0 or read_end > read_info.image_sz) {
             return ImageError.UnexpectedEndOfImageBuffer;
         }
 
         var buffer_row = buffer[@intCast(usize, read_info.read_start)..@intCast(usize, read_end)];
-        var image_row = image.pixels.?[@intCast(usize, read_info.write_start)..@intCast(usize, write_end)];
+        var image_row = image.pixels.RGBA32.?[@intCast(usize, read_info.write_start)..@intCast(usize, write_end)];
 
         try readColorTableImageRow(
             buffer_row, image_row, info.color_map.table.?, @intCast(u32, read_info.read_row_step), 0xff, PixelType

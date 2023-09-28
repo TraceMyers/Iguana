@@ -57,6 +57,7 @@ const tga = @import("tga.zig");
 
 const print = std.debug.print;
 const LocalStringBuffer = string.LocalStringBuffer;
+const PixelSlice = graphics.PixelSlice;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------- functions
@@ -163,17 +164,42 @@ pub const ARGB64 = extern struct {
 pub const Image = struct {
     width: u32 = 0,
     height: u32 = 0,
-    pixels: ?[]graphics.RGBA32 = null,
+    pixels: PixelSlice = PixelSlice{.RGB24 = null},
     allocator: ?std.mem.Allocator = null,
     premultiplied_alpha: bool = false,
 
+    pub fn isEmpty(self: *const Image) bool {
+        return switch(self.pixels) {
+            .RGB24 => |slice| slice == null,
+            .RGBA32 => |slice| slice == null,
+            .R8 => |slice| slice == null,
+            .R16 => |slice| slice == null,
+            .R32 => |slice| slice == null,
+            .RA16 => |slice| slice == null,
+            .RA32 => |slice| slice == null,
+        };
+    }
+
     pub fn clear(self: *Image) void {
-        if (self.pixels != null) {
+        switch(self.pixels) {
+            .RGB24 => self.clearPixels(self.pixels.RGB24),
+            .RGBA32 => self.clearPixels(self.pixels.RGBA32),
+            .R8 => self.clearPixels(self.pixels.R8),
+            .R16 => self.clearPixels(self.pixels.R16),
+            .R32 => self.clearPixels(self.pixels.R32),
+            .RA16 => self.clearPixels(self.pixels.RA16),
+            .RA32 => self.clearPixels(self.pixels.RA32),
+        }
+    }
+
+    inline fn clearPixels(self: *Image, slice: anytype) void {
+        if (slice != null) {
             std.debug.assert(self.allocator != null);
-            self.allocator.?.free(self.pixels.?);
+            self.allocator.?.free(slice.?);
         }
         self.* = Image{};
     }
+
 };
 
 pub const ImageLoadBuffer = struct {
@@ -267,7 +293,7 @@ test "load bitmap [image]" {
                 break :blk Image{};
             };
 
-            if (image.pixels != null) {
+            if (!image.isEmpty()) {
                 if (i < 2) {
                     valid_supported += 1;
                 }
@@ -306,41 +332,41 @@ test "load bitmap [image]" {
 
 pub fn targaTest() !void {
 // test "load targa [image]" {
-    try memory.autoStartup();
-    defer memory.shutdown();
-    const allocator = memory.GameAllocator.allocator();
+    // try memory.autoStartup();
+    // defer memory.shutdown();
+    // const allocator = memory.GameAllocator.allocator();
 
-    print("\n", .{});
+    // print("\n", .{});
 
-    var path_buf = LocalStringBuffer(128).new();
-    try path_buf.append("d:/projects/zig/core/test/nocommit/mytgatestsuite/good/");
-    path_buf.setAnchor();
+    // var path_buf = LocalStringBuffer(128).new();
+    // try path_buf.append("d:/projects/zig/core/test/nocommit/mytgatestsuite/good/");
+    // path_buf.setAnchor();
 
-    var filename_lower = LocalStringBuffer(64).new();
+    // var filename_lower = LocalStringBuffer(64).new();
 
-    var test_dir = try std.fs.openIterableDirAbsolute(path_buf.string(), .{});
-    var dir_it = test_dir.iterate();
+    // var test_dir = try std.fs.openIterableDirAbsolute(path_buf.string(), .{});
+    // var dir_it = test_dir.iterate();
 
-    while(try dir_it.next()) |entry| {
-        try filename_lower.replaceLower(entry.name);
-        try path_buf.append(filename_lower.string());
-        defer path_buf.revertToAnchor();
+    // while (try dir_it.next()) |entry| {
+    //     try filename_lower.replaceLower(entry.name);
+    //     try path_buf.append(filename_lower.string());
+    //     defer path_buf.revertToAnchor();
 
-        var t = bench.ScopeTimer.start("loadTga", bench.getScopeTimerID());
-        defer t.stop();
+    //     var t = bench.ScopeTimer.start("loadTga", bench.getScopeTimerID());
+    //     defer t.stop();
 
-        var image = loadImage(path_buf.string(), ImageFormat.Infer, allocator, .{}) 
-            catch |e| blk: {
-                print("error {any} loading tga file {s}\n", .{e, filename_lower.string()});
-                break :blk Image{};
-            };
+    //     var image = loadImage(path_buf.string(), ImageFormat.Infer, allocator, .{}) 
+    //         catch |e| blk: {
+    //             print("error {any} loading tga file {s}\n", .{e, filename_lower.string()});
+    //             break :blk Image{};
+    //         };
 
-        if (image.pixels != null) {
-            print("loaded tga file {s} successfully\n", .{filename_lower.string()});
-        }
+    //     if (image.pixels != null) {
+    //         print("loaded tga file {s} successfully\n", .{filename_lower.string()});
+    //     }
 
-        image.clear();
-    }
+    //     image.clear();
+    // }
 
-    bench.printAllScopeTimers();
+    // bench.printAllScopeTimers();
 }

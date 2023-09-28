@@ -449,7 +449,7 @@ fn createImage(
     }
 
     image.allocator = allocator;
-    image.pixels = try image.allocator.?.alloc(graphics.RGBA32, image.width * image.height);
+    image.pixels = graphics.PixelSlice{.RGBA32 = try image.allocator.?.alloc(graphics.RGBA32, image.width * image.height)};
 
     // get row length in bytes as a multiple of 4 (rows are padded to 4 byte increments)
     const row_length = ((image.width * info.color_depth + 31) & ~@as(u32, 31)) >> 3;
@@ -502,7 +502,7 @@ fn readColorTableImage(
         const row_end = row_start + image.width;
 
         var index_row: []const u8 = pixel_buf[px_row_start .. px_row_start + row_sz];
-        var image_row: []RGBA32 = image.pixels.?[row_start..row_end];
+        var image_row: []RGBA32 = image.pixels.RGBA32.?[row_start..row_end];
 
         // over each pixel (index to the color table) in the buffer row...
         switch (PixelType) {
@@ -547,7 +547,7 @@ fn readInlinePixelImage(
         const img_start = @intCast(usize, direction_info.begin + direction_info.increment * @intCast(i32, i));
         const img_end = img_start + image.width;
 
-        var image_row = image.pixels.?[img_start..img_end];
+        var image_row = image.pixels.RGBA32.?[img_start..img_end];
         var file_buffer_row = pixel_buf[px_start .. px_start + row_sz];
 
         // apply custom or standard rgb/rgba masks to each u16, u24 or u32 pixel in the row, store in RGBA32 image

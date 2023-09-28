@@ -232,7 +232,7 @@ pub fn TgaRLEReader(comptime IntType: type, comptime color_table_img: bool, comp
 
         pub fn readAction(self: *RLEReaderType, image: *const Image, info: *const TgaInfo, buffer: []const u8) !RLEAction {
             const image_index = self.imageIndex(image);
-            if (self.byte_pos >= buffer.len or image_index <= 0 or image_index >= image.pixels.?.len) {
+            if (self.byte_pos >= buffer.len or image_index <= 0 or image_index >= image.pixels.RGBA32.?.len) {
                 return RLEAction.EndImage;
             }
 
@@ -258,7 +258,7 @@ pub fn TgaRLEReader(comptime IntType: type, comptime color_table_img: bool, comp
             for (0..@intCast(usize, self.action_ct)) |i| {
                 _ = i;
                 const image_idx: usize = try self.imageIndexChecked(image);
-                image.pixels.?[image_idx] = self.cur_color;
+                image.pixels.RGBA32.?[image_idx] = self.cur_color;
                 self.pixelStep(image);
             }
         }
@@ -272,7 +272,7 @@ pub fn TgaRLEReader(comptime IntType: type, comptime color_table_img: bool, comp
                 } else {
                     try self.readNextInlineColor(buffer);
                 }
-                image.pixels.?[image_idx] = self.cur_color;
+                image.pixels.RGBA32.?[image_idx] = self.cur_color;
                 self.pixelStep(image);
             }
         }
@@ -416,7 +416,7 @@ pub fn BmpRLEReader(comptime IntType: type) type {
             const col_end = self.img_col + repeat_ct;
             const img_idx_end = self.img_row * self.img_width + col_end;
 
-            if (img_idx_end > image.pixels.?.len) {
+            if (img_idx_end > image.pixels.RGBA32.?.len) {
                 return ImageError.BmpInvalidRLEData;
             }
             var img_idx = self.imageIndex();
@@ -431,7 +431,7 @@ pub fn BmpRLEReader(comptime IntType: type) type {
                     var color_idx: u8 = 0;
                     const colors: [2]RGBA32 = .{ color_table.buffer[color_indices[0]], color_table.buffer[color_indices[1]] };
                     while (img_idx < img_idx_end) : (img_idx += 1) {
-                        image.pixels.?[img_idx] = colors[color_idx];
+                        image.pixels.RGBA32.?[img_idx] = colors[color_idx];
                         color_idx = 1 - color_idx;
                     }
                 },
@@ -443,7 +443,7 @@ pub fn BmpRLEReader(comptime IntType: type) type {
 
                     const color = color_table.buffer[color_idx];
                     while (img_idx < img_idx_end) : (img_idx += 1) {
-                        image.pixels.?[img_idx] = color;
+                        image.pixels.RGBA32.?[img_idx] = color;
                     }
                 },
                 else => unreachable,
@@ -461,7 +461,7 @@ pub fn BmpRLEReader(comptime IntType: type) type {
             const col_end = self.img_col + read_ct;
             const img_idx_end = self.img_row * self.img_width + col_end;
 
-            if (img_idx_end > image.pixels.?.len) {
+            if (img_idx_end > image.pixels.RGBA32.?.len) {
                 return ImageError.BmpInvalidRLEData;
             }
 
@@ -488,7 +488,7 @@ pub fn BmpRLEReader(comptime IntType: type) type {
                         if (color_idx >= color_table.length) {
                             return ImageError.InvalidColorTableIndex;
                         }
-                        image.pixels.?[img_idx] = color_table.buffer[color_idx];
+                        image.pixels.RGBA32.?[img_idx] = color_table.buffer[color_idx];
                         byte_idx += high_low;
                         high_low = 1 - high_low;
                     }
@@ -499,7 +499,7 @@ pub fn BmpRLEReader(comptime IntType: type) type {
                         if (color_idx >= color_table.length) {
                             return ImageError.InvalidColorTableIndex;
                         }
-                        image.pixels.?[img_idx] = color_table.buffer[color_idx];
+                        image.pixels.RGBA32.?[img_idx] = color_table.buffer[color_idx];
                         byte_idx += 1;
                     }
                 },
