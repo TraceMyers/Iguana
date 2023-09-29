@@ -981,7 +981,7 @@ fn createTextureImage() !void {
 
     var image_data: ?[*]RGBA32 = null;
     _ = c.vkMapMemory(vk_logical, staging_buffer_memory, 0, image_sz, 0, @ptrCast([*c]?*anyopaque, &image_data));
-    @memcpy(image_data.?[0..texture.pixels.?.len], texture.pixels.?[0..texture.pixels.?.len]);
+    @memcpy(image_data.?[0..texture.getBytes().len], texture.getBytes());
     c.vkUnmapMemory(vk_logical, staging_buffer_memory);
 
     try createImage(texture.width, texture.height, c.VK_FORMAT_R8G8B8A8_SRGB, c.VK_IMAGE_TILING_OPTIMAL, c.VK_IMAGE_USAGE_TRANSFER_DST_BIT | c.VK_IMAGE_USAGE_SAMPLED_BIT, c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &texture_image_host, &texture_image_host_memory);

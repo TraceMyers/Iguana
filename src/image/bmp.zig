@@ -1,4 +1,3 @@
-const graphics = @import("../graphics.zig");
 const std = @import("std");
 const string = @import("../string.zig");
 const memory = @import("../memory.zig");
@@ -9,8 +8,6 @@ const math = @import("../math.zig");
 const readerf = @import("reader.zig");
 
 const LocalStringBuffer = string.LocalStringBuffer;
-const RGBA32 = graphics.RGBA32;
-const RGB24 = graphics.RGB24;
 const print = std.debug.print;
 const Image = imagef.Image;
 const ImageError = imagef.ImageError;
@@ -150,7 +147,7 @@ fn redirectToPng(
 
 fn loadRemainder(file: *std.fs.File, buffer: []u8, info: *BitmapInfo) !void {
     const cur_offset = bmp_file_header_sz + bmp_info_header_sz_core;
-    if (info.data_offset > bmp_file_header_sz + bmp_info_header_sz_v5 + @sizeOf(RGBA32) * 256 + 4 
+    if (info.data_offset > bmp_file_header_sz + bmp_info_header_sz_v5 + @sizeOf(imagef.RGBA32) * 256 + 4 
         or info.data_offset <= cur_offset
     ) {
         return ImageError.BmpInvalidBytesInInfoHeader;
@@ -215,8 +212,8 @@ fn readCoreInfo(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable)
     info.data_size = @intCast(u32, data_size_signed);
     info.compression = BitmapCompression.RGB;
     const table_offset = bmp_file_header_sz + bmp_info_header_sz_core;
-    try readColorTable(buffer[table_offset..], info, color_table, graphics.RGB24);
-    return table_offset + color_table.length * @sizeOf(graphics.RGB24);
+    try readColorTable(buffer[table_offset..], info, color_table, imagef.RGB24);
+    return table_offset + color_table.length * @sizeOf(imagef.RGB24);
 }
 
 fn readV1Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !usize {
@@ -231,8 +228,8 @@ fn readV1Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !
         mask_offset = 16;
     }
     const table_offset = bmp_file_header_sz + bmp_info_header_sz_v1 + mask_offset;
-    try readColorTable(buffer[table_offset..], info, color_table, graphics.RGB32);
-    return table_offset + color_table.length * @sizeOf(graphics.RGB32);
+    try readColorTable(buffer[table_offset..], info, color_table, imagef.RGB32);
+    return table_offset + color_table.length * @sizeOf(imagef.RGB32);
 }
 
 fn readV4Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !usize {
@@ -240,8 +237,8 @@ fn readV4Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !
     try readV1HeaderPart(buffer, info);
     try readV4HeaderPart(buffer, info);
     const table_offset = bmp_file_header_sz + bmp_info_header_sz_v4;
-    try readColorTable(buffer[table_offset..], info, color_table, graphics.RGB32);
-    return table_offset + color_table.length * @sizeOf(graphics.RGB32);
+    try readColorTable(buffer[table_offset..], info, color_table, imagef.RGB32);
+    return table_offset + color_table.length * @sizeOf(imagef.RGB32);
 }
 
 fn readV5Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !usize {
@@ -250,8 +247,8 @@ fn readV5Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !
     try readV4HeaderPart(buffer, info);
     readV5HeaderPart(buffer, info);
     const table_offset = bmp_file_header_sz + bmp_info_header_sz_v5;
-    try readColorTable(buffer[table_offset..], info, color_table, graphics.RGB32);
-    return table_offset + color_table.length * @sizeOf(graphics.RGB32);
+    try readColorTable(buffer[table_offset..], info, color_table, imagef.RGB32);
+    return table_offset + color_table.length * @sizeOf(imagef.RGB32);
 }
 
 fn readV1HeaderPart(buffer: []u8, info: *BitmapInfo) !void {
@@ -312,18 +309,19 @@ fn readColorTable(
     comptime ColorType: type
 ) !void {
     var data_casted = @ptrCast([*]const ColorType, @alignCast(@alignOf(ColorType), &buffer[0]));
+    var ct_len: usize = 0;
 
     switch (info.color_depth) {
         32, 24, 16 => {
-            color_table.length = 0;
+            ct_len = 0;
             return;
         },
         8, 4, 1 => {
             const max_color_ct = @as(u32, 1) << @intCast(u5, info.color_depth);
             if (info.color_ct == 0) {
-                color_table.length = max_color_ct;
+                ct_len = max_color_ct;
             } else if (info.color_ct >= 2 and info.color_ct <= max_color_ct) {
-                color_table.length = info.color_ct;
+                ct_len = info.color_ct;
             } else {
                 return ImageError.BmpInvalidColorCount;
             }
@@ -331,17 +329,37 @@ fn readColorTable(
         else => return ImageError.BmpInvalidColorDepth,
     }
 
-    if (buffer.len <= color_table.length * @sizeOf(ColorType)) {
+    if (buffer.len <= ct_len * @sizeOf(ColorType)) {
         return ImageError.UnexpectedEOF;
-    }
-    else for (0..color_table.length) |i| {
-        const table_color: *RGBA32 = &color_table.buffer[i];
-        const buffer_color: *const ColorType = &data_casted[i];
-        // bgr to rgb
-        table_color.a = 255;
-        table_color.b = buffer_color.r;
-        table_color.g = buffer_color.g;
-        table_color.r = buffer_color.b;
+    } else {
+        var is_greyscale: bool = true;
+        for (0..ct_len) |i| {
+            const buffer_color: *const ColorType = &data_casted[i];
+            if (buffer_color.r == buffer_color.g and buffer_color.g == buffer_color.b) {
+                continue;
+            }
+            is_greyscale = false;
+            break;
+        }
+        if (is_greyscale) {
+            color_table.image.attachToBuffer(color_table.buffer[0..1024], imagef.PixelTag.R8, ct_len);
+            var ct_buffer = color_table.image.getPixels(imagef.PixelTag.R8);
+            for (0..ct_len) |i| {
+                const buffer_color: *const ColorType = &data_casted[i];
+                const table_color: *imagef.R8 = ct_buffer[i];
+                table_color.r = buffer_color.r;
+            }
+        } else {
+            color_table.image.attachToBuffer(color_table.buffer[0..1024], imagef.PixelTag.RGB24, ct_len);
+            var ct_buffer = color_table.image.getPixels(imagef.PixelTag.RGB24);
+            for (0..ct_len) |i| {
+                const buffer_color: *const ColorType = &data_casted[i];
+                const table_color: *imagef.RGB24 = ct_buffer[i];
+                table_color.r = buffer_color.r;
+                table_color.g = buffer_color.g;
+                table_color.b = buffer_color.b;
+            }
+        }
     }
 }
 
@@ -427,13 +445,13 @@ fn createImage(
     buffer: []const u8, 
     image: *Image, 
     info: *BitmapInfo, 
-    color_table: *const BitmapColorTable, 
+    color_table: *const Image, 
     allocator: std.mem.Allocator
 ) !void {
     image.width = @intCast(u32, try std.math.absInt(info.width));
     image.height = @intCast(u32, try std.math.absInt(info.height));
 
-    const img_sz = @intCast(usize, image.width) * @intCast(usize, image.height) * @sizeOf(RGBA32);
+    const img_sz = @intCast(usize, image.width) * @intCast(usize, image.height) * @sizeOf(imagef.RGBA32);
     if (img_sz > memory.MAX_SZ) {
         return ImageError.TooLarge;
     }
@@ -449,7 +467,7 @@ fn createImage(
     }
 
     image.allocator = allocator;
-    image.pixels = graphics.PixelSlice{.RGBA32 = try image.allocator.?.alloc(graphics.RGBA32, image.width * image.height)};
+    image.pixels = imagef.PixelSlice{.RGBA32 = try image.allocator.?.alloc(imagef.RGBA32, image.width * image.height)};
 
     // get row length in bytes as a multiple of 4 (rows are padded to 4 byte increments)
     const row_length = ((image.width * info.color_depth + 31) & ~@as(u32, 31)) >> 3;
@@ -481,7 +499,7 @@ fn readColorTableImage(
     comptime PixelType: type, 
     pixel_buf: []const u8, 
     info: *const BitmapInfo, 
-    color_table: *const BitmapColorTable, 
+    color_table: *const Image, 
     image: *Image, 
     row_sz: usize
 ) !void {
@@ -494,7 +512,7 @@ fn readColorTableImage(
 
     const direction_info = BitmapDirectionInfo.new(info, image.width, image.height);
     const row_byte_ct = bytesPerRow(PixelType, image.width);
-    const colors: []const RGBA32 = color_table.slice();
+    const colors: []const imagef.RGBA32 = color_table.slice();
 
     var px_row_start: usize = 0;
     for (0..image.height) |i| {
@@ -502,7 +520,7 @@ fn readColorTableImage(
         const row_end = row_start + image.width;
 
         var index_row: []const u8 = pixel_buf[px_row_start .. px_row_start + row_sz];
-        var image_row: []RGBA32 = image.pixels.RGBA32.?[row_start..row_end];
+        var image_row: []imagef.RGBA32 = image.pixels.RGBA32.?[row_start..row_end];
 
         // over each pixel (index to the color table) in the buffer row...
         switch (PixelType) {
@@ -563,7 +581,7 @@ fn readRunLengthEncodedImage(
     comptime PixelType: type,
     pbuf: [*]const u8,
     info: *const BitmapInfo,
-    color_table: *const BitmapColorTable,
+    color_table: *const Image,
     image: *Image,
 ) !void {
     if (color_table.length < 2) {
@@ -612,8 +630,6 @@ const rle_bit_sizes: [3]u32 = .{ 0, 8, 4 };
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // --------------------------------------------------------------------------------------------------------------- enums
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-const BitmapColorTableType = enum { None, RGB24, RGB32 };
 
 const BitmapHeaderType = enum(u32) { None, Core, V1, V4, V5 };
 
@@ -671,15 +687,6 @@ pub const BitmapInfo = struct {
     blue_gamma: u32 = undefined,
 };
 
-pub const BitmapColorTable = struct {
-    buffer: [256]graphics.RGBA32 = undefined,
-    length: usize = 0,
-
-    pub inline fn slice(self: *const BitmapColorTable) []const graphics.RGBA32 {
-        return self.buffer[0..self.length];
-    }
-};
-
 const FxPt2Dot30 = extern struct {
     data: u32,
 
@@ -690,6 +697,11 @@ const FxPt2Dot30 = extern struct {
     pub inline fn fraction(self: *const FxPt2Dot30) u32 {
         return self.data & 0x8fffffff;
     }
+};
+
+const BitmapColorTable = struct {
+    buffer: [1024]u8 = undefined,
+    image: Image = Image{},
 };
 
 const CieXYZTriple = extern struct {

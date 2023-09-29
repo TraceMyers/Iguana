@@ -37,7 +37,12 @@ pub const Vertex = struct {
 
 // --- Image pixel types ---
 
+const PixelContainerError = error {
+    NoAllocatorOnFree,
+};
+
 pub const PixelTag = enum { RGB24, RGBA32, R8, R16, R32, RA16, RA32 };
+
 pub const PixelSlice = union(PixelTag) {
     RGB24: ?[]RGB24,
     RGBA32: ?[]RGBA32,
@@ -46,6 +51,47 @@ pub const PixelSlice = union(PixelTag) {
     R32: ?[]R32,
     RA16: ?[]RA16,
     RA32: ?[]RA32,
+};
+
+pub const PixelContainer = struct {
+    bytes: ?[]u8 = null,
+    pixels: PixelSlice = PixelSlice{ .RGB24 = null },
+    allocator: ?std.mem.Allocator = null,
+
+    pub fn alloc(self: *PixelContainer, in_allocator: std.mem.Allocator, tag: PixelTag, count: usize) !void {
+        switch(tag) {
+            .RGB24 => self.pixels = PixelSlice{ .RGB24 = self.allocWithType(in_allocator, RGB24, count) },
+            .RGBA32 => self.pixels = PixelSlice{ .RGBA32 = self.allocWithType(in_allocator, RGBA32, count) },
+            .R8 => self.pixels = PixelSlice{ .R8 = self.allocWithType(in_allocator, R8, count) },
+            .R16 => self.pixels = PixelSlice{ .R16 = self.allocWithType(in_allocator, R16, count) },
+            .R32 => self.pixels = PixelSlice{ .R32 = self.allocWithType(in_allocator, R32, count) },
+            .RA16 => self.pixels = PixelSlice{ .RA16 = self.allocWithType(in_allocator, RA16, count) },
+            .RA32 => self.pixels = PixelSlice{ .RA32 = self.allocWithType(in_allocator, RA32, count) },
+        }
+    }
+
+    pub fn free(self: *PixelContainer) !void {
+        if (self.bytes != null) {
+            if (self.allocator == null) {
+                return PixelContainerError.NoAllocatorOnFree;
+            }
+            self.allocator.?.free(self.bytes.?);
+        }
+        self = PixelContainer{};
+    }
+
+    pub inline fn isEmpty(self: *const PixelContainer) bool {
+        return self.bytes == null;
+    }
+
+    fn allocWithType(
+        self: *PixelContainer, in_allocator: std.mem.Allocator, comptime PixelType: type, count: usize
+    ) ![]PixelType {
+        const sz = @sizeOf(PixelType) * count;
+        self.allocator = in_allocator;
+        self.bytes = try self.allocator.?.alloc(u8, sz);
+        return @ptrCast([*]PixelType, @alignCast(@alignOf(PixelType), &self.bytes[0]))[0..count];
+    }
 };
 
 pub const RGB24 = extern struct {
@@ -117,3 +163,4 @@ const fVec2 = kmath.fVec2;
 const fVec3 = kmath.fVec3;
 const LocalArray = @import("array.zig").LocalArray;
 const c = @import("ext.zig").c;
+const std = @import("std");

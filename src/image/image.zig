@@ -6,6 +6,10 @@
 
 pub const ImageError = error{
     NoFileExtension,
+    NoAllocatorOnFree,
+    NotEmptyOnCreate,
+    NotEmptyOnSetTypeTag,
+    InactivePixelTag,
     InvalidFileExtension,
     TooLarge,
     InvalidSizeForFormat,
@@ -57,7 +61,6 @@ const tga = @import("tga.zig");
 
 const print = std.debug.print;
 const LocalStringBuffer = string.LocalStringBuffer;
-const PixelSlice = graphics.PixelSlice;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------- functions
@@ -154,6 +157,65 @@ pub const ImageAlpha = enum { None, Normal, Premultiplied };
 // --------------------------------------------------------------------------------------------------------------- types
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// --- Image pixel types ---
+
+pub const RGB24 = extern struct {
+    r: u8 = 0,
+    g: u8 = 0,
+    b: u8 = 0,
+};
+
+pub const RGBA32 = extern struct {
+    r: u8 = 0,
+    g: u8 = 0,
+    b: u8 = 0,
+    a: u8 = 0,
+};
+
+pub const R8 = extern struct {
+    r: u8 = 0,
+};
+
+pub const R16 = extern struct {
+    r: u16 = 0,
+};
+
+pub const R32 = extern struct {
+    r: u32 = 0,
+};
+
+pub const RA16 = extern struct {
+    r: u8 = 0,
+    a: u8 = 0,
+};
+
+pub const RA32 = extern struct {
+    r: u16 = 0,
+    a: u16 = 0,
+};
+
+// --- extra file load-only pixel types ---
+
+pub const RGB32 = extern struct {
+    r: u8 = 0,
+    g: u8 = 0,
+    b: u8 = 0,
+    reserved: u8 = 0,
+};
+
+pub const BGR24 = extern struct {
+    b: u8 = 0,
+    g: u8 = 0,
+    r: u8 = 0,
+};
+
+pub const BGR32 = extern struct {
+    b: u8 = 0,
+    g: u8 = 0,
+    r: u8 = 0,
+    reserved: u8 = 0,
+};
+
 pub const ARGB64 = extern struct {
     a: u16,
     r: u16,
@@ -161,43 +223,167 @@ pub const ARGB64 = extern struct {
     b: u16,
 };
 
+// --------------------------
+
+pub const PixelTag = enum { 
+    RGB24, RGBA32, R8, R16, R32, RA16, RA32,
+    
+    pub fn size(self: PixelTag) usize {
+        return switch(self) {
+            RGB24 => 3, 
+            RGBA32 => 4, 
+            R8 => 1, 
+            R16 => 2, 
+            R32 => 4, 
+            RA16 => 2, 
+            RA32 => 4,
+        };
+    }
+};
+
+pub const PixelSlice = union(PixelTag) {
+    RGB24: ?[]RGB24,
+    RGBA32: ?[]RGBA32,
+    R8: ?[]R8,
+    R16: ?[]R16,
+    R32: ?[]R32,
+    RA16: ?[]RA16,
+    RA32: ?[]RA32,
+};
+
+pub const PixelContainer = struct {
+    bytes: ?[]u8 = null,
+    pixels: PixelSlice = PixelSlice{ .RGB24 = null },
+    allocator: ?std.mem.Allocator = null,
+
+    pub fn alloc(self: *PixelContainer, in_allocator: std.mem.Allocator, tag: PixelTag, count: usize) !void {
+        switch(tag) {
+            .RGB24 => self.pixels = PixelSlice{ .RGB24 = try self.allocWithType(in_allocator, RGB24, count) },
+            .RGBA32 => self.pixels = PixelSlice{ .RGBA32 = try self.allocWithType(in_allocator, RGBA32, count) },
+            .R8 => self.pixels = PixelSlice{ .R8 = try self.allocWithType(in_allocator, R8, count) },
+            .R16 => self.pixels = PixelSlice{ .R16 = try self.allocWithType(in_allocator, R16, count) },
+            .R32 => self.pixels = PixelSlice{ .R32 = try self.allocWithType(in_allocator, R32, count) },
+            .RA16 => self.pixels = PixelSlice{ .RA16 = try self.allocWithType(in_allocator, RA16, count) },
+            .RA32 => self.pixels = PixelSlice{ .RA32 = try self.allocWithType(in_allocator, RA32, count) },
+        }
+    }
+
+    pub fn attachToBuffer(self: *PixelContainer, buffer: []u8, tag: PixelTag, count: usize) void {
+        switch(tag) {
+            .RGB24 => self.pixels = PixelSlice{ .RGB24 = self.attachWithType(buffer, RGB24, count) },
+            .RGBA32 => self.pixels = PixelSlice{ .RGBA32 = self.attachWithType(buffer, RGBA32, count) },
+            .R8 => self.pixels = PixelSlice{ .R8 = self.attachWithType(buffer, R8, count) },
+            .R16 => self.pixels = PixelSlice{ .R16 = self.attachWithType(buffer, R16, count) },
+            .R32 => self.pixels = PixelSlice{ .R32 = self.attachWithType(buffer, R32, count) },
+            .RA16 => self.pixels = PixelSlice{ .RA16 = self.attachWithType(buffer, RA16, count) },
+            .RA32 => self.pixels = PixelSlice{ .RA32 = self.attachWithType(buffer, RA32, count) },
+        }
+    }
+
+    pub fn unattachFromBuffer(self: *PixelContainer) void {
+        std.debug.assert(self.bytes != null and self.allocator == null);
+        self.* = PixelContainer{};
+    }
+
+    pub fn free(self: *PixelContainer) !void {
+        if (self.bytes != null) {
+            if (self.allocator == null) {
+                return ImageError.NoAllocatorOnFree;
+            }
+            self.allocator.?.free(self.bytes.?);
+        }
+        self.* = PixelContainer{};
+    }
+
+    pub inline fn isEmpty(self: *const PixelContainer) bool {
+        return self.bytes == null and self.allocator == null;
+    }
+
+    fn allocWithType(
+        self: *PixelContainer, in_allocator: std.mem.Allocator, comptime PixelType: type, count: usize
+    ) ![]PixelType {
+        const sz = @sizeOf(PixelType) * count;
+        self.allocator = in_allocator;
+        self.bytes = try self.allocator.?.alloc(u8, sz);
+        return @ptrCast([*]PixelType, @alignCast(@alignOf(PixelType), &self.bytes[0]))[0..count];
+    }
+
+    fn attachWithType(self: *PixelContainer, buffer: []u8, comptime PixelType: type, count: usize) []PixelType {
+        self.allocator = null;
+        self.bytes = buffer;
+        return @ptrCast([*]PixelType, @alignCast(@alignOf(PixelType), &self.bytes[0]))[0..count];
+    }
+
+};
+
 pub const Image = struct {
     width: u32 = 0,
     height: u32 = 0,
-    pixels: PixelSlice = PixelSlice{.RGB24 = null},
-    allocator: ?std.mem.Allocator = null,
+    px_container: PixelContainer = PixelContainer{},
     premultiplied_alpha: bool = false,
 
-    pub fn isEmpty(self: *const Image) bool {
-        return switch(self.pixels) {
-            .RGB24 => |slice| slice == null,
-            .RGBA32 => |slice| slice == null,
-            .R8 => |slice| slice == null,
-            .R16 => |slice| slice == null,
-            .R32 => |slice| slice == null,
-            .RA16 => |slice| slice == null,
-            .RA32 => |slice| slice == null,
-        };
+    pub fn init(self: *Image, in_allocator: std.mem.Allocator, type_tag: PixelTag, width: u32, height: u32) !void {
+        if (!self.isEmpty()) {
+            return ImageError.NotEmptyOnCreate;
+        }
+        self.width = width;
+        self.height = height;
+        try self.px_container.alloc(in_allocator, type_tag, self.len());
     }
 
     pub fn clear(self: *Image) void {
-        switch(self.pixels) {
-            .RGB24 => self.clearPixels(self.pixels.RGB24),
-            .RGBA32 => self.clearPixels(self.pixels.RGBA32),
-            .R8 => self.clearPixels(self.pixels.R8),
-            .R16 => self.clearPixels(self.pixels.R16),
-            .R32 => self.clearPixels(self.pixels.R32),
-            .RA16 => self.clearPixels(self.pixels.RA16),
-            .RA32 => self.clearPixels(self.pixels.RA32),
-        }
+        self.width = 0;
+        self.height = 0;
+        self.px_container.free();
+        self.premultiplied_alpha = false;
     }
 
-    inline fn clearPixels(self: *Image, slice: anytype) void {
-        if (slice != null) {
-            std.debug.assert(self.allocator != null);
-            self.allocator.?.free(slice.?);
+    pub inline fn len(self: *const Image) usize {
+        return @intCast(usize, self.width) * @intCast(usize, self.height);
+    }
+
+    pub inline fn activePixelTag(self: *const Image) PixelTag {
+        return std.meta.activeTag(self.px_container.pixels);
+    }
+
+    pub inline fn isEmpty(self: *const Image) bool {
+        return self.px_container.isEmpty();
+    }
+
+    pub inline fn getBytes(self: *Image) []u8 {
+        return self.px_container.bytes.?;
+    }
+
+    // attach/unattach can cause a memory leak if you're manually unattaching from heap buffers. using attach/unattach 
+    // with heap buffers is not recommended.
+    pub fn attachToBuffer(self: *Image, buffer: []u8, type_tag: PixelTag, ct: usize) !void {
+        if (!self.isEmpty()) {
+            return ImageError.NotEmptyOnSetTypeTag;
         }
-        self.* = Image{};
+        self.width = ct;
+        self.height = 1;
+        self.px_container.attachToBuffer(buffer, type_tag, ct);
+        self.premultiplied_alpha = false;
+    }
+
+    // attach/unattach can cause a memory leak if you're manually unattaching from heap buffers. using attach/unattach 
+    // with heap buffers is not recommended.
+    pub fn unattachFromBuffer(self: *Image) void {
+        self.width = 0;
+        self.height = 0;
+        self.px_container.unattachFromBuffer();
+        self.premultiplied_alpha = false;
+    }
+
+    pub fn getPixels(self: *Image, comptime type_tag: PixelTag) !fieldType(type_tag) {
+        return switch(self.px_container.pixels) {
+            type_tag => |slice| slice.?,
+            else => ImageError.InactivePixelTag,
+        };
+    }
+
+    pub fn fieldType(comptime tag: PixelTag) type {
+        return std.meta.fields(PixelTag)[@enumToInt(tag)].field_type;
     }
 
 };
