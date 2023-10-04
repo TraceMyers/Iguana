@@ -3,6 +3,7 @@
 // :::::::::::
 
 // TODO: allocator-related free error on large alloc
+// TODO: put allowed types in ImageLoadOptions
 
 pub const ImageError = error{
     NoFileExtension,
@@ -48,6 +49,12 @@ pub const ImageError = error{
     TgaUnsupportedImageOrigin,
     TgaColorTableImageNot8BitColorDepth,
     TgaGreyscale8BitOnly,
+    CannotDisallowRGBA32,
+    BitmapColorReaderInvalidComptimeInputs,
+    NoImageFormatsAllowed,
+    NonImageFormatPassedIntoOptions,
+    UnevenImageLengthsInTransfer,
+    TransferBetweenFormatsUnsupported,
 };
 
 const graphics = @import("../graphics.zig");
@@ -108,7 +115,8 @@ pub fn loadImage(
             or string.same(extension_lower, "vst")
             or string.same(extension_lower, "tpic")
         ) {
-            try tga.load(&file, &image, allocator, &options);
+            // try tga.load(&file, &image, allocator, &options);
+            return ImageError.FormatUnsupported;
         }
         else if (string.same(extension_lower, "png")) {
             try png.load(&file, &image, allocator, &options);
@@ -124,10 +132,14 @@ pub fn loadImage(
         .Bmp => try bmp.load(&file, &image, allocator, &options),
         .Jpg => return ImageError.FormatUnsupported,
         .Png => try png.load(&file, &image, allocator, &options),
-        .Tga => try tga.load(&file, &image, allocator, &options),
+        .Tga => return ImageError.FormatUnsupported, //try tga.load(&file, &image, allocator, &options),
         else => unreachable,
     }
     return image;
+}
+
+pub fn disallowPixelFormat(pixel_format: PixelTag) void {
+    pixel_format_allowed[@enumToInt(pixel_format)] = false;
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -194,6 +206,24 @@ pub const RA32 = extern struct {
     a: u16 = 0,
 };
 
+pub const RGB16 = extern struct {
+    c: u16,
+};
+
+pub fn getBitCt(num: anytype) comptime_int {
+    return switch(@TypeOf(num)) {
+        u1 => 1,
+        u4 => 4,
+        u5 => 5,
+        u6 => 6,
+        u8 => 8,
+        u16 => 16,
+        u24 => 24,
+        u32 => 32,
+        else => 0
+    };
+}
+
 // --- extra file load-only pixel types ---
 
 pub const RGB32 = extern struct {
@@ -223,60 +253,210 @@ pub const ARGB64 = extern struct {
     b: u16,
 };
 
+pub const RGBA64 = extern struct {
+    r: u16 = 0,
+    g: u16 = 0,
+    b: u16 = 0,
+    a: u16 = 0,
+};
+
+pub const RGBA128F = extern struct {
+    r: f32 = 0.0,
+    g: f32 = 0.0,
+    b: f32 = 0.0,
+    a: f32 = 0.0,
+};
+
+pub const RGBA128 = extern struct {
+    r: u32 = 0,
+    g: u32 = 0,
+    b: u32 = 0,
+    a: u32 = 0,
+};
+
+pub const R32F = extern struct {
+    r: f32 = 0.0,
+};
+
+pub const RG64F = extern struct {
+    r: f32 = 0.0,
+    g: f32 = 0.0,
+};
+
 // --------------------------
 
+var pixel_format_allowed: [4]bool = .{ true, true, true, true };
+
 pub const PixelTag = enum { 
-    RGB24, RGBA32, R8, R16, R32, RA16, RA32,
+    // valid image pixel formats
+    RGBA32, RGB16, R8, R16, R32F, RG64F, RGBA128F, RGBA128,
+    // valid internal/file pixel formats
+    U32_RGBA, U32_RGB, U24_RGB, U16_RGBA, U16_RGB, U16_R, U8_R,
     
     pub fn size(self: PixelTag) usize {
         return switch(self) {
-            RGB24 => 3, 
-            RGBA32 => 4, 
-            R8 => 1, 
-            R16 => 2, 
-            R32 => 4, 
-            RA16 => 2, 
-            RA32 => 4,
+            .RGBA32 => 4,
+            .RGB16 => 2,
+            .R8 => 1, 
+            .R16 => 2, 
+            .R32F => 4,
+            .RG64F => 8,
+            .RGBA128F => 16,
+            .RGBA128 => 16,
+            .U32_RGBA => 4,
+            .U32_RGB => 4,
+            .U24_RGB => 3,
+            .U16_RGBA => 2,
+            .U16_RGB => 2,
+            .U16_R => 2,
+            .U8_R => 1,
+        };
+    }
+
+    pub fn isColor(self: PixelTag) bool {
+        return switch(self) {
+            .RGBA32, .RGB16, .RGBA128F, .RGBA128, .U32_RGBA, .U32_RGB, .U24_RGB, .U16_RGBA, .U16_RGB => true,
+            else => false,
+        };
+    }
+
+    pub fn hasAlpha(self: PixelTag) bool {
+        return switch(self) {
+            .RGBA32, .RGBA128F, .RGBA128, .U32_RGBA, .U16_RGBA => true,
+            else => false,
+        };
+    }
+
+    pub fn intType(comptime self: PixelTag) type {
+        return switch(self) {
+            .RGBA32 => u32,
+            .RGB16 => u16,
+            .R8 => u8, 
+            .R16 => u16,
+            .R32F => f32,
+            .RG64F => f64,
+            .RGBA128F => f128,
+            .RGBA128 => u128,
+            .U32_RGBA => u32,
+            .U32_RGB => u32,
+            .U24_RGB => u24,
+            .U16_RGBA => u16,
+            .U16_RGB => u16,
+            .U16_R => u16,
+            .U8_R => u8,
+        };
+    }
+
+    pub fn toType(comptime self: PixelTag) type {
+        return switch(self) {
+            .RGBA32 => RGBA32,
+            .RGB16 => RGB16,
+            .R8 => R8, 
+            .R16 => R16,
+            .R32F => R32F,
+            .RG64F => RG64F,
+            .RGBA128F => RGBA128F,
+            .RGBA128 => RGBA128,
+            .U32_RGBA => u32,
+            .U32_RGB => u32,
+            .U24_RGB => u24,
+            .U16_RGBA => u16,
+            .U16_RGB => u16,
+            .U16_R => u16,
+            .U8_R => u8,
         };
     }
 };
 
-pub const PixelSlice = union(PixelTag) {
-    RGB24: ?[]RGB24,
-    RGBA32: ?[]RGBA32,
-    R8: ?[]R8,
-    R16: ?[]R16,
-    R32: ?[]R32,
-    RA16: ?[]RA16,
-    RA32: ?[]RA32,
+pub const PixelTagPair = struct {
+    in_tag: PixelTag = PixelTag.RGBA32,
+    out_tag: PixelTag = PixelTag.RGBA32,
 };
+
+pub fn autoSelectImageFormat(file_pixel_type: PixelTag) !PixelTag {
+    var preference_order: [4]PixelTag = undefined;
+    if (file_pixel_type.isColor()) {
+        if (file_pixel_type.hasAlpha()) {
+            preference_order = .{
+                .RGBA32, .RGB16, .R8, .R16
+            };
+        }
+        else if (file_pixel_type.size() == 2) {
+            preference_order = .{ 
+                .RGB16, .RGBA32, .R8, .R16
+            };
+        } else {
+            preference_order = .{ 
+                .RGBA32, .RGB16, .R8, .R16
+            };
+        }
+    } else if (file_pixel_type == .U16_R) {
+        preference_order = .{ 
+            .R16, .R8, .RGBA32, .RGB16
+        };
+    } else {
+        preference_order = .{ 
+            .R8, .R16, .RGBA32, .RGB16
+        };
+    }
+
+    inline for (0..4) |i| {
+        if (pixel_format_allowed[@enumToInt(preference_order[i])]) {
+            return preference_order[i];
+        }
+    }
+    return ImageError.NoImageFormatsAllowed;
+}
+
+pub const PixelSlice = union(PixelTag) {
+    RGBA32: []RGBA32,
+    RGB16: []RGB16,
+    R8: []R8,
+    R16: []R16,
+    R32F: []R32F,
+    RG64F: []RG64F,
+    RGBA128F: []RGBA128F,
+    RGBA128: []RGBA128,
+    U32_RGBA: []u32,
+    U32_RGB: []u32,
+    U24_RGB: []u24,
+    U16_RGBA: []u16,
+    U16_RGB: []u16,
+    U16_R: []u16,
+    U8_R: []u8
+};
+
 
 pub const PixelContainer = struct {
     bytes: ?[]u8 = null,
-    pixels: PixelSlice = PixelSlice{ .RGB24 = null },
+    pixels: PixelSlice = PixelSlice{ .RGBA32 = undefined },
     allocator: ?std.mem.Allocator = null,
 
     pub fn alloc(self: *PixelContainer, in_allocator: std.mem.Allocator, tag: PixelTag, count: usize) !void {
         switch(tag) {
-            .RGB24 => self.pixels = PixelSlice{ .RGB24 = try self.allocWithType(in_allocator, RGB24, count) },
             .RGBA32 => self.pixels = PixelSlice{ .RGBA32 = try self.allocWithType(in_allocator, RGBA32, count) },
+            .RGB16 => self.pixels = PixelSlice{ .RGB16 = try self.allocWithType(in_allocator, RGB16, count) },
             .R8 => self.pixels = PixelSlice{ .R8 = try self.allocWithType(in_allocator, R8, count) },
             .R16 => self.pixels = PixelSlice{ .R16 = try self.allocWithType(in_allocator, R16, count) },
-            .R32 => self.pixels = PixelSlice{ .R32 = try self.allocWithType(in_allocator, R32, count) },
-            .RA16 => self.pixels = PixelSlice{ .RA16 = try self.allocWithType(in_allocator, RA16, count) },
-            .RA32 => self.pixels = PixelSlice{ .RA32 = try self.allocWithType(in_allocator, RA32, count) },
+            .R32F => self.pixels = PixelSlice{ .R32F = try self.allocWithType(in_allocator, R32F, count) },
+            .RG64F => self.pixels = PixelSlice{ .RG64F = try self.allocWithType(in_allocator, RG64F, count) },
+            .RGBA128F => self.pixels = PixelSlice{ .RGBA128F = try self.allocWithType(in_allocator, RGBA128F, count) },
+            .RGBA128 => self.pixels = PixelSlice{ .RGBA128 = try self.allocWithType(in_allocator, RGBA128, count) },
+            else => unreachable,
         }
     }
 
     pub fn attachToBuffer(self: *PixelContainer, buffer: []u8, tag: PixelTag, count: usize) void {
         switch(tag) {
-            .RGB24 => self.pixels = PixelSlice{ .RGB24 = self.attachWithType(buffer, RGB24, count) },
             .RGBA32 => self.pixels = PixelSlice{ .RGBA32 = self.attachWithType(buffer, RGBA32, count) },
+            .RGB16 => self.pixels = PixelSlice{ .RGB16 = self.attachWithType(buffer, RGB16, count) },
             .R8 => self.pixels = PixelSlice{ .R8 = self.attachWithType(buffer, R8, count) },
             .R16 => self.pixels = PixelSlice{ .R16 = self.attachWithType(buffer, R16, count) },
-            .R32 => self.pixels = PixelSlice{ .R32 = self.attachWithType(buffer, R32, count) },
-            .RA16 => self.pixels = PixelSlice{ .RA16 = self.attachWithType(buffer, RA16, count) },
-            .RA32 => self.pixels = PixelSlice{ .RA32 = self.attachWithType(buffer, RA32, count) },
+            .R32F => self.pixels = PixelSlice{ .R32F = self.attachWithType(buffer, R32F, count) },
+            .RG64F => self.pixels = PixelSlice{ .RG64F = self.attachWithType(buffer, RG64F, count) },
+            .RGBA128F => self.pixels = PixelSlice{ .RGBA128F = self.attachWithType(buffer, RGBA128F, count) },
+            .RGBA128 => self.pixels = PixelSlice{ .RGBA128 = self.attachWithType(buffer, RGBA128, count) },
+            else => unreachable,
         }
     }
 
@@ -285,11 +465,9 @@ pub const PixelContainer = struct {
         self.* = PixelContainer{};
     }
 
-    pub fn free(self: *PixelContainer) !void {
+    pub fn free(self: *PixelContainer) void {
         if (self.bytes != null) {
-            if (self.allocator == null) {
-                return ImageError.NoAllocatorOnFree;
-            }
+            std.debug.assert(self.allocator != null);
             self.allocator.?.free(self.bytes.?);
         }
         self.* = PixelContainer{};
@@ -305,13 +483,13 @@ pub const PixelContainer = struct {
         const sz = @sizeOf(PixelType) * count;
         self.allocator = in_allocator;
         self.bytes = try self.allocator.?.alloc(u8, sz);
-        return @ptrCast([*]PixelType, @alignCast(@alignOf(PixelType), &self.bytes[0]))[0..count];
+        return @ptrCast([*]PixelType, @alignCast(@alignOf(PixelType), &self.bytes.?[0]))[0..count];
     }
 
     fn attachWithType(self: *PixelContainer, buffer: []u8, comptime PixelType: type, count: usize) []PixelType {
         self.allocator = null;
         self.bytes = buffer;
-        return @ptrCast([*]PixelType, @alignCast(@alignOf(PixelType), &self.bytes[0]))[0..count];
+        return @ptrCast([*]PixelType, @alignCast(@alignOf(PixelType), &self.bytes.?[0]))[0..count];
     }
 
 };
@@ -356,13 +534,13 @@ pub const Image = struct {
 
     // attach/unattach can cause a memory leak if you're manually unattaching from heap buffers. using attach/unattach 
     // with heap buffers is not recommended.
-    pub fn attachToBuffer(self: *Image, buffer: []u8, type_tag: PixelTag, ct: usize) !void {
+    pub fn attachToBuffer(self: *Image, buffer: []u8, type_tag: PixelTag, width: u32, height: u32) !void {
         if (!self.isEmpty()) {
             return ImageError.NotEmptyOnSetTypeTag;
         }
-        self.width = ct;
-        self.height = 1;
-        self.px_container.attachToBuffer(buffer, type_tag, ct);
+        self.width = width;
+        self.height = height;
+        self.px_container.attachToBuffer(buffer, type_tag, self.len());
         self.premultiplied_alpha = false;
     }
 
@@ -375,17 +553,61 @@ pub const Image = struct {
         self.premultiplied_alpha = false;
     }
 
-    pub fn getPixels(self: *Image, comptime type_tag: PixelTag) !fieldType(type_tag) {
+    pub fn getPixels(self: *const Image, comptime type_tag: PixelTag) !(std.meta.TagPayload(PixelSlice, type_tag)) {
         return switch(self.px_container.pixels) {
-            type_tag => |slice| slice.?,
+            type_tag => |slice| slice,
             else => ImageError.InactivePixelTag,
         };
     }
 
-    pub fn fieldType(comptime tag: PixelTag) type {
-        return std.meta.fields(PixelTag)[@enumToInt(tag)].field_type;
+    pub inline fn getPixelsRGBA32(self: *const Image) []RGBA32 {
+        return self.px_container.pixels.RGBA32;
     }
 
+    pub inline fn getPixelsRGB16(self: *const Image) []RGB16 {
+        return self.px_container.pixels.RGB16;
+    }
+
+    pub inline fn getPixelsR8(self: *const Image) []R8 {
+        return self.px_container.pixels.RGBA32;
+    }
+
+    pub inline fn getPixelsR16(self: *const Image) []R16 {
+        return self.px_container.pixels.R16;
+    }
+
+    pub inline fn getPixelsR32F(self: *const Image) []R32F {
+        return self.px_container.pixels.R32F;
+    }
+
+    pub inline fn getPixelsRG64F(self: *const Image) []RG64F {
+        return self.px_container.pixels.RG64F;
+    }
+
+    pub inline fn getPixelsRGBA128F(self: *const Image) []RGBA128F {
+        return self.px_container.pixels.RGBA128F;
+    }
+
+    pub inline fn getPixelsRGBA128(self: *const Image) []RGBA128 {
+        return self.px_container.pixels.RGBA128;
+    }
+
+    pub inline fn XYToIdx(self: *const Image, x: u32, y: u32) usize {
+        return y * self.width + x;
+    }
+
+    pub inline fn IdxToXY(self: *const Image, idx: u32) F32x2 {
+        var vec: F32x2 = undefined;
+        vec.y = idx / self.width;
+        vec.x = idx - vec.y * self.width;
+        return vec;
+    }
+
+};
+
+pub const F32x2 = struct {
+    x: f32 = 0.0,
+    y: f32 = 0.0,
 };
 
 pub const ImageLoadBuffer = struct {
@@ -403,6 +625,39 @@ pub const ImageLoadOptions = struct {
     // load buffer with incorrectly denoted alignment can cause an image to be loaded improperly or fail to load.
     // - BMPs have an alignment of 4 bytes
     load_buffer: ImageLoadBuffer = ImageLoadBuffer{},
+    // for setting which pixel formats are allowed with functions; RGBA32, RGB16, R8, R16
+    output_formats_allowed: [4]bool = .{ true, true, true, true },
+
+    pub fn setOnlyAllowedFormat(self: *ImageLoadOptions, type_tag: PixelTag) !void {
+        switch (type_tag) {
+            .RGBA32, .RGB16, .R8, .R16 => {
+                inline for (0..4) |i| {
+                    self.output_formats_allowed[i] = false;
+                }
+                self.output_formats_allowed[@enumToInt(type_tag)] = true;
+            },
+            else => return ImageError.NonImageFormatPassedIntoOptions,
+        }
+    }
+
+    pub fn setFormatAllowed(self: *ImageLoadOptions, type_tag: PixelTag) !void {
+        switch (type_tag) {
+            .RGBA32, .RGB16, .R8, .R16 => {
+                self.output_formats_allowed[@enumToInt(type_tag)] = true;
+            },
+            else => return ImageError.NonImageFormatPassedIntoOptions,
+        }
+    }
+
+    pub fn setFormatDisallowed(self: *ImageLoadOptions, type_tag: PixelTag) !void {
+        switch (type_tag) {
+            .RGBA32, .RGB16, .R8, .R16 => {
+                self.output_formats_allowed[@enumToInt(type_tag)] = false;
+            },
+            else => return ImageError.NonImageFormatPassedIntoOptions,
+        }
+    }
+
 };
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -480,6 +735,7 @@ test "load bitmap [image]" {
             };
 
             if (!image.isEmpty()) {
+                print("** success {s}\n", .{filename_lower.string()});
                 if (i < 2) {
                     valid_supported += 1;
                 }

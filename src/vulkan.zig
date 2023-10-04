@@ -30,8 +30,8 @@ pub fn init(method: RenderMethod) !void {
     try createGraphicsPipeline();
     try createFramebuffers();
     try createCommandPools();
-    try createTextureImage();
-    try createTextureImageView();
+    const mapping: ImageTypeMapping = try createTextureImage();
+    try createTextureImageView(mapping);
     try createTextureImageSampler();
     try createVertexBuffer();
     try createIndexBuffer();
@@ -496,11 +496,50 @@ fn getPhysicalDevice() !void {
     if (best_device) |device| {
         _ = getPhysicalDeviceQueueFamilyCapabilities(device, &physical);
         _ = getPhysicalDeviceSurfaceCapabilities(device, &swapchain);
+
+        try setAllowedImageFormats(device);
+
         physical.vk_physical = device;
         physical.dtype = best_device_type;
         physical.sz = best_device_vram_sz;
     } else {
         return VkError.NoAdequatePhysicalDevice;
+    }
+}
+
+fn setAllowedImageFormats(device: c.VkPhysicalDevice) !void {
+    var device_props: c.VkPhysicalDeviceProperties = undefined;
+    c.vkGetPhysicalDeviceProperties(device, &device_props);
+
+    var img_fmt_props = c.VkImageFormatProperties{
+        .maxExtent = c.VkExtent3D{ .width=1024, .height=1024, .depth=1 },
+        .maxMipLevels = 1,
+        .maxArrayLayers = device_props.limits.maxImageArrayLayers, 
+        .sampleCounts = device_props.limits.framebufferColorSampleCounts,
+        .maxResourceSize = std.math.pow(u64, 2, 31),
+    };
+
+    var image_format_allowed: [image_type_to_vk_format.len]bool = undefined;
+    var disallowed_ct: u8 = 0;
+
+    inline for (0..image_type_to_vk_format.len) |i| {
+        const fmt = image_type_to_vk_format[i];
+        const result = c.vkGetPhysicalDeviceImageFormatProperties(
+            device, fmt, 1, 0, c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 0, &img_fmt_props
+        );
+        image_format_allowed[i] = (result == VK_SUCCESS);
+        if (!image_format_allowed[i]) {
+            imagef.disallowPixelFormat(@intToEnum(imagef.PixelTag, i));
+            print("image format {any} disallowed\n", .{@intToEnum(imagef.PixelTag, i)});
+            disallowed_ct += 1;
+        }
+        else {
+            print("image format {any} allowed\n", .{@intToEnum(imagef.PixelTag, i)});
+        }
+    }
+
+    if (disallowed_ct == image_type_to_vk_format.len) {
+        return VkError.NoSupportedImageFormats;
     }
 }
 
@@ -951,9 +990,10 @@ fn createCommandPools() !void {
 // VkBuffer: cpu
 // VkImage: gpu
 
-fn createTextureImage() !void {
+fn createTextureImage() !ImageTypeMapping {
     // var texture = try loadImage("d:/projects/zig/core/test/images/puppy.bmp", ImageFormat.Infer, allocator, .{});
-    // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/pal8rle.bmp", ImageFormat.Infer, allocator);
+    var color_texture = try loadImage("d:/projects/zig/core/test/nocommit/large_images/javaw.bmp", ImageFormat.Bmp, allocator, .{});
+    // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/rgb16.bmp", ImageFormat.Infer, allocator, .{});
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/q/rgba32abf.bmp", ImageFormat.Infer, allocator);
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/rle8-encoded-320x240.bmp", ImageFormat.Infer, allocator);
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/rle8-delta-320x240.bmp", ImageFormat.Infer, allocator);
@@ -961,53 +1001,78 @@ fn createTextureImage() !void {
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/565-321x240-topdown.bmp", ImageFormat.Infer, allocator, .{});
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/pal1.bmp", ImageFormat.Infer, allocator, .{});
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/mytgatestsuite/good/ucm8.tga", ImageFormat.Tga, allocator, .{});
-    var texture = try loadImage("d:/projects/zig/core/test/nocommit/mytgatestsuite/good/xing_b24.tga", ImageFormat.Tga, allocator, .{});
+    // var texture = try loadImage("d:/projects/zig/core/test/nocommit/mytgatestsuite/good/xing_b24.tga", ImageFormat.Tga, allocator, .{});
+    // var texture = try loadImage("d:/projects/zig/core/test/nocommit/mytgatestsuite/good/xing_b24.tga", ImageFormat.Tga, allocator, .{});
+    defer color_texture.clear();
+
+    var texture = imagef.Image{};
+    try texture.init(allocator, imagef.PixelTag.RGB16, color_texture.width, color_texture.height);
     defer texture.clear();
+
+    try readerf.transferImage(&color_texture, &texture);
 
     if (texture.height > 32_768 or texture.width > 32_768) {
         return VkError.TextureDimensionTooLarge;
     }
 
-    const image_sz: c.VkDeviceSize = texture.height * texture.width * @sizeOf(RGBA32);
+    const image_sz: c.VkDeviceSize = texture.height * texture.width * texture.activePixelTag().size();
+    const img_type_mapping = ImageTypeMapping{
+        .format = image_type_to_vk_format[@enumToInt(texture.activePixelTag())],
+        .color_mapping = image_type_to_mapping[@enumToInt(texture.activePixelTag())],
+    };
 
     var staging_buffer: VkBuffer = undefined;
     var staging_buffer_memory: c.VkDeviceMemory = undefined;
 
     const usage_flags: c.VkBufferUsageFlags = c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    const memory_flags: c.VkMemoryPropertyFlags = c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    const memory_flags: c.VkMemoryPropertyFlags = 
+        c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 
     // this is just a buffer. it can be larger!
     try createBuffer(image_sz, usage_flags, memory_flags, &staging_buffer, &staging_buffer_memory);
 
-    var image_data: ?[*]RGBA32 = null;
+    var image_data: ?[*]u8 = null;
     _ = c.vkMapMemory(vk_logical, staging_buffer_memory, 0, image_sz, 0, @ptrCast([*c]?*anyopaque, &image_data));
     @memcpy(image_data.?[0..texture.getBytes().len], texture.getBytes());
     c.vkUnmapMemory(vk_logical, staging_buffer_memory);
 
-    try createImage(texture.width, texture.height, c.VK_FORMAT_R8G8B8A8_SRGB, c.VK_IMAGE_TILING_OPTIMAL, c.VK_IMAGE_USAGE_TRANSFER_DST_BIT | c.VK_IMAGE_USAGE_SAMPLED_BIT, c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &texture_image_host, &texture_image_host_memory);
+    try createImage(
+        texture.width, 
+        texture.height, 
+        img_type_mapping.format, 
+        c.VK_IMAGE_TILING_OPTIMAL, 
+        c.VK_IMAGE_USAGE_TRANSFER_DST_BIT | c.VK_IMAGE_USAGE_SAMPLED_BIT, 
+        c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 
+        &texture_image_host, 
+        &texture_image_host_memory
+    );
 
-    try transitionImageLayout(texture_image_host, c.VK_FORMAT_R8G8B8A8_SRGB, c.VK_IMAGE_LAYOUT_UNDEFINED, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    try transitionImageLayout(
+        texture_image_host, img_type_mapping.format, c.VK_IMAGE_LAYOUT_UNDEFINED, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+    );
     copyBufferToImage(staging_buffer, texture_image_host, texture.width, texture.height);
-    try transitionImageLayout(texture_image_host, c.VK_FORMAT_R8G8B8A8_SRGB, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    try transitionImageLayout(
+        texture_image_host, 
+        img_type_mapping.format, 
+        c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 
+        c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+    );
 
     c.vkDestroyBuffer(vk_logical, staging_buffer, &alloc_cb);
     c.vkFreeMemory(vk_logical, staging_buffer_memory, &alloc_cb);
+
+    return img_type_mapping;
 }
 
-fn createImageView(image: VkImage, format: c.VkFormat) !c.VkImageView {
+fn createImageView(image: VkImage, mapping: ImageTypeMapping) !c.VkImageView {
     const view_info = c.VkImageViewCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .pNext = null,
         .flags = 0,
         .image = image,
         .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
-        .format = format,
-        .components = c.VkComponentMapping{
-            .r = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-            .g = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-            .b = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-            .a = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-        },
+        .format = mapping.format,
+        .components = mapping.color_mapping,
         .subresourceRange = c.VkImageSubresourceRange{
             .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
             .baseMipLevel = 0,
@@ -1026,8 +1091,8 @@ fn createImageView(image: VkImage, format: c.VkFormat) !c.VkImageView {
     return image_view;
 }
 
-fn createTextureImageView() !void {
-    texture_image_host_view = try createImageView(texture_image_host, c.VK_FORMAT_R8G8B8A8_SRGB);
+fn createTextureImageView(mapping: ImageTypeMapping) !void {
+    texture_image_host_view = try createImageView(texture_image_host, mapping);
 }
 
 fn createTextureImageSampler() !void {
@@ -1541,7 +1606,7 @@ fn getPhysicalDeviceVRAMSize(device: VkPhysicalDevice) c.VkDeviceSize {
 
 fn chooseSwapchainSurfaceFormat(swapc: *Swapchain) c.VkSurfaceFormatKHR {
     for (swapc.surface_formats.items()[0..swapc.surface_formats.len]) |*format| {
-        if (format.format == c.VK_FORMAT_B8G8R8A8_SRGB and format.colorSpace == c.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+        if (format.format == c.VK_FORMAT_R8G8B8A8_UNORM and format.colorSpace == c.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
             return format.*;
         }
     }
@@ -1945,6 +2010,75 @@ fn findMemoryType(type_filter: u32, props: c.VkMemoryPropertyFlags) !u32 {
     return VkError.NoSuitableGraphicsMemoryType;
 }
 
+const image_type_to_vk_format: [8]c.VkFormat = .{
+    c.VK_FORMAT_R8G8B8A8_UNORM,
+    c.VK_FORMAT_R5G6B5_UNORM_PACK16,
+    c.VK_FORMAT_R8_UNORM,
+    c.VK_FORMAT_R16_UNORM,
+    c.VK_FORMAT_R32_SFLOAT,
+    c.VK_FORMAT_R32G32_SFLOAT,
+    c.VK_FORMAT_R32G32B32A32_SFLOAT,
+    c.VK_FORMAT_R32G32B32A32_UINT,
+};
+
+const image_type_to_mapping: [8]c.VkComponentMapping = .{
+    c.VkComponentMapping{
+        .r = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .g = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .b = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .a = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+    },
+    c.VkComponentMapping{
+        .r = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .g = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .b = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .a = c.VK_COMPONENT_SWIZZLE_ONE,
+    },
+    c.VkComponentMapping{
+        .r = c.VK_COMPONENT_SWIZZLE_R,
+        .g = c.VK_COMPONENT_SWIZZLE_R,
+        .b = c.VK_COMPONENT_SWIZZLE_R,
+        .a = c.VK_COMPONENT_SWIZZLE_ONE,
+    },
+    c.VkComponentMapping{
+        .r = c.VK_COMPONENT_SWIZZLE_R,
+        .g = c.VK_COMPONENT_SWIZZLE_R,
+        .b = c.VK_COMPONENT_SWIZZLE_R,
+        .a = c.VK_COMPONENT_SWIZZLE_ONE,
+    },
+    c.VkComponentMapping{
+        .r = c.VK_COMPONENT_SWIZZLE_R,
+        .g = c.VK_COMPONENT_SWIZZLE_ONE,
+        .b = c.VK_COMPONENT_SWIZZLE_ONE,
+        .a = c.VK_COMPONENT_SWIZZLE_ONE,
+    },
+    c.VkComponentMapping{
+        .r = c.VK_COMPONENT_SWIZZLE_R,
+        .g = c.VK_COMPONENT_SWIZZLE_G,
+        .b = c.VK_COMPONENT_SWIZZLE_ONE,
+        .a = c.VK_COMPONENT_SWIZZLE_ONE,
+    },
+    c.VkComponentMapping{
+        .r = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .g = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .b = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .a = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+    },
+    c.VkComponentMapping{
+        .r = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .g = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .b = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .a = c.VK_COMPONENT_SWIZZLE_ONE,
+    },
+};
+
+const ImageTypeMapping = struct {
+    format: c.VkFormat = undefined,
+    color_mapping: c.VkComponentMapping = undefined,
+};
+    // try createImage(texture.width, texture.height, c.VK_FORMAT_R8_UNORM, c.VK_IMAGE_TILING_OPTIMAL, c.VK_IMAGE_USAGE_TRANSFER_DST_BIT | c.VK_IMAGE_USAGE_SAMPLED_BIT, c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &texture_image_host, &texture_image_host_memory);
+    // c.VK_FORMAT_R8_UNORM;
+
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- data
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2011,7 +2145,9 @@ var test_y: f32 = 0.0;
 var test_z: f32 = 2.0;
 
 const cpu_alloc = memory.EnclaveAllocator(memory.Enclave.RenderCPU);
-const allocator = cpu_alloc.allocator();
+// const allocator = cpu_alloc.allocator();
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+const allocator = gpa.allocator();
 
 const alloc_cb = c.VkAllocationCallbacks{ .pUserData = null, .pfnAllocation = vkInterfaceAllocate, .pfnReallocation = vkInterfaceReallocate, .pfnFree = vkInterfaceFree, .pfnInternalAllocation = vkInterfaceInternalAllocateNotification, .pfnInternalFree = vkInterfaceInternalFreeNotification };
 
@@ -2036,8 +2172,48 @@ const LAYER_CT: u32 = 1;
 // -------------------------------------------------------------------------------------------------------------- errors
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const VkError = error{ CreateInstance, CreateSurface, GetPhysicalDevices, ZeroPhysicalDevices, NoAdequatePhysicalDevice, NotEnoughPhysicalDeviceStorage, CreateLogicalDevice, CreateSwapchain, CreateImageViews, CreateRenderPass, BadShaderModuleName, BadShaderSize, ShaderTooLarge, UnknownReadError, // hate this
-CreateShaderModule, CreatePipelineLayout, CreatePipeline, CreateFramebuffers, CreateCommandPool, CreateCommandBuffer, CreateSyncObjects, RecordCommandBuffer, DrawFrame, AcquireSwapchainImage, PresentSwapchainImage, CreateVertexBuffer, NoSuitableGraphicsMemoryType, AllocatevertexBufferMemory, CreateBuffer, AllocateBufferMemory, CreateDirectImage, TransitionImageLayout, CreateDirectImageView, CreateTextureSampler, CreateDescriptorSetLayout, CreateUniformBuffers, CreateDescriptorPool, CreateDescriptorSets, TextureDimensionTooLarge };
+const VkError = error{ 
+    CreateInstance, 
+    CreateSurface, 
+    GetPhysicalDevices, 
+    ZeroPhysicalDevices, 
+    NoAdequatePhysicalDevice, 
+    NotEnoughPhysicalDeviceStorage, 
+    CreateLogicalDevice, 
+    CreateSwapchain, 
+    CreateImageViews, 
+    CreateRenderPass, 
+    BadShaderModuleName, 
+    BadShaderSize, 
+    ShaderTooLarge, 
+    UnknownReadError, // hate this
+    CreateShaderModule, 
+    CreatePipelineLayout, 
+    CreatePipeline, 
+    CreateFramebuffers, 
+    CreateCommandPool, 
+    CreateCommandBuffer, 
+    CreateSyncObjects, 
+    RecordCommandBuffer, 
+    DrawFrame, 
+    AcquireSwapchainImage, 
+    PresentSwapchainImage, 
+    CreateVertexBuffer, 
+    NoSuitableGraphicsMemoryType, 
+    AllocatevertexBufferMemory, 
+    CreateBuffer, 
+    AllocateBufferMemory, 
+    CreateDirectImage, 
+    TransitionImageLayout, 
+    CreateDirectImageView, 
+    CreateTextureSampler, 
+    CreateDescriptorSetLayout, 
+    CreateUniformBuffers, 
+    CreateDescriptorPool, 
+    CreateDescriptorSets, 
+    TextureDimensionTooLarge,
+    NoSupportedImageFormats,
+};
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- import
@@ -2054,6 +2230,7 @@ const memory = @import("memory.zig");
 const imagef = @import("image/image.zig");
 const input = @import("io/input.zig");
 const string = @import("string.zig");
+const readerf = @import("image/reader.zig");
 
 const loadImage = imagef.loadImage;
 const ImageFormat = imagef.ImageFormat;

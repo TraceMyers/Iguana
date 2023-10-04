@@ -15,7 +15,6 @@ const InlinePixelReader = readerf.InlinePixelReader;
 const BmpRLEReader = readerf.BmpRLEReader;
 const RLEAction = readerf.RLEAction;
 const ColorLayout = readerf.ColorLayout;
-const readColorTableImageRow = readerf.readColorTableImageRow;
 
 // calibration notes for when it becomes useful:
 
@@ -103,9 +102,9 @@ fn loadFileAndCoreHeaders(
     externally_allocated: *bool
 ) ![]u8 {
     const stat = try file.stat();
-    if (stat.size + 4 > memory.MAX_SZ) {
-        return ImageError.TooLarge;
-    }
+    // if (stat.size + 4 > memory.MAX_SZ) {
+    //     return ImageError.TooLarge;
+    // }
     if (stat.size < min_sz) {
         return ImageError.InvalidSizeForFormat;
     }
@@ -213,7 +212,7 @@ fn readCoreInfo(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable)
     info.compression = BitmapCompression.RGB;
     const table_offset = bmp_file_header_sz + bmp_info_header_sz_core;
     try readColorTable(buffer[table_offset..], info, color_table, imagef.RGB24);
-    return table_offset + color_table.length * @sizeOf(imagef.RGB24);
+    return table_offset + color_table.palette.len() * @sizeOf(imagef.RGB24);
 }
 
 fn readV1Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !usize {
@@ -229,7 +228,7 @@ fn readV1Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !
     }
     const table_offset = bmp_file_header_sz + bmp_info_header_sz_v1 + mask_offset;
     try readColorTable(buffer[table_offset..], info, color_table, imagef.RGB32);
-    return table_offset + color_table.length * @sizeOf(imagef.RGB32);
+    return table_offset + color_table.palette.len() * @sizeOf(imagef.RGB32);
 }
 
 fn readV4Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !usize {
@@ -238,7 +237,7 @@ fn readV4Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !
     try readV4HeaderPart(buffer, info);
     const table_offset = bmp_file_header_sz + bmp_info_header_sz_v4;
     try readColorTable(buffer[table_offset..], info, color_table, imagef.RGB32);
-    return table_offset + color_table.length * @sizeOf(imagef.RGB32);
+    return table_offset + color_table.palette.len() * @sizeOf(imagef.RGB32);
 }
 
 fn readV5Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !usize {
@@ -248,7 +247,7 @@ fn readV5Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !
     readV5HeaderPart(buffer, info);
     const table_offset = bmp_file_header_sz + bmp_info_header_sz_v5;
     try readColorTable(buffer[table_offset..], info, color_table, imagef.RGB32);
-    return table_offset + color_table.length * @sizeOf(imagef.RGB32);
+    return table_offset + color_table.palette.len() * @sizeOf(imagef.RGB32);
 }
 
 fn readV1HeaderPart(buffer: []u8, info: *BitmapInfo) !void {
@@ -308,8 +307,9 @@ fn readColorTable(
     color_table: *BitmapColorTable, 
     comptime ColorType: type
 ) !void {
+    // TODO: align of RGB24 must be 4, so.. how does this work with cores?
     var data_casted = @ptrCast([*]const ColorType, @alignCast(@alignOf(ColorType), &buffer[0]));
-    var ct_len: usize = 0;
+    var ct_len: u32 = 0;
 
     switch (info.color_depth) {
         32, 24, 16 => {
@@ -342,22 +342,23 @@ fn readColorTable(
             break;
         }
         if (is_greyscale) {
-            color_table.image.attachToBuffer(color_table.buffer[0..1024], imagef.PixelTag.R8, ct_len);
-            var ct_buffer = color_table.image.getPixels(imagef.PixelTag.R8);
+            try color_table.palette.attachToBuffer(color_table.buffer[0..1024], imagef.PixelTag.R8, ct_len, 1);
+            var ct_buffer = try color_table.palette.getPixels(imagef.PixelTag.R8);
             for (0..ct_len) |i| {
                 const buffer_color: *const ColorType = &data_casted[i];
-                const table_color: *imagef.R8 = ct_buffer[i];
+                const table_color: *imagef.R8 = &ct_buffer[i];
                 table_color.r = buffer_color.r;
             }
         } else {
-            color_table.image.attachToBuffer(color_table.buffer[0..1024], imagef.PixelTag.RGB24, ct_len);
-            var ct_buffer = color_table.image.getPixels(imagef.PixelTag.RGB24);
+            try color_table.palette.attachToBuffer(color_table.buffer[0..1024], imagef.PixelTag.RGBA32, ct_len, 1);
+            var ct_buffer = try color_table.palette.getPixels(imagef.PixelTag.RGBA32);
             for (0..ct_len) |i| {
                 const buffer_color: *const ColorType = &data_casted[i];
-                const table_color: *imagef.RGB24 = ct_buffer[i];
-                table_color.r = buffer_color.r;
+                const table_color: *imagef.RGBA32 = &ct_buffer[i];
+                table_color.r = buffer_color.b;
                 table_color.g = buffer_color.g;
-                table_color.b = buffer_color.b;
+                table_color.b = buffer_color.r;
+                table_color.a = 255;
             }
         }
     }
@@ -400,10 +401,10 @@ inline fn bufferLongEnough(pixel_buf: []const u8, image: *const Image, row_lengt
 // ---------------------------------------------------------------------------------------------------- creation helpers
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-inline fn bytesPerRow(comptime PixelType: type, image_width: u32) u32 {
+inline fn bytesPerRow(comptime PixelIntType: type, image_width: u32) u32 {
     var byte_ct_floor: u32 = undefined;
     var colors_per_byte: u32 = undefined;
-    switch (PixelType) {
+    switch (PixelIntType) {
         u1 => {
             byte_ct_floor = image_width >> 3;
             colors_per_byte = 8;
@@ -424,17 +425,62 @@ inline fn bytesPerRow(comptime PixelType: type, image_width: u32) u32 {
 
 // valid masks don't intersect, can't overflow their type (ie 17 bits used w/ 16 bit color), and according to the
 // standard, they should also be contiguous, but I don't see why that matters.
-fn validColorMasks(comptime PixelType: type, info: *const BitmapInfo) bool {
+fn validColorMasks(comptime PixelIntType: type, info: *const BitmapInfo) bool {
     const mask_intersection = info.red_mask & info.green_mask & info.blue_mask & info.alpha_mask;
     if (mask_intersection > 0) {
         return false;
     }
     const mask_union = info.red_mask | info.green_mask | info.blue_mask | info.alpha_mask;
-    const type_overflow = ((@as(u32, @sizeOf(u32)) << 3) - @clz(mask_union)) > (@as(u32, @sizeOf(PixelType)) << 3);
+    const type_overflow = ((@as(u32, @sizeOf(u32)) << 3) - @clz(mask_union)) > (@as(u32, @sizeOf(PixelIntType)) << 3);
     if (type_overflow) {
         return false;
     }
     return true;
+}
+
+fn getImageTags(info: *const BitmapInfo, color_table: *const BitmapColorTable) !imagef.PixelTagPair {
+    var tag_pair = imagef.PixelTagPair{};
+    switch (info.compression) {
+        .RGB => {
+            if (info.color_depth <= 8) {
+                tag_pair.in_tag = color_table.palette.activePixelTag();
+            } else {
+                const alpha_mask_present = info.alpha_mask > 0 and info.color_depth != 24;
+                tag_pair.in_tag = switch (info.color_depth) {
+                    16 => if (alpha_mask_present) imagef.PixelTag.U16_RGBA else imagef.PixelTag.U16_RGB,
+                    24 => imagef.PixelTag.U24_RGB,
+                    32 => if (alpha_mask_present) imagef.PixelTag.U32_RGBA else imagef.PixelTag.U32_RGB,
+                    else => .RGBA32,
+                };
+            }
+        },
+        .RLE4, .RLE8 => {
+            tag_pair.in_tag = color_table.palette.activePixelTag();
+        },
+        .BITFIELDS, .ALPHABITFIELDS => {
+            const alpha_mask_present = info.alpha_mask > 0;
+            tag_pair.in_tag = switch (info.color_depth) {
+                16 => if (alpha_mask_present) imagef.PixelTag.U16_RGBA else imagef.PixelTag.U16_RGB,
+                32 => if (alpha_mask_present) imagef.PixelTag.U32_RGBA else imagef.PixelTag.U32_RGB,
+                else => .RGBA32,
+            };
+        },
+        else => {},
+    }
+    tag_pair.out_tag = try imagef.autoSelectImageFormat(tag_pair.in_tag);
+    return tag_pair;
+}
+
+fn bitCtToIntType(comptime val: comptime_int) type {
+    return switch(val) {
+        1 => u1,
+        4 => u4,
+        8 => u8,
+        16 => u16,
+        24 => u24,
+        32 => u32,
+        else => void
+    };
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -445,16 +491,16 @@ fn createImage(
     buffer: []const u8, 
     image: *Image, 
     info: *BitmapInfo, 
-    color_table: *const Image, 
+    color_table: *const BitmapColorTable, 
     allocator: std.mem.Allocator
 ) !void {
     image.width = @intCast(u32, try std.math.absInt(info.width));
     image.height = @intCast(u32, try std.math.absInt(info.height));
 
-    const img_sz = @intCast(usize, image.width) * @intCast(usize, image.height) * @sizeOf(imagef.RGBA32);
-    if (img_sz > memory.MAX_SZ) {
-        return ImageError.TooLarge;
-    }
+    // const img_sz = @intCast(usize, image.width) * @intCast(usize, image.height) * @sizeOf(imagef.RGBA32);
+    // if (img_sz > memory.MAX_SZ) {
+    //     return ImageError.TooLarge;
+    // }
     // basic check width & height information isn't corrupted
     const remain_sz_div4 = (buffer.len - info.data_offset) >> @as(u5, 2);
     if (image.width > remain_sz_div4 or image.height > remain_sz_div4) {
@@ -466,75 +512,110 @@ fn createImage(
         return ImageError.BmpInvalidSizeInfo;
     }
 
-    image.allocator = allocator;
-    image.pixels = imagef.PixelSlice{.RGBA32 = try image.allocator.?.alloc(imagef.RGBA32, image.width * image.height)};
-
     // get row length in bytes as a multiple of 4 (rows are padded to 4 byte increments)
     const row_length = ((image.width * info.color_depth + 31) & ~@as(u32, 31)) >> 3;
     const pixel_buf = buffer[info.data_offset..buffer.len];
     info.data_size = @intCast(u32, buffer.len - info.data_offset);
 
+    const format_pair = try getImageTags(info, color_table);
+    try image.init(allocator, format_pair.out_tag, image.width, image.height);
+
     try switch (info.compression) {
         .RGB => switch (info.color_depth) {
-            1 => try readColorTableImage(u1, pixel_buf, info, color_table, image, row_length),
-            4 => try readColorTableImage(u4, pixel_buf, info, color_table, image, row_length),
-            8 => try readColorTableImage(u8, pixel_buf, info, color_table, image, row_length),
-            16 => try readInlinePixelImage(u16, pixel_buf, info, image, row_length, true),
-            24 => try readInlinePixelImage(u24, pixel_buf, info, image, row_length, true),
-            32 => try readInlinePixelImage(u32, pixel_buf, info, image, row_length, true),
+            inline 1, 4, 8, 16, 24, 32 => |val| {
+                const IntType = bitCtToIntType(val);
+                if (val <= 8) {
+                    try transferColorTableImage(IntType, format_pair, pixel_buf, info, color_table, image, row_length);
+                } else {
+                    try transferInlinePixelImage(IntType, format_pair, pixel_buf, info, image, row_length, true);
+                }
+            },
             else => ImageError.BmpInvalidColorDepth,
         },
-        .RLE4 => try readRunLengthEncodedImage(u4, @ptrCast([*]const u8, &pixel_buf[0]), info, color_table, image),
-        .RLE8 => try readRunLengthEncodedImage(u8, @ptrCast([*]const u8, &pixel_buf[0]), info, color_table, image),
+        inline .RLE4, .RLE8 => |format| {
+            const IntType = if (format == .RLE4) u4 else u8;
+            try transferRunLengthEncodedImage(
+                IntType, format_pair, @ptrCast([*]const u8, &pixel_buf[0]), info, color_table, image
+            );
+        },
         .BITFIELDS, .ALPHABITFIELDS => switch (info.color_depth) {
-            16 => try readInlinePixelImage(u16, pixel_buf, info, image, row_length, false),
-            32 => try readInlinePixelImage(u32, pixel_buf, info, image, row_length, false),
+            inline 16, 32 => |val| {
+                const IntType = bitCtToIntType(val);
+                try transferInlinePixelImage(IntType, format_pair, pixel_buf, info, image, row_length, false);
+            },
             else => return ImageError.BmpInvalidCompression,
         },
         else => return ImageError.BmpCompressionUnsupported,
     };
 }
 
-fn readColorTableImage(
-    comptime PixelType: type, 
+fn transferColorTableImage(
+    comptime IdxType: type, 
+    format_pair: imagef.PixelTagPair,
     pixel_buf: []const u8, 
     info: *const BitmapInfo, 
-    color_table: *const Image, 
+    color_table: *const BitmapColorTable, 
     image: *Image, 
     row_sz: usize
 ) !void {
-    if (color_table.length < 2) {
+    if (color_table.palette.len() < 2) {
         return ImageError.BmpInvalidColorTable;
     }
     if (!bufferLongEnough(pixel_buf, image, row_sz)) {
         return ImageError.UnexpectedEndOfImageBuffer;
     }
+    switch (format_pair.in_tag) {
+        inline .RGBA32, .R8 => |in_tag| {
+            switch (format_pair.out_tag) {
+                inline .RGBA32, .RGB16, .R8, .R16 => |out_tag| {
+                    try transferColorTableImageImpl(IdxType, in_tag, out_tag, pixel_buf, info, color_table, image, row_sz);
+                },
+                else => {}
+            }
+        },
+        else => {},
+    }
+}
+
+fn transferColorTableImageImpl(
+    comptime IndexIntType: type,
+    comptime in_tag: imagef.PixelTag,
+    comptime out_tag: imagef.PixelTag,
+    pixel_buf: []const u8,
+    info: *const BitmapInfo,
+    color_table: *const BitmapColorTable,
+    image: *Image,
+    row_sz: usize
+) !void {
+    const FilePixelType: type = in_tag.toType();
+    const ImagePixelType: type = out_tag.toType();
+
+    const colors: []const FilePixelType = try color_table.palette.getPixels(in_tag);
+    var image_pixels: []ImagePixelType = try image.getPixels(out_tag);
 
     const direction_info = BitmapDirectionInfo.new(info, image.width, image.height);
-    const row_byte_ct = bytesPerRow(PixelType, image.width);
-    const colors: []const imagef.RGBA32 = color_table.slice();
+    const row_byte_ct = bytesPerRow(IndexIntType, image.width);
+
+    const transfer = try readerf.BitmapColorTransfer(in_tag, out_tag).standard(0);
 
     var px_row_start: usize = 0;
     for (0..image.height) |i| {
         const row_start = @intCast(usize, direction_info.begin + direction_info.increment * @intCast(i32, i));
         const row_end = row_start + image.width;
 
-        var index_row: []const u8 = pixel_buf[px_row_start .. px_row_start + row_sz];
-        var image_row: []imagef.RGBA32 = image.pixels.RGBA32.?[row_start..row_end];
+        const index_row: []const u8 = pixel_buf[px_row_start .. px_row_start + row_sz];
+        var image_row: []ImagePixelType = image_pixels[row_start..row_end];
 
         // over each pixel (index to the color table) in the buffer row...
-        switch (PixelType) {
-            u1 => try readColorTableImageRow(index_row, image_row, colors, row_byte_ct, 0x80, u1),
-            u4 => try readColorTableImageRow(index_row, image_row, colors, row_byte_ct, 0xf0, u4),
-            u8 => try readColorTableImageRow(index_row, image_row, colors, row_byte_ct, 0xff, u8),
-            else => unreachable,
-        }
+        try transfer.transferColorTableImageRow(IndexIntType, index_row, colors, image_row, row_byte_ct);
+        
         px_row_start += row_sz;
     }
 }
 
-fn readInlinePixelImage(
-    comptime PixelType: type, 
+fn transferInlinePixelImage(
+    comptime PixelIntType: type, 
+    format_pair: imagef.PixelTagPair,
     pixel_buf: []const u8, 
     info: *const BitmapInfo, 
     image: *Image, 
@@ -542,56 +623,103 @@ fn readInlinePixelImage(
     standard_masks: bool
 ) !void {
     var alpha_mask_present = info.compression == .ALPHABITFIELDS or info.alpha_mask > 0;
-
     if (!bufferLongEnough(pixel_buf, image, row_sz)) {
         return ImageError.UnexpectedEndOfImageBuffer;
     }
     if (!standard_masks or alpha_mask_present) {
-        if (PixelType == u24) {
+        if (PixelIntType == u24) {
             alpha_mask_present = false;
         }
-        if (!validColorMasks(PixelType, info)) {
+        if (!validColorMasks(PixelIntType, info)) {
             return ImageError.BmpInvalidColorMasks;
         }
     }
+    switch (format_pair.in_tag) {
+        inline .U32_RGBA, .U32_RGB, .U24_RGB, .U16_RGBA, .U16_RGB => |in_tag| {
+            switch (format_pair.out_tag) {
+                inline .RGBA32, .RGB16, .R8, .R16 => |out_tag| {
+                    try transferInlinePixelImageImpl(in_tag, out_tag, info, pixel_buf, image, row_sz, standard_masks);
+                },
+                else => {}
+            }
+        },
+        else => {},
+    }
+}
+
+fn transferInlinePixelImageImpl(
+    comptime in_tag: imagef.PixelTag,
+    comptime out_tag: imagef.PixelTag,
+    info: *const BitmapInfo,
+    pixel_buf: []const u8, 
+    image: *Image, 
+    row_sz: usize, 
+    standard_masks: bool
+) !void {
+    const ImagePixelType: type = out_tag.toType();
+    var image_pixels: []ImagePixelType = try image.getPixels(out_tag);
+
+    const transfer = 
+        if (standard_masks) try readerf.BitmapColorTransfer(in_tag, out_tag).standard(info.alpha_mask)
+        else try readerf.BitmapColorTransfer(in_tag, out_tag).fromInfo(info);
 
     const direction_info = BitmapDirectionInfo.new(info, image.width, image.height);
-    const mask_set =
-        if (standard_masks) try InlinePixelReader(PixelType, .ABGR).standard(info.alpha_mask) 
-        else try InlinePixelReader(PixelType, .ABGR).fromInfo(info);
-
     var px_start: usize = 0;
     for (0..image.height) |i| {
         const img_start = @intCast(usize, direction_info.begin + direction_info.increment * @intCast(i32, i));
         const img_end = img_start + image.width;
 
-        var image_row = image.pixels.RGBA32.?[img_start..img_end];
-        var file_buffer_row = pixel_buf[px_start .. px_start + row_sz];
+        var buffer_row: [*]const u8 = @ptrCast([*]const u8, &pixel_buf[px_start]);
+        var image_row: []ImagePixelType = image_pixels[img_start..img_end];
 
-        // apply custom or standard rgb/rgba masks to each u16, u24 or u32 pixel in the row, store in RGBA32 image
-        mask_set.extractRow(image_row, file_buffer_row, alpha_mask_present, false);
+        transfer.transferRowFromBytes(buffer_row, image_row);
 
         px_start += row_sz;
     }
 }
 
-// bmps can have a form of compression, RLE, which does the simple trick of encoding repeating pixels via
-// a number n (repeat ct) and pixel p in contiguous bytes. 
-fn readRunLengthEncodedImage(
-    comptime PixelType: type,
+fn transferRunLengthEncodedImage(
+    comptime IndexIntType: type,
+    format_pair: imagef.PixelTagPair,
     pbuf: [*]const u8,
     info: *const BitmapInfo,
-    color_table: *const Image,
+    color_table: *const BitmapColorTable,
     image: *Image,
 ) !void {
-    if (color_table.length < 2) {
+    if (color_table.palette.len() < 2) {
         return ImageError.BmpInvalidColorTable;
     }
     if (info.color_depth != rle_bit_sizes[@enumToInt(info.compression)]) {
         return ImageError.BmpInvalidCompression;
     }
+    switch (format_pair.in_tag) {
+        inline .RGBA32, .R8, => |in_tag| {
+            switch (format_pair.out_tag) {
+                inline .RGBA32, .RGB16, .R8, .R16 => |out_tag| {
+                    try transferRunLengthEncodedImageImpl(
+                        IndexIntType, in_tag, out_tag, pbuf, info, color_table, image
+                    );
+                },
+                else => {}
+            }
+        },
+        else => {},
+    }
+}
 
-    var reader = BmpRLEReader(PixelType).new(image.width, image.height);
+
+// // bmps can have a form of compression, RLE, which does the simple trick of encoding repeating pixels via
+// // a number n (repeat ct) and pixel p in contiguous bytes. 
+fn transferRunLengthEncodedImageImpl(
+    comptime IndexIntType: type,
+    comptime in_tag: imagef.PixelTag,
+    comptime out_tag: imagef.PixelTag,
+    pbuf: [*]const u8,
+    info: *const BitmapInfo,
+    color_table: *const BitmapColorTable,
+    image: *Image,
+) !void {
+    var reader = try BmpRLEReader(IndexIntType, in_tag, out_tag).new(image.width, image.height);
 
     var i: usize = 0;
     const iter_max: usize = image.width * image.height;
@@ -695,13 +823,13 @@ const FxPt2Dot30 = extern struct {
     }
 
     pub inline fn fraction(self: *const FxPt2Dot30) u32 {
-        return self.data & 0x8fffffff;
+        return self.data & 0x3fffffff;
     }
 };
 
-const BitmapColorTable = struct {
+pub const BitmapColorTable = struct {
     buffer: [1024]u8 = undefined,
-    image: Image = Image{},
+    palette: Image = Image{},
 };
 
 const CieXYZTriple = extern struct {

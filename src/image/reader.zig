@@ -1,7 +1,6 @@
 const std = @import("std");
 const BitmapInfo = @import("bmp.zig").BitmapInfo;
 const BitmapColorTable = @import("bmp.zig").BitmapColorTable;
-const RGBA32 = @import("../graphics.zig").RGBA32;
 const imagef = @import("image.zig");
 const Image = imagef.Image;
 const ImageError = imagef.ImageError;
@@ -10,6 +9,7 @@ const tga = @import("tga.zig");
 const TgaImageSpec = tga.TgaImageSpec;
 const TgaInfo = tga.TgaInfo;
 const iVec2 = @import("../math.zig").iVec2;
+const RGBA32 = imagef.RGBA32;
 
 pub const RLEAction = enum {
     EndRow, // 0
@@ -19,191 +19,512 @@ pub const RLEAction = enum {
     RepeatPixels, // 4
 };
 
-pub const ColorLayout = enum {
-    ABGR,
-    ARGB
-};
+fn BitmapComponentMask (comptime InPixelIntType: type, comptime ImagePixelComponentType: type) type {
 
-fn BitmapColorMask(comptime IntType: type) type {
-
-    const ShiftType = switch (IntType) {
+    const ShiftType = switch (InPixelIntType) {
         u8 => u4,
         u16 => u4,
         u24 => u5,
         u32 => u5,
-        else => undefined,
+        else => u5,
     };
 
     return struct {
         const MaskType = @This();
 
-        mask: IntType = 0,
+        mask: InPixelIntType = 0,
         rshift: ShiftType = 0,
         lshift: ShiftType = 0,
+        rshift_u8: ShiftType = 0,
+        lshift_u8: ShiftType = 0,
 
         fn new(in_mask: u32) !MaskType {
-            const type_bit_sz = @sizeOf(IntType) * 8;
-            const target_leading_zero_ct = type_bit_sz - 8;
-            const shr: i32 = @as(i32, target_leading_zero_ct) - @intCast(i32, @clz(@intCast(IntType, in_mask)));
-            if (shr > 0) {
-                return MaskType{ .mask = @intCast(IntType, in_mask), .rshift = @intCast(ShiftType, shr) };
-            } else {
-                return MaskType{ .mask = @intCast(IntType, in_mask), .lshift = @intCast(ShiftType, try std.math.absInt(shr)) };
+            if (in_mask == 0) {
+                return MaskType{};
             }
+            const mask_leading_zeroes = @intCast(i32, @clz(in_mask));
+            const mask_trailing_zeroes = @intCast(i32, @ctz(in_mask));
+            const mask_bit_ct = 32 - (mask_leading_zeroes + mask_trailing_zeroes);
+            const component_bit_ct: i32 = switch (ImagePixelComponentType) {
+                u1 => 1,
+                u5 => 5,
+                u6 => 6,
+                u8 => 8,
+                u16 => 16,
+                else => unreachable,
+            };
+            const rshift: i32 = mask_trailing_zeroes - (component_bit_ct - mask_bit_ct);
+            const rshift_u8: i32 = mask_trailing_zeroes - (8 - mask_bit_ct);
+
+            if (rshift > 0) {
+                if (rshift_u8 > 0) {
+                    return MaskType{ 
+                        .mask = @intCast(InPixelIntType, in_mask), 
+                        .rshift = @intCast(ShiftType, rshift),
+                        .rshift_u8 = @intCast(ShiftType, rshift_u8)
+                    };
+                } else {
+                    return MaskType{
+                        .mask = @intCast(InPixelIntType, in_mask), 
+                        .rshift = @intCast(ShiftType, rshift),
+                        .lshift_u8 = @intCast(ShiftType, try std.math.absInt(rshift_u8))
+                    };
+                }
+            } else {
+                if (rshift_u8 > 0) {
+                    return MaskType{ 
+                        .mask = @intCast(InPixelIntType, in_mask), 
+                        .lshift = @intCast(ShiftType, try std.math.absInt(rshift)),
+                        .rshift_u8 = @intCast(ShiftType, rshift_u8),
+                    };
+                } else {
+                    return MaskType{ 
+                        .mask = @intCast(InPixelIntType, in_mask), 
+                        .lshift = @intCast(ShiftType, try std.math.absInt(rshift)),
+                        .lshift_u8 = @intCast(ShiftType, try std.math.absInt(rshift_u8)),
+                    };
+                }
+            }
+        } 
+
+        inline fn extractComponent(self: *const MaskType, pixel: InPixelIntType) ImagePixelComponentType {
+            return @intCast(ImagePixelComponentType, ((pixel & self.mask) >> self.rshift) << self.lshift);
         }
 
-        inline fn extractColor(self: *const MaskType, pixel: IntType) u8 {
-            return @intCast(u8, ((pixel & self.mask) >> self.rshift) << self.lshift);
+        inline fn extractComponentU8(self: *const MaskType, pixel: InPixelIntType) u8 {
+            return @intCast(u8, ((pixel & self.mask) >> self.rshift_u8) << self.lshift_u8);
         }
 
-        inline fn shiftType() type {
-            return ShiftType;
-        }
     };
 }
 
-pub fn InlinePixelReader(comptime IntType: type, comptime layout: ColorLayout) type {
+pub fn BitmapColorTransfer(comptime InPixelTag: imagef.PixelTag, comptime OutPixelTag: imagef.PixelTag) type {
 
-    const ShiftType = switch (IntType) {
-        u8 => u4,
-        u16 => u4,
-        u24 => u5,
-        u32 => u5,
-        else => undefined,
+    const InPixelIntType = InPixelTag.intType(); 
+    const InPixelType = InPixelTag.toType();
+    const OutPixelType = OutPixelTag.toType();
+
+    const ComponentTypeSet = struct {
+        RType: type = u1,
+        GType: type = u1,
+        BType: type = u1,
+        AType: type = u1
     };
 
-    const r_byte_offset: comptime_int = if (layout == .ABGR) 2 else 0;
-    const g_byte_offset: comptime_int = if (layout == .ABGR) 1 else 1;
-    const b_byte_offset: comptime_int = if (layout == .ABGR) 0 else 2;
+    const cmp_type_set = switch(OutPixelType) {
+        imagef.RGBA32 => ComponentTypeSet{ .RType=u8, .GType=u8, .BType=u8, .AType=u8 },
+        imagef.RGB16 => ComponentTypeSet{ .RType=u5, .GType=u6, .BType=u5, .AType=u1 },
+        imagef.R8 =>  ComponentTypeSet{ .RType=u8, .GType=u1, .BType=u1, .AType=u1 },
+        imagef.R16 =>  ComponentTypeSet{ .RType=u16, .GType=u1, .BType=u1, .AType=u1 },
+        imagef.R32F => ComponentTypeSet{ .RType=f32, .GType=u1, .BType=u1, .AType=u1 },
+        imagef.RG64F => ComponentTypeSet{ .RType=f32, .GType=f32, .BType=u1, .AType=u1 },
+        imagef.RGBA128F => ComponentTypeSet{ .RType=f32, .GType=f32, .BType=f32, .AType=f32 },
+        imagef.RGBA128 => ComponentTypeSet{ .RType=u32, .GType=u32, .BType=u32, .AType=u32 },
+        else => ComponentTypeSet{},
+    };
 
     return struct {
-        const SetType = @This();
 
-        r_mask: BitmapColorMask(IntType) = BitmapColorMask(IntType){},
-        g_mask: BitmapColorMask(IntType) = BitmapColorMask(IntType){},
-        b_mask: BitmapColorMask(IntType) = BitmapColorMask(IntType){},
-        a_mask: BitmapColorMask(IntType) = BitmapColorMask(IntType){},
+        const ReaderType = @This();
 
-        pub fn standard(alpha_mask: u32) !SetType {
-            return SetType{
-                .r_mask = switch (IntType) {
-                    u8 => try BitmapColorMask(IntType).new(0),
-                    u16 => try BitmapColorMask(IntType).new(0x7c00),
-                    u24 => try BitmapColorMask(IntType).new(0),
-                    u32 => try BitmapColorMask(IntType).new(0x00ff0000),
-                    else => unreachable,
+        r_mask: 
+            if (transferInputSupported(InPixelType)) BitmapComponentMask(InPixelIntType, cmp_type_set.RType) 
+            else void = undefined,
+        g_mask: 
+            if (transferInputSupported(InPixelType)) BitmapComponentMask(InPixelIntType, cmp_type_set.GType)
+            else void = undefined,
+        b_mask: 
+            if (transferInputSupported(InPixelType)) BitmapComponentMask(InPixelIntType, cmp_type_set.BType)
+            else void = undefined,
+        a_mask: 
+            if (transferInputSupported(InPixelType)) BitmapComponentMask(InPixelIntType, cmp_type_set.AType)
+            else void = undefined,
+
+        comptime IPType: type = OutPixelType,
+        comptime FPType: type = InPixelType,
+
+        pub fn standard(alpha_mask: u32) !ReaderType {
+            const transfer_supported = comptime blk: { break :blk transferSupported(); };
+            if (!transfer_supported) {
+                return ImageError.TransferBetweenFormatsUnsupported;
+            }
+            return ReaderType{
+                .r_mask = switch (InPixelIntType) {
+                    u8 => try BitmapComponentMask(InPixelIntType, cmp_type_set.RType).new(0xe0),
+                    u16 => try BitmapComponentMask(InPixelIntType, cmp_type_set.RType).new(0x7c00),
+                    u24 => try BitmapComponentMask(InPixelIntType, cmp_type_set.RType).new(0xff0000),
+                    u32 => try BitmapComponentMask(InPixelIntType, cmp_type_set.RType).new(0x00ff0000),
+                    else => try BitmapComponentMask(InPixelIntType, u8).new(0),
                 },
-                .g_mask = switch (IntType) {
-                    u8 => try BitmapColorMask(IntType).new(0),
-                    u16 => try BitmapColorMask(IntType).new(0x03e0),
-                    u24 => try BitmapColorMask(IntType).new(0),
-                    u32 => try BitmapColorMask(IntType).new(0x0000ff00),
-                    else => unreachable,
+                .g_mask = switch (InPixelIntType) {
+                    u8 => try BitmapComponentMask(InPixelIntType, cmp_type_set.GType).new(0x1c),
+                    u16 => try BitmapComponentMask(InPixelIntType, cmp_type_set.GType).new(0x03e0),
+                    u24 => try BitmapComponentMask(InPixelIntType, cmp_type_set.GType).new(0x00ff00),
+                    u32 => try BitmapComponentMask(InPixelIntType, cmp_type_set.GType).new(0x0000ff00),
+                    else => try BitmapComponentMask(InPixelIntType, u8).new(0),
                 },
-                .b_mask = switch (IntType) {
-                    u8 => try BitmapColorMask(IntType).new(0),
-                    u16 => try BitmapColorMask(IntType).new(0x001f),
-                    u24 => try BitmapColorMask(IntType).new(0),
-                    u32 => try BitmapColorMask(IntType).new(0x000000ff),
-                    else => unreachable,
+                .b_mask = switch (InPixelIntType) {
+                    u8 => try BitmapComponentMask(InPixelIntType, cmp_type_set.BType).new(0x03),
+                    u16 => try BitmapComponentMask(InPixelIntType, cmp_type_set.BType).new(0x001f),
+                    u24 => try BitmapComponentMask(InPixelIntType, cmp_type_set.BType).new(0x0000ff),
+                    u32 => try BitmapComponentMask(InPixelIntType, cmp_type_set.BType).new(0x000000ff),
+                    else => try BitmapComponentMask(InPixelIntType, u8).new(0),
                 },
-                .a_mask = switch (IntType) {
-                    u8 => try BitmapColorMask(IntType).new(0),
-                    u16 => try BitmapColorMask(IntType).new(alpha_mask),
-                    u24 => try BitmapColorMask(IntType).new(0),
-                    u32 => try BitmapColorMask(IntType).new(alpha_mask),
-                    else => unreachable,
+                .a_mask = switch (InPixelIntType) {
+                    u8 => try BitmapComponentMask(InPixelIntType, cmp_type_set.AType).new(0),
+                    u16 => try BitmapComponentMask(InPixelIntType, cmp_type_set.AType).new(alpha_mask),
+                    u24 => try BitmapComponentMask(InPixelIntType, cmp_type_set.AType).new(0),
+                    u32 => try BitmapComponentMask(InPixelIntType, cmp_type_set.AType).new(alpha_mask),
+                    else => try BitmapComponentMask(InPixelIntType, u8).new(0),
                 },
             };
         }
 
-        pub fn fromInfo(info: *const BitmapInfo) !SetType {
-            return SetType{
-                .r_mask = try BitmapColorMask(IntType).new(info.red_mask),
-                .b_mask = try BitmapColorMask(IntType).new(info.blue_mask),
-                .g_mask = try BitmapColorMask(IntType).new(info.green_mask),
-                .a_mask = try BitmapColorMask(IntType).new(info.alpha_mask),
+        pub fn fromInfo(info: *const BitmapInfo) !ReaderType {
+            const transfer_supported = comptime blk: { break :blk transferSupported(); };
+            if (!transfer_supported) {
+                return ImageError.TransferBetweenFormatsUnsupported;
+            }
+            return ReaderType{
+                .r_mask = try BitmapComponentMask(InPixelIntType, cmp_type_set.RType).new(info.red_mask),
+                .g_mask = try BitmapComponentMask(InPixelIntType, cmp_type_set.GType).new(info.green_mask),
+                .b_mask = try BitmapComponentMask(InPixelIntType, cmp_type_set.BType).new(info.blue_mask),
+                .a_mask = try BitmapComponentMask(InPixelIntType, cmp_type_set.AType).new(info.alpha_mask),
             };
         }
 
-        inline fn extractRGBA(self: *const SetType, pixel: IntType) RGBA32 {
-            return RGBA32{ 
-                .r = self.r_mask.extractColor(pixel), 
-                .g = self.g_mask.extractColor(pixel), 
-                .b = self.b_mask.extractColor(pixel), 
-                .a = self.a_mask.extractColor(pixel) 
+        pub fn transferRowFromBytes(self: *const ReaderType, in_row: [*]const u8, out_row: []OutPixelType) void {
+            const transfer_supported = comptime blk: { break :blk transferSupported(); };
+            if (!transfer_supported) {
+                return;
+            }
+            const color_byte_sz: comptime_int = switch (InPixelIntType) {
+                u8 => 1,
+                u16 => 2,
+                u24 => 3,
+                u32 => 4,
+                else => 0,
             };
-        }
-
-        inline fn extractRGB(self: *const SetType, pixel: IntType) RGBA32 {
-            return RGBA32{ 
-                .r = self.r_mask.extractColor(pixel), 
-                .g = self.g_mask.extractColor(pixel), 
-                .b = self.b_mask.extractColor(pixel), 
-                .a = 255
-            };
-        }
-
-        pub inline fn extractRow(
-            self: *const SetType, image_row: []RGBA32, pixel_row: []const u8, mask_alpha: bool, greyscale: bool
-        ) void {
-            if (greyscale) {
-                extractRowGreyscale(image_row, pixel_row);
-            } else if (mask_alpha) {
-                self.extractRowRGBA(image_row, pixel_row);
-            } else {
-                self.extractRowRGB(image_row, pixel_row);
+            var row_byte: usize = 0;
+            for (0..out_row.len) |i| {
+                var in_pixel: InPixelIntType = undefined;
+                if (InPixelIntType == u24) {
+                    in_pixel = 
+                        (@intCast(u24, in_row[row_byte+2]) << @as(u5, 16)) 
+                        | (@intCast(u24, in_row[row_byte+1]) << @as(u4, 8)) 
+                        | (in_row[row_byte]);
+                } else {
+                    in_pixel = std.mem.readIntSliceLittle(InPixelIntType, in_row[row_byte..row_byte + color_byte_sz]);
+                }
+                self.transferColor(in_pixel, &out_row[i]);
+                row_byte += color_byte_sz;
             }
         }
 
-        fn extractRowGreyscale(image_row: []RGBA32, pixel_row: []const u8) void {
-            const shift: comptime_int = switch(IntType) {
-                u8 => 0,
-                u16 => 1,
-                u32 => 2,
+        pub fn transferColorTableImageRow(
+            self: *const ReaderType,
+            comptime IndexIntType: type,
+            index_row: []const u8, 
+            colors: []const InPixelType,
+            image_row: []OutPixelType,
+            row_byte_ct: u32, 
+        ) !void {
+            const base_mask: comptime_int = switch(IndexIntType) {
+                u1 => 0x80,
+                u4 => 0xf0,
+                u8 => 0xff,
                 else => unreachable,
             };
-            var pixels = @ptrCast([*]const IntType, @alignCast(@alignOf(IntType), &pixel_row[0]))[0..image_row.len];
-            for (0..image_row.len) |j| {
-                const read_pixel = @intCast(u8, pixels[j] >> @as(ShiftType, shift));
-                var write_pixel: *RGBA32 = &image_row[j];
-                write_pixel.r = read_pixel;
-                write_pixel.g = read_pixel;
-                write_pixel.b = read_pixel;
-                write_pixel.a = 255;
+            const bit_width: comptime_int = @typeInfo(IndexIntType).Int.bits;
+            const colors_per_byte: comptime_int = 8 / bit_width;
+
+            var img_idx: usize = 0;
+            for (0..row_byte_ct) |byte| {
+                const idx_byte = index_row[byte];
+                inline for (0..colors_per_byte) |j| {
+                    if (img_idx + j >= image_row.len) {
+                        return;
+                    }
+                    const mask_shift: comptime_int = j * bit_width;
+                    const result_shift: comptime_int = ((colors_per_byte - 1) - j) * bit_width;
+                    const mask = @as(u8, base_mask) >> mask_shift;
+                    const col_idx: u8 = (idx_byte & mask) >> result_shift;
+                    if (col_idx >= colors.len) {
+                        return ImageError.InvalidColorTableIndex;
+                    }
+                    self.transferColor(colors[col_idx], &image_row[img_idx + j]);
+                }
+                img_idx += colors_per_byte;
             }
         }
 
-        fn extractRowRGB(self: *const SetType, image_row: []RGBA32, pixel_row: []const u8) void {
-            switch (IntType) {
-                u16, u32 => {
-                    var pixels = @ptrCast([*]const IntType, @alignCast(@alignOf(IntType), &pixel_row[0]))[0..image_row.len];
-                    for (0..image_row.len) |j| {
-                        image_row[j] = self.extractRGB(pixels[j]);
+        pub inline fn transferColor(self: *const ReaderType, in_pixel: InPixelType, out_pixel: *OutPixelType) void {
+            const transfer_supported = comptime blk: { break :blk transferSupported(); };
+            if (!transfer_supported) {
+                return;
+            }
+            if (OutPixelType == imagef.R8 or OutPixelType == imagef.R16) {
+                switch (InPixelTag) {
+                    .RGBA32 => {
+                        out_pixel.r = RGBAverage(in_pixel, @TypeOf(out_pixel.r));
+                    },
+                    .RGB16 => {
+                        const color = imagef.RGBA32{
+                            .r = @intCast(u8, (in_pixel.c & 0xf800) >> 8),
+                            .g = @intCast(u8, (in_pixel.c & 0x07e0) >> 3),
+                            .b = @intCast(u8, (in_pixel.c & 0x001f) << 3),
+                        };
+                        out_pixel.r = RGBAverage(color, @TypeOf(out_pixel.r));
+                    },
+                    .R8 => {
+                        if (OutPixelType == imagef.R8) {
+                            out_pixel.* = in_pixel;
+                        } else { // .R16
+                            out_pixel.r = @intCast(u16, in_pixel.r) << 8;
+                        }
+                    },
+                    .R16 => {
+                        if (OutPixelType == imagef.R8) {
+                            out_pixel.r = @intCast(u8, (in_pixel.r & 0xff00) >> 8);
+                        } else {
+                            out_pixel.* = in_pixel;
+                        }
+                    },
+                    .U32_RGBA, .U32_RGB, .U16_RGBA, .U24_RGB, .U16_RGB => {
+                        const color = imagef.RGBA32{
+                            .r = self.r_mask.extractComponentU8(in_pixel),
+                            .g = self.g_mask.extractComponentU8(in_pixel),
+                            .b = self.b_mask.extractComponentU8(in_pixel),
+                        };
+                        out_pixel.r = RGBAverage(color, @TypeOf(out_pixel.r));
+                    },
+                    .U16_R => {
+                        if (OutPixelType == imagef.R8) {
+                            out_pixel.r = @intCast(u8, (in_pixel & 0xff00) >> 8);
+                        } else {
+                            out_pixel.r = in_pixel;
+                        }
+                    },
+                    .U8_R => {
+                        if (OutPixelType == imagef.R8) {
+                            out_pixel.r = in_pixel;
+                        } else {
+                            out_pixel.r = @intCast(u16, in_pixel) << 8;
+                        }
+                    },
+                    else => {},
+                }
+            } else switch (InPixelTag) {
+                .RGBA32 => {
+                    if (OutPixelType == imagef.RGBA32) {
+                        out_pixel.* = in_pixel;
+                        return;
+                    } else {
+                        out_pixel.c = 0;
+                        out_pixel.c |= (@intCast(u16, in_pixel.r) & 0xf8) << 8;
+                        out_pixel.c |= (@intCast(u16, in_pixel.g) & 0xfc) << 3;
+                        out_pixel.c |= (@intCast(u16, in_pixel.b) & 0xf8) >> 3;
                     }
                 },
-                u24 => {
-                    var byte: usize = 0;
-                    for (0..image_row.len) |j| {
-                        const image_pixel: *RGBA32 = &image_row[j];
-                        image_pixel.a = 255;
-                        image_pixel.b = pixel_row[byte + b_byte_offset];
-                        image_pixel.g = pixel_row[byte + g_byte_offset];
-                        image_pixel.r = pixel_row[byte + r_byte_offset];
-                        byte += 3;
+                .RGB16 => {
+                    if (OutPixelType == imagef.RGBA32) {
+                        out_pixel.r = @intCast(u8, (in_pixel.c & 0xf800) >> 8);
+                        out_pixel.g = @intCast(u8, (in_pixel.c & 0x07e0) >> 3);
+                        out_pixel.b = @intCast(u8, (in_pixel.c & 0x001f) << 3);
+                        out_pixel.a = 255;
+                    } else {
+                        out_pixel.* = in_pixel;
                     }
                 },
-                else => unreachable,
+                .R8 => {
+                    if (OutPixelType == imagef.RGBA32) {
+                        out_pixel.r = in_pixel.r;
+                        out_pixel.g = out_pixel.r;
+                        out_pixel.b = out_pixel.r;
+                        out_pixel.a = 255;
+                    } else {
+                        out_pixel.c = 0;
+                        const r: u16 = @intCast(u16, in_pixel.r & 0xf8) >> 3;
+                        out_pixel.c |= r << 11; 
+                        out_pixel.c |= @intCast(u16, in_pixel.r & 0xfc) << 3;
+                        out_pixel.c |= r;
+                    }
+                },
+                .R16 => {
+                    if (OutPixelType == imagef.RGBA32) {
+                        out_pixel.r = @intCast(u8, (in_pixel.r & 0xff00) >> 8);
+                        out_pixel.g = out_pixel.r;
+                        out_pixel.b = out_pixel.r;
+                        out_pixel.a = 255;
+                    } else {
+                        out_pixel.c = 0;
+                        const r = in_pixel.r & 0x7c00;
+                        out_pixel.c |= r;
+                        out_pixel.c |= (in_pixel.r & 0xfc00) >> 5;
+                        out_pixel.c |= r >> 11;
+                    }
+                },
+                .U32_RGBA, .U16_RGBA => {
+                    if (OutPixelType == imagef.RGBA32) {
+                        out_pixel.r = self.r_mask.extractComponent(in_pixel);
+                        out_pixel.g = self.g_mask.extractComponent(in_pixel);
+                        out_pixel.b = self.b_mask.extractComponent(in_pixel);
+                        out_pixel.a = self.a_mask.extractComponent(in_pixel);
+                    } else {
+                        out_pixel.c = 0;
+                        out_pixel.c |= @intCast(u16, self.r_mask.extractComponent(in_pixel)) << 11;
+                        out_pixel.c |= @intCast(u16, self.g_mask.extractComponent(in_pixel)) << 5;
+                        out_pixel.c |= self.b_mask.extractComponent(in_pixel);
+                    }
+                },
+                .U32_RGB, .U24_RGB, .U16_RGB => {
+                    if (OutPixelType == imagef.RGBA32) {
+                        out_pixel.r = self.r_mask.extractComponent(in_pixel);
+                        out_pixel.g = self.g_mask.extractComponent(in_pixel);
+                        out_pixel.b = self.b_mask.extractComponent(in_pixel);
+                        out_pixel.a = std.math.maxInt(@TypeOf(out_pixel.a));
+                    } else {
+                        out_pixel.c = 0;
+                        out_pixel.c |= @intCast(u16, self.r_mask.extractComponent(in_pixel)) << 11;
+                        out_pixel.c |= @intCast(u16, self.g_mask.extractComponent(in_pixel)) << 5;
+                        out_pixel.c |= self.b_mask.extractComponent(in_pixel);
+                    }
+                },
+                .U16_R => {
+                    if (OutPixelType == imagef.RGBA32) {
+                        out_pixel.r = @intCast(u8, (in_pixel & 0xff00) >> 8);
+                        out_pixel.g = out_pixel.r;
+                        out_pixel.b = out_pixel.r;
+                        out_pixel.a = std.math.maxInt(@TypeOf(out_pixel.a));
+                    } else {
+                        out_pixel.c = 0;
+                        const r = in_pixel & 0x7c00;
+                        out_pixel.c |= r;
+                        out_pixel.c |= (in_pixel & 0xfc00) >> 5;
+                        out_pixel.c |= r >> 11;
+                    }
+                },
+                .U8_R => {
+                    if (OutPixelType == imagef.RGBA32) {
+                        out_pixel.r = in_pixel;
+                        out_pixel.g = out_pixel.r;
+                        out_pixel.b = out_pixel.r;
+                        out_pixel.a = std.math.maxInt(@TypeOf(out_pixel.a));
+                    } else {
+                        out_pixel.c = 0;
+                        const r: u16 = @intCast(u16, in_pixel & 0xf8) >> 3;
+                        out_pixel.c |= r << 11; 
+                        out_pixel.c |= @intCast(u16, in_pixel & 0xfc) << 3;
+                        out_pixel.c |= r;
+                    }
+                },
+                else => {},
             }
         }
 
-        fn extractRowRGBA(self: *const SetType, image_row: []RGBA32, pixel_row: []const u8) void {
-            var pixels = @ptrCast([*]const IntType, @alignCast(@alignOf(IntType), &pixel_row[0]))[0..image_row.len];
-            for (0..image_row.len) |j| {
-                image_row[j] = self.extractRGBA(pixels[j]);
-            }
+        inline fn RGBAverage(color: imagef.RGBA32, comptime OutputIntType: type) OutputIntType {
+            const inv_grey_sum_max: comptime_float = 1.0 / @intToFloat(comptime_float, 255 * 3);
+            const max_cmp: comptime_float = @intToFloat(f32, std.math.maxInt(OutputIntType));
+            const grey_sum: u32 = 
+                @intCast(u32, color.r) 
+                + @intCast(u32, color.g) 
+                + @intCast(u32, color.b);
+            const base_grey: f32 = @intToFloat(f32, grey_sum);
+            const white_proportion: f32 = base_grey * inv_grey_sum_max;
+            return @floatToInt(OutputIntType, white_proportion * max_cmp);
         }
+
+        pub inline fn transferInputSupported(comptime PixelType: type) bool {
+            return switch(PixelType) {
+                imagef.RGBA32, imagef.RGB16, imagef.R8, imagef.R16, u32, u24, u16, u8 => true,
+                else => false,
+            };
+        }
+
+        pub inline fn transferOutputSupported(comptime PixelType: type) bool {
+            return switch(PixelType) {
+                imagef.RGBA32, imagef.RGB16, imagef.R8, imagef.R16 => true,
+                else => false,
+            };
+        }
+
+        pub inline fn transferSupported() bool {
+            return transferInputSupported(InPixelType) and transferOutputSupported(OutPixelType);
+        }
+
+        pub fn inPixelIntType() type {
+            return InPixelIntType;
+        }
+
+        pub fn inPixelType() type {
+            return InPixelType;
+        }
+
+        pub fn outPixelType() type {
+            return OutPixelType;
+        }
+
     };
+}
+
+pub fn transferImage(in_image: *const Image, out_image: *Image) !void {
+    try switch(in_image.activePixelTag()) {
+        inline .RGBA32, .RGB16, .R8, .R16 => |in_tag| {
+            try switch (out_image.activePixelTag()) {
+                inline .RGBA32, .RGB16, .R8, .R16 => |out_tag| {
+                    transferImageKnownTags(in_tag, out_tag, in_image, out_image);
+                },
+                else => {}
+            };
+        },
+        else => {},
+    };
+}
+
+pub fn transferImageKnownTags(
+    comptime in_tag: imagef.PixelTag, 
+    comptime out_tag: imagef.PixelTag,
+    in_image: *const Image, 
+    out_image: *Image
+) !void {
+    const transfer = try BitmapColorTransfer(in_tag, out_tag).standard(0);
+    const in_pixels = try in_image.getPixels(in_tag);
+    const out_pixels = try out_image.getPixels(out_tag);
+    if (in_pixels.len != out_pixels.len) {
+        return ImageError.UnevenImageLengthsInTransfer;
+    }
+    if (in_tag == out_tag) {
+        @memcpy(out_pixels, in_pixels);
+    }
+    else for (0..out_pixels.len) |i| {
+        transfer.transferColor(in_pixels[i], &out_pixels[i]);
+    }
+}
+
+pub fn imageIsRedundantGreyscale(comptime PixelIntType: type, buffer: []const u8) bool {
+    switch (PixelIntType) {
+        u16, u32 => {
+            var pixels = @ptrCast([*]const PixelIntType, @alignCast(@alignOf(PixelIntType), &buffer[0]))[0..buffer.len];
+            for (0..pixels.len) |j| {
+                if (pixels[j].r == pixels[j].g and pixels[j].g == pixels[j].b) {
+                    continue;
+                }
+                return false;
+            }
+            return true;
+        },
+        u24 => {
+            var byte: usize = 0;
+            while (byte < buffer.len) : (byte += 3) {
+                if (buffer[byte] == buffer[byte+1] and buffer[byte+1] == buffer[byte+2]) {
+                    continue;
+                }
+                return false;
+            }
+            return true;
+        },
+        else => unreachable,
+    }   
 }
 
 pub fn TgaRLEReader(comptime IntType: type, comptime color_table_img: bool, comptime greyscale: bool) type {
@@ -355,7 +676,9 @@ pub fn TgaRLEReader(comptime IntType: type, comptime color_table_img: bool, comp
     };
 }
 
-pub fn BmpRLEReader(comptime IntType: type) type {
+pub fn BmpRLEReader(
+    comptime IndexIntType: type, comptime InPixelTag: imagef.PixelTag, comptime OutPixelTag: imagef.PixelTag
+) type {
     return struct {
         const RLEReaderType = @This();
 
@@ -366,29 +689,31 @@ pub fn BmpRLEReader(comptime IntType: type) type {
         byte_pos: u32 = 0,
         img_write_end: bool = false,
         action_bytes: [2]u8 = undefined,
+        transfer: BitmapColorTransfer(InPixelTag, OutPixelTag),
 
-        const read_min_multiple: u8 = switch (IntType) {
+        const read_min_multiple: u8 = switch (IndexIntType) {
             u4 => 4,
             u8 => 2,
             else => unreachable,
         };
-        const read_min_shift: u8 = switch (IntType) {
+        const read_min_shift: u8 = switch (IndexIntType) {
             u4 => 2,
             u8 => 1,
             else => unreachable,
         };
-        const byte_shift: u8 = switch (IntType) {
+        const byte_shift: u8 = switch (IndexIntType) {
             u4 => 1,
             u8 => 0,
             else => unreachable,
         };
 
-        pub fn new(image_width: u32, image_height: u32) RLEReaderType {
+        pub fn new(image_width: u32, image_height: u32) !RLEReaderType {
             return RLEReaderType{
                 .img_row = image_height - 1,
                 .img_width = image_width,
                 .img_height = image_height,
                 .byte_pos = 0,
+                .transfer = try BitmapColorTransfer(InPixelTag, OutPixelTag).standard(0),
             };
         }
 
@@ -416,34 +741,38 @@ pub fn BmpRLEReader(comptime IntType: type) type {
             const col_end = self.img_col + repeat_ct;
             const img_idx_end = self.img_row * self.img_width + col_end;
 
-            if (img_idx_end > image.pixels.RGBA32.?.len) {
+            if (img_idx_end > image.len()) {
                 return ImageError.BmpInvalidRLEData;
             }
             var img_idx = self.imageIndex();
+            var image_pixels = try image.getPixels(OutPixelTag);
+            const table_colors = try color_table.palette.getPixels(InPixelTag);
 
-            switch (IntType) {
+            switch (IndexIntType) {
                 u4 => {
                     const color_indices: [2]u8 = .{ (self.action_bytes[1] & 0xf0) >> 4, self.action_bytes[1] & 0x0f };
-                    if (color_indices[0] >= color_table.length or color_indices[1] >= color_table.length) {
+                    if (color_indices[0] >= table_colors.len or color_indices[1] >= table_colors.len) {
                         return ImageError.InvalidColorTableIndex;
                     }
 
                     var color_idx: u8 = 0;
-                    const colors: [2]RGBA32 = .{ color_table.buffer[color_indices[0]], color_table.buffer[color_indices[1]] };
+                    const colors: [2]InPixelTag.toType() = .{ 
+                        table_colors[color_indices[0]], table_colors[color_indices[1]] 
+                    };
                     while (img_idx < img_idx_end) : (img_idx += 1) {
-                        image.pixels.RGBA32.?[img_idx] = colors[color_idx];
+                        self.transfer.transferColor(colors[color_idx], &image_pixels[img_idx]);
                         color_idx = 1 - color_idx;
                     }
                 },
                 u8 => {
                     const color_idx = self.action_bytes[1];
-                    if (color_idx >= color_table.length) {
+                    if (color_idx >= table_colors.len) {
                         return ImageError.InvalidColorTableIndex;
                     }
 
-                    const color = color_table.buffer[color_idx];
+                    const color = table_colors[color_idx];
                     while (img_idx < img_idx_end) : (img_idx += 1) {
-                        image.pixels.RGBA32.?[img_idx] = color;
+                        self.transfer.transferColor(color, &image_pixels[img_idx]);
                     }
                 },
                 else => unreachable,
@@ -461,7 +790,7 @@ pub fn BmpRLEReader(comptime IntType: type) type {
             const col_end = self.img_col + read_ct;
             const img_idx_end = self.img_row * self.img_width + col_end;
 
-            if (img_idx_end > image.pixels.RGBA32.?.len) {
+            if (img_idx_end > image.len()) {
                 return ImageError.BmpInvalidRLEData;
             }
 
@@ -476,30 +805,33 @@ pub fn BmpRLEReader(comptime IntType: type) type {
                 return ImageError.UnexpectedEndOfImageBuffer;
             }
 
+            var image_pixels = try image.getPixels(OutPixelTag);
+            const table_colors = try color_table.palette.getPixels(InPixelTag);
             var img_idx = self.imageIndex();
             var byte_idx: usize = self.byte_pos;
-            switch (IntType) {
+
+            switch (IndexIntType) {
                 u4 => {
                     var high_low: u1 = 0;
                     const masks: [2]u8 = .{ 0xf0, 0x0f };
                     const shifts: [2]u3 = .{ 4, 0 };
                     while (img_idx < img_idx_end) : (img_idx += 1) {
                         const color_idx = (buffer[byte_idx] & masks[high_low]) >> shifts[high_low];
-                        if (color_idx >= color_table.length) {
+                        if (color_idx >= table_colors.len) {
                             return ImageError.InvalidColorTableIndex;
                         }
-                        image.pixels.RGBA32.?[img_idx] = color_table.buffer[color_idx];
+                        self.transfer.transferColor(table_colors[color_idx], &image_pixels[img_idx]);
                         byte_idx += high_low;
                         high_low = 1 - high_low;
                     }
                 },
                 u8 => {
                     while (img_idx < img_idx_end) : (img_idx += 1) {
-                        const color_idx: IntType = buffer[byte_idx];
-                        if (color_idx >= color_table.length) {
+                        const color_idx: IndexIntType = buffer[byte_idx];
+                        if (color_idx >= table_colors.len) {
                             return ImageError.InvalidColorTableIndex;
                         }
-                        image.pixels.RGBA32.?[img_idx] = color_table.buffer[color_idx];
+                        self.transfer.transferColor(table_colors[color_idx], &image_pixels[img_idx]);
                         byte_idx += 1;
                     }
                 },
@@ -540,38 +872,6 @@ pub fn BmpRLEReader(comptime IntType: type) type {
         }
     };
 }
-
-pub fn readColorTableImageRow(
-    index_row: []const u8, 
-    image_row: []RGBA32, 
-    colors: []const RGBA32, 
-    row_byte_ct: u32, 
-    comptime base_mask: comptime_int,
-    comptime PixelType: type,
-) !void {
-    const bit_width: comptime_int = @typeInfo(PixelType).Int.bits;
-    const colors_per_byte: comptime_int = 8 / bit_width;
-
-    var img_idx: usize = 0;
-    for (0..row_byte_ct) |byte| {
-        const idx_byte = index_row[byte];
-        inline for (0..colors_per_byte) |j| {
-            if (img_idx + j >= image_row.len) {
-                return;
-            }
-            const mask_shift: comptime_int = j * bit_width;
-            const result_shift: comptime_int = ((colors_per_byte - 1) - j) * bit_width;
-            const mask = @as(u8, base_mask) >> mask_shift;
-            const col_idx: u8 = (idx_byte & mask) >> result_shift;
-            if (col_idx >= colors.len) {
-                return ImageError.InvalidColorTableIndex;
-            }
-            image_row[img_idx + j] = colors[col_idx];
-        }
-        img_idx += colors_per_byte;
-    }
-}
-
 
 fn tgaImageOrigin(image_spec: *const TgaImageSpec) iVec2(i32) {
     const bit4: bool = (image_spec.descriptor & 0x10) != 0;
