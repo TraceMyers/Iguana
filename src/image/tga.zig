@@ -41,8 +41,6 @@ pub fn load(
     defer allocator.free(buffer);
 
     try createImage(&info, image, allocator, buffer, options);
-
-    _ = options;
 }
 
 fn readFooter(file: *std.fs.File, info: *TgaInfo, extents: *ExtentBuffer) !void {
@@ -324,6 +322,35 @@ fn readColorMapData(info: *TgaInfo, allocator: std.mem.Allocator, buffer: []cons
     }
 }
 
+fn getImageTags(
+    info: *const TgaInfo, options: *const imagef.ImageLoadOptions
+) !imagef.PixelTagPair {
+    var tag_pair = imagef.PixelTagPair{};
+    const image_spec = info.header.image_spec;
+    switch (info.header.image_type) {
+        .TrueColor, .RleTrueColor => try switch(image_spec.color_depth) {
+            15 => .U16_RGB15, 
+            16 => .U16_RGB,
+            24 => .U24_RGB,
+            32 => .U32_RGB,
+            else => return ImageError.TgaNonStandardColorDepthUnsupported,
+        },
+        .Greyscale, .RleGreyscale => try switch(image_spec.color_depth) {
+            8 => .U8_R,
+            15, 16 => .U16_R,
+            else => return ImageError.TgaNonStandardColorDepthUnsupported,
+        },
+        .ColorMap, .RleColorMap => try switch(image_spec.color_depth) {
+            8 => .RGBA32,
+            else => return ImageError.TgaColorTableImageNot8BitColorDepth,
+        },
+        else => {},
+    }
+    tag_pair.out_tag = try imagef.autoSelectImageFormat(tag_pair.in_tag, options);
+    return tag_pair;
+}
+
+
 fn createImage(
     info: *const TgaInfo, 
     image: *Image, 
@@ -338,14 +365,13 @@ fn createImage(
     if (image_sz > buffer.len 
         and image_type != .RleColorMap 
         and image_type != .RleTrueColor 
-        and image_type != .RleGreyscale) {
+        and image_type != .RleGreyscale
+    ) {
         return ImageError.UnexpectedEndOfImageBuffer;
     }
 
-    image.width = image_spec.image_width;
-    image.height = image_spec.image_height;
-    image.allocator = allocator;
-    image.pixels.RGBA32 = try allocator.alloc(RGBA32, pixel_ct);
+    const format_tags: imagef.PixelTagPair = try getImageTags(info, options);
+    image.init(allocator, format_tags.out_tag, image_spec.image_width, image_spec.image_height);
 
     const bufptr = @ptrCast([*]const u8, &buffer[0]);
 

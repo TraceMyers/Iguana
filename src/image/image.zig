@@ -228,6 +228,7 @@ pub const RGBA32 = extern struct {
 // I was unable to get a packed struct with r:u5, g:u6, b:u5 components to work
 // so, 'c' stands for components!
 pub const RGB16 = extern struct {
+    // r: 5, g: 6, b: 5
     c: u16,
 
     pub inline fn getR(self: *RGB16) u8 {
@@ -255,9 +256,50 @@ pub const RGB16 = extern struct {
     }
 
     pub inline fn setRGB(self: *RGB16, r: u8, g: u8, b: u8) void {
-        self.c = ((@intCast(u16, r) & 0xf8) << 8)
-            | ((@intCast(u16, g) & 0xfc) << 3)
-            | ((@intCast(u16, b) & 0xf8) >> 3);
+        self.c = ((@intCast(u16, r) & 0xf8) << 8) | ((@intCast(u16, g) & 0xfc) << 3) | ((@intCast(u16, b) & 0xf8) >> 3);
+    }
+
+    pub inline fn setRGBFromU16(self: *RGB16, r: u16, g: u16, b: u16) void {
+        self.c = (r & 0xf800) | ((g & 0xfc00) >> 5) | ((b & 0xf800) >> 11);
+    }
+};
+
+pub const RGB15 = extern struct {
+    // r: 5, g: 5, b: 5
+    c: u16, 
+
+    pub inline fn getR(self: *RGB16) u8 {
+        return @intCast(u8, (self.c & 0x7c00) >> 8);
+    }
+
+    pub inline fn getG(self: *RGB16) u8 {
+        return @intCast(u8, (self.c & 0x03e0) >> 3);
+    }
+
+    pub inline fn getB(self: *RGB16) u8 {
+        return @intCast(u8, (self.c & 0x001f) << 3);
+    }
+
+    pub inline fn setR(self: *RGB16, r: u8) void {
+        // 0xfc00 here to clear the most significant 6 bits even though we're only setting the 5 least significant of 
+        // the 6 most significant
+        self.c = (self.c & ~0xfc00) | ((r & 0xf8) << 7);
+    } 
+
+    pub inline fn setG(self: *RGB16, g: u8) void {
+        self.c = (self.c & ~0x03e0) | ((g & 0xf8) << 3);
+    }
+
+    pub inline fn setB(self: *RGB16, b: u8) void {
+        self.c = (self.c & ~0x001f) | ((b & 0xf8) >> 3);
+    }
+
+    pub inline fn setRGB(self: *RGB16, r: u8, g: u8, b: u8) void {
+        self.c = ((@intCast(u16, r) & 0xf8) << 7) | ((@intCast(u16, g) & 0xf8) << 3) | ((@intCast(u16, b) & 0xf8) >> 3);
+    }
+
+    pub inline fn setRGBFromU16(self: *RGB15, r: u16, g: u16, b: u16) void {
+        self.c = ((r & 0xf800) >> 1) | ((g & 0xf800) >> 6) | ((b & 0xf800) >> 11);
     }
 };
 
@@ -344,7 +386,7 @@ pub const PixelTag = enum {
     // valid image pixel formats
     RGBA32, RGB16, R8, R16, R32F, RG64F, RGBA128F, RGBA128,
     // valid internal/file pixel formats
-    U32_RGBA, U32_RGB, U24_RGB, U16_RGBA, U16_RGB, U16_R, U8_R,
+    U32_RGBA, U32_RGB, U24_RGB, U16_RGBA, U16_RGB, U16_RGB15, U16_R, U8_R,
     
     pub fn size(self: PixelTag) usize {
         return switch(self) {
@@ -361,6 +403,7 @@ pub const PixelTag = enum {
             .U24_RGB => 3,
             .U16_RGBA => 2,
             .U16_RGB => 2,
+            .U16_RGB15 => 2,
             .U16_R => 2,
             .U8_R => 1,
         };
@@ -368,7 +411,7 @@ pub const PixelTag = enum {
 
     pub fn isColor(self: PixelTag) bool {
         return switch(self) {
-            .RGBA32, .RGB16, .RGBA128F, .RGBA128, .U32_RGBA, .U32_RGB, .U24_RGB, .U16_RGBA, .U16_RGB => true,
+            .RGBA32, .RGB16, .RGBA128F, .RGBA128, .U32_RGBA, .U32_RGB, .U24_RGB, .U16_RGBA, .U16_RGB, .U16_RGB15 => true,
             else => false,
         };
     }
@@ -402,6 +445,7 @@ pub const PixelTag = enum {
             .U24_RGB => u24,
             .U16_RGBA => u16,
             .U16_RGB => u16,
+            .U16_RGB15 => u16,
             .U16_R => u16,
             .U8_R => u8,
         };
@@ -422,6 +466,7 @@ pub const PixelTag = enum {
             .U24_RGB => u24,
             .U16_RGBA => u16,
             .U16_RGB => u16,
+            .U16_RGB15 => u16,
             .U16_R => u16,
             .U8_R => u8,
         };
@@ -457,6 +502,7 @@ pub const PixelSlice = union(PixelTag) {
     U24_RGB: []u24,
     U16_RGBA: []u16,
     U16_RGB: []u16,
+    U16_RGB15: []u16,
     U16_R: []u16,
     U8_R: []u8
 };

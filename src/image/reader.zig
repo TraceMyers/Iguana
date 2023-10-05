@@ -151,14 +151,20 @@ pub fn BitmapColorTransfer(comptime InPixelTag: imagef.PixelTag, comptime OutPix
             return ReaderType{
                 .r_mask = switch (InPixelIntType) {
                     u8 => try BitmapComponentMask(InPixelIntType, cmp_type_set.RType).new(0xe0),
-                    u16 => try BitmapComponentMask(InPixelIntType, cmp_type_set.RType).new(0x7c00),
+                    u16 => switch(InPixelTag) {
+                        .U16_RGB15 => try BitmapComponentMask(InPixelIntType, cmp_type_set.RType).new(0x7c00),
+                        else => try BitmapComponentMask(InPixelIntType, cmp_type_set.RType).new(0xf800),
+                    },
                     u24 => try BitmapComponentMask(InPixelIntType, cmp_type_set.RType).new(0xff0000),
                     u32 => try BitmapComponentMask(InPixelIntType, cmp_type_set.RType).new(0x00ff0000),
                     else => try BitmapComponentMask(InPixelIntType, u8).new(0),
                 },
                 .g_mask = switch (InPixelIntType) {
                     u8 => try BitmapComponentMask(InPixelIntType, cmp_type_set.GType).new(0x1c),
-                    u16 => try BitmapComponentMask(InPixelIntType, cmp_type_set.GType).new(0x03e0),
+                    u16 => switch(InPixelTag) {
+                        .U16_RGB15 => try BitmapComponentMask(InPixelIntType, cmp_type_set.GType).new(0x03e0),
+                        else => try BitmapComponentMask(InPixelIntType, cmp_type_set.GType).new(0x07e0),
+                    },
                     u24 => try BitmapComponentMask(InPixelIntType, cmp_type_set.GType).new(0x00ff00),
                     u32 => try BitmapComponentMask(InPixelIntType, cmp_type_set.GType).new(0x0000ff00),
                     else => try BitmapComponentMask(InPixelIntType, u8).new(0),
@@ -172,7 +178,7 @@ pub fn BitmapColorTransfer(comptime InPixelTag: imagef.PixelTag, comptime OutPix
                 },
                 .a_mask = switch (InPixelIntType) {
                     u8 => try BitmapComponentMask(InPixelIntType, cmp_type_set.AType).new(0),
-                    u16 => try BitmapComponentMask(InPixelIntType, cmp_type_set.AType).new(alpha_mask),
+                    u16 => try BitmapComponentMask(InPixelIntType, cmp_type_set.AType).new(0),
                     u24 => try BitmapComponentMask(InPixelIntType, cmp_type_set.AType).new(0),
                     u32 => try BitmapComponentMask(InPixelIntType, cmp_type_set.AType).new(alpha_mask),
                     else => try BitmapComponentMask(InPixelIntType, u8).new(0),
@@ -290,7 +296,7 @@ pub fn BitmapColorTransfer(comptime InPixelTag: imagef.PixelTag, comptime OutPix
                             out_pixel.* = in_pixel;
                         }
                     },
-                    .U32_RGBA, .U32_RGB, .U16_RGBA, .U24_RGB, .U16_RGB => {
+                    .U32_RGBA, .U32_RGB, .U16_RGBA, .U24_RGB, .U16_RGB, .U16_RGB15 => {
                         const color = imagef.RGBA32{
                             .r = self.r_mask.extractComponentU8(in_pixel),
                             .g = self.g_mask.extractComponentU8(in_pixel),
@@ -314,7 +320,7 @@ pub fn BitmapColorTransfer(comptime InPixelTag: imagef.PixelTag, comptime OutPix
                     },
                     else => {},
                 }
-            } else switch (InPixelTag) {
+            } else switch (InPixelTag) { // RGBA32 and RGB16
                 .RGBA32 => {
                     if (OutPixelType == imagef.RGBA32) {
                         out_pixel.* = in_pixel;
@@ -368,7 +374,7 @@ pub fn BitmapColorTransfer(comptime InPixelTag: imagef.PixelTag, comptime OutPix
                             | self.b_mask.extractComponent(in_pixel);
                     }
                 },
-                .U32_RGB, .U24_RGB, .U16_RGB => {
+                .U32_RGB, .U24_RGB, .U16_RGB, .U16_RGB15 => {
                     if (OutPixelType == imagef.RGBA32) {
                         out_pixel.r = self.r_mask.extractComponent(in_pixel);
                         out_pixel.g = self.g_mask.extractComponent(in_pixel);

@@ -434,7 +434,7 @@ fn getImageTags(
 ) !imagef.PixelTagPair {
     var tag_pair = imagef.PixelTagPair{};
     switch (info.compression) {
-        .RGB => {
+        .RGB. BITFIELDS, .ALPHABITFIELDS => {
             if (info.color_depth <= 8) {
                 tag_pair.in_tag = color_table.palette.activePixelTag();
             } else {
@@ -449,14 +449,6 @@ fn getImageTags(
         },
         .RLE4, .RLE8 => {
             tag_pair.in_tag = color_table.palette.activePixelTag();
-        },
-        .BITFIELDS, .ALPHABITFIELDS => {
-            const alpha_mask_present = info.alpha_mask > 0;
-            tag_pair.in_tag = switch (info.color_depth) {
-                16 => if (alpha_mask_present) imagef.PixelTag.U16_RGBA else imagef.PixelTag.U16_RGB,
-                32 => if (alpha_mask_present) imagef.PixelTag.U32_RGBA else imagef.PixelTag.U32_RGB,
-                else => .RGBA32,
-            };
         },
         else => {},
     }
