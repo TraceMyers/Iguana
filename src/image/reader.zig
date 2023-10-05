@@ -112,14 +112,14 @@ pub fn BitmapColorTransfer(comptime InPixelTag: imagef.PixelTag, comptime OutPix
     };
 
     const cmp_type_set = switch(OutPixelType) {
-        imagef.RGBA32 => ComponentTypeSet{ .RType=u8, .GType=u8, .BType=u8, .AType=u8 },
-        imagef.RGB16 => ComponentTypeSet{ .RType=u5, .GType=u6, .BType=u5, .AType=u1 },
-        imagef.R8 =>  ComponentTypeSet{ .RType=u8, .GType=u1, .BType=u1, .AType=u1 },
-        imagef.R16 =>  ComponentTypeSet{ .RType=u16, .GType=u1, .BType=u1, .AType=u1 },
-        imagef.R32F => ComponentTypeSet{ .RType=f32, .GType=u1, .BType=u1, .AType=u1 },
-        imagef.RG64F => ComponentTypeSet{ .RType=f32, .GType=f32, .BType=u1, .AType=u1 },
-        imagef.RGBA128F => ComponentTypeSet{ .RType=f32, .GType=f32, .BType=f32, .AType=f32 },
-        imagef.RGBA128 => ComponentTypeSet{ .RType=u32, .GType=u32, .BType=u32, .AType=u32 },
+        imagef.RGBA32 =>    ComponentTypeSet{ .RType=u8,  .GType=u8,  .BType=u8,  .AType=u8 },
+        imagef.RGB16 =>     ComponentTypeSet{ .RType=u5,  .GType=u6,  .BType=u5,  .AType=u1 },
+        imagef.R8 =>        ComponentTypeSet{ .RType=u8,  .GType=u1,  .BType=u1,  .AType=u1 },
+        imagef.R16 =>       ComponentTypeSet{ .RType=u16, .GType=u1,  .BType=u1,  .AType=u1 },
+        imagef.R32F =>      ComponentTypeSet{ .RType=f32, .GType=u1,  .BType=u1,  .AType=u1 },
+        imagef.RG64F =>     ComponentTypeSet{ .RType=f32, .GType=f32, .BType=u1,  .AType=u1 },
+        imagef.RGBA128F =>  ComponentTypeSet{ .RType=f32, .GType=f32, .BType=f32, .AType=f32 },
+        imagef.RGBA128 =>   ComponentTypeSet{ .RType=u32, .GType=u32, .BType=u32, .AType=u32 },
         else => ComponentTypeSet{},
     };
 
@@ -270,9 +270,9 @@ pub fn BitmapColorTransfer(comptime InPixelTag: imagef.PixelTag, comptime OutPix
                     },
                     .RGB16 => {
                         const color = imagef.RGBA32{
-                            .r = @intCast(u8, (in_pixel.c & 0xf800) >> 8),
-                            .g = @intCast(u8, (in_pixel.c & 0x07e0) >> 3),
-                            .b = @intCast(u8, (in_pixel.c & 0x001f) << 3),
+                            .r = in_pixel.getR(),
+                            .g = in_pixel.getG(),
+                            .b = in_pixel.getB(),
                         };
                         out_pixel.r = RGBAverage(color, @TypeOf(out_pixel.r));
                     },
@@ -320,17 +320,14 @@ pub fn BitmapColorTransfer(comptime InPixelTag: imagef.PixelTag, comptime OutPix
                         out_pixel.* = in_pixel;
                         return;
                     } else {
-                        out_pixel.c = 0;
-                        out_pixel.c |= (@intCast(u16, in_pixel.r) & 0xf8) << 8;
-                        out_pixel.c |= (@intCast(u16, in_pixel.g) & 0xfc) << 3;
-                        out_pixel.c |= (@intCast(u16, in_pixel.b) & 0xf8) >> 3;
+                        out_pixel.setRGB(in_pixel.r, in_pixel.g, in_pixel.b);
                     }
                 },
                 .RGB16 => {
                     if (OutPixelType == imagef.RGBA32) {
-                        out_pixel.r = @intCast(u8, (in_pixel.c & 0xf800) >> 8);
-                        out_pixel.g = @intCast(u8, (in_pixel.c & 0x07e0) >> 3);
-                        out_pixel.b = @intCast(u8, (in_pixel.c & 0x001f) << 3);
+                        out_pixel.r = in_pixel.getR();
+                        out_pixel.g = in_pixel.getG();
+                        out_pixel.b = in_pixel.getB();
                         out_pixel.a = 255;
                     } else {
                         out_pixel.* = in_pixel;
@@ -343,11 +340,7 @@ pub fn BitmapColorTransfer(comptime InPixelTag: imagef.PixelTag, comptime OutPix
                         out_pixel.b = out_pixel.r;
                         out_pixel.a = 255;
                     } else {
-                        out_pixel.c = 0;
-                        const r: u16 = @intCast(u16, in_pixel.r & 0xf8) >> 3;
-                        out_pixel.c |= r << 11; 
-                        out_pixel.c |= @intCast(u16, in_pixel.r & 0xfc) << 3;
-                        out_pixel.c |= r;
+                        out_pixel.setRGB(in_pixel.r, in_pixel.r, in_pixel.r);
                     }
                 },
                 .R16 => {
@@ -357,11 +350,10 @@ pub fn BitmapColorTransfer(comptime InPixelTag: imagef.PixelTag, comptime OutPix
                         out_pixel.b = out_pixel.r;
                         out_pixel.a = 255;
                     } else {
-                        out_pixel.c = 0;
-                        const r = in_pixel.r & 0x7c00;
-                        out_pixel.c |= r;
-                        out_pixel.c |= (in_pixel.r & 0xfc00) >> 5;
-                        out_pixel.c |= r >> 11;
+                        const r = in_pixel.r & 0xf800;
+                        out_pixel.c = r
+                            | ((in_pixel.r & 0xfc00) >> 5)
+                            | (r >> 11);
                     }
                 },
                 .U32_RGBA, .U16_RGBA => {
@@ -371,10 +363,9 @@ pub fn BitmapColorTransfer(comptime InPixelTag: imagef.PixelTag, comptime OutPix
                         out_pixel.b = self.b_mask.extractComponent(in_pixel);
                         out_pixel.a = self.a_mask.extractComponent(in_pixel);
                     } else {
-                        out_pixel.c = 0;
-                        out_pixel.c |= @intCast(u16, self.r_mask.extractComponent(in_pixel)) << 11;
-                        out_pixel.c |= @intCast(u16, self.g_mask.extractComponent(in_pixel)) << 5;
-                        out_pixel.c |= self.b_mask.extractComponent(in_pixel);
+                        out_pixel.c = (@intCast(u16, self.r_mask.extractComponent(in_pixel)) << 11)
+                            | (@intCast(u16, self.g_mask.extractComponent(in_pixel)) << 5)
+                            | self.b_mask.extractComponent(in_pixel);
                     }
                 },
                 .U32_RGB, .U24_RGB, .U16_RGB => {
@@ -384,10 +375,9 @@ pub fn BitmapColorTransfer(comptime InPixelTag: imagef.PixelTag, comptime OutPix
                         out_pixel.b = self.b_mask.extractComponent(in_pixel);
                         out_pixel.a = std.math.maxInt(@TypeOf(out_pixel.a));
                     } else {
-                        out_pixel.c = 0;
-                        out_pixel.c |= @intCast(u16, self.r_mask.extractComponent(in_pixel)) << 11;
-                        out_pixel.c |= @intCast(u16, self.g_mask.extractComponent(in_pixel)) << 5;
-                        out_pixel.c |= self.b_mask.extractComponent(in_pixel);
+                        out_pixel.c = (@intCast(u16, self.r_mask.extractComponent(in_pixel)) << 11)
+                            | (@intCast(u16, self.g_mask.extractComponent(in_pixel)) << 5)
+                            | self.b_mask.extractComponent(in_pixel);
                     }
                 },
                 .U16_R => {
@@ -397,11 +387,10 @@ pub fn BitmapColorTransfer(comptime InPixelTag: imagef.PixelTag, comptime OutPix
                         out_pixel.b = out_pixel.r;
                         out_pixel.a = std.math.maxInt(@TypeOf(out_pixel.a));
                     } else {
-                        out_pixel.c = 0;
                         const r = in_pixel & 0x7c00;
-                        out_pixel.c |= r;
-                        out_pixel.c |= (in_pixel & 0xfc00) >> 5;
-                        out_pixel.c |= r >> 11;
+                        out_pixel.c = r
+                            | ((in_pixel & 0xfc00) >> 5)
+                            | (r >> 11);
                     }
                 },
                 .U8_R => {
@@ -411,11 +400,7 @@ pub fn BitmapColorTransfer(comptime InPixelTag: imagef.PixelTag, comptime OutPix
                         out_pixel.b = out_pixel.r;
                         out_pixel.a = std.math.maxInt(@TypeOf(out_pixel.a));
                     } else {
-                        out_pixel.c = 0;
-                        const r: u16 = @intCast(u16, in_pixel & 0xf8) >> 3;
-                        out_pixel.c |= r << 11; 
-                        out_pixel.c |= @intCast(u16, in_pixel & 0xfc) << 3;
-                        out_pixel.c |= r;
+                        out_pixel.setRGB(in_pixel, in_pixel, in_pixel);
                     }
                 },
                 else => {},

@@ -44,20 +44,27 @@ const ColorLayout = readerf.ColorLayout;
 
 pub fn load(file: *std.fs.File, image: *Image, allocator: std.mem.Allocator, options: *const imagef.ImageLoadOptions) !void {
     var externally_allocated: bool = undefined;
-    var buffer: []u8 = try loadFileAndCoreHeaders(file, allocator, bmp_min_sz, options, &externally_allocated);
+    var buffer: []u8 = try loadFileAndCoreHeaders(file, allocator, bmp_min_sz);
     defer if (!externally_allocated) allocator.free(buffer);
 
     const format: imagef.ImageFormat = try validateIdentity(buffer);
-    switch (format) {
-        .Bmp => {},
-        .Jpg => {
-            return ImageError.FormatUnsupported;
-        },
-        .Png => {
-            try redirectToPng(file, image, allocator, options, buffer);
-            return;
-        },
-        else => unreachable,
+    if (format != .Bmp) {
+        if (options.format_comitted) {
+            return ImageError.UnableToVerifyFileImageFormat;
+        }
+        switch (format) {
+            .Tga => {
+
+            },
+            .Jpg => {
+                return ImageError.FormatUnsupported;
+            },
+            .Png => {
+                try redirectToPng(file, image, allocator, options);
+                return;
+            },
+            else => unreachable,
+        }
     }
 
     var info = BitmapInfo{};
@@ -87,7 +94,19 @@ pub fn load(file: *std.fs.File, image: *Image, allocator: std.mem.Allocator, opt
         return ImageError.BmpCompressionUnsupported;
     }
 
-    try createImage(buffer, image, &info, &color_table, allocator);
+    try createImage(buffer, image, &info, &color_table, allocator, options);
+}
+
+fn redirectToPng(
+    file: *std.fs.File, 
+    image: *Image, 
+    allocator: std.mem.Allocator, 
+    options: *const imagef.ImageLoadOptions
+) !void {
+    var retry_options = options.*;
+    retry_options.format_comitted = true;
+    try file.seekTo(0);
+    try png.load(file, image, allocator, &retry_options);
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -98,8 +117,6 @@ fn loadFileAndCoreHeaders(
     file: *std.fs.File, 
     allocator: std.mem.Allocator, 
     min_sz: usize, 
-    options: *const imagef.ImageLoadOptions, 
-    externally_allocated: *bool
 ) ![]u8 {
     const stat = try file.stat();
     // if (stat.size + 4 > memory.MAX_SZ) {
@@ -109,39 +126,13 @@ fn loadFileAndCoreHeaders(
         return ImageError.InvalidSizeForFormat;
     }
 
-    var buffer: []u8 = undefined;
-    if (options.load_buffer.alignment == 4 
-        and options.load_buffer.allocation != null 
-        and options.load_buffer.allocation.?.len >= stat.size + 4
-    ) {
-        externally_allocated.* = true;
-        buffer = options.load_buffer.allocation.?;
-    } else {
-        externally_allocated.* = false;
-        buffer = try allocator.alignedAlloc(u8, 4, stat.size + 4);
-    }
+    var buffer: []u8 = try allocator.alignedAlloc(u8, 4, stat.size + 4);
 
     for (0..bmp_file_header_sz + bmp_info_header_sz_core) |i| {
         buffer[i] = try file.reader().readByte();
     }
 
     return buffer;
-}
-
-fn redirectToPng(
-    file: *std.fs.File, 
-    image: *Image, 
-    allocator: std.mem.Allocator, 
-    options: *const imagef.ImageLoadOptions, 
-    buffer: []u8
-) !void {
-    var retry_options = options.*;
-    retry_options.format_comitted = true;
-    if (options.load_buffer.allocation == null) {
-        retry_options.load_buffer = imagef.ImageLoadBuffer{ .allocation = buffer, .alignment = 4 };
-    }
-    try file.seekTo(0);
-    try png.load(file, image, allocator, &retry_options);
 }
 
 fn loadRemainder(file: *std.fs.File, buffer: []u8, info: *BitmapInfo) !void {
@@ -438,7 +429,9 @@ fn validColorMasks(comptime PixelIntType: type, info: *const BitmapInfo) bool {
     return true;
 }
 
-fn getImageTags(info: *const BitmapInfo, color_table: *const BitmapColorTable) !imagef.PixelTagPair {
+fn getImageTags(
+    info: *const BitmapInfo, color_table: *const BitmapColorTable, options: *const imagef.ImageLoadOptions
+) !imagef.PixelTagPair {
     var tag_pair = imagef.PixelTagPair{};
     switch (info.compression) {
         .RGB => {
@@ -467,7 +460,7 @@ fn getImageTags(info: *const BitmapInfo, color_table: *const BitmapColorTable) !
         },
         else => {},
     }
-    tag_pair.out_tag = try imagef.autoSelectImageFormat(tag_pair.in_tag);
+    tag_pair.out_tag = try imagef.autoSelectImageFormat(tag_pair.in_tag, options);
     return tag_pair;
 }
 
@@ -492,7 +485,8 @@ fn createImage(
     image: *Image, 
     info: *BitmapInfo, 
     color_table: *const BitmapColorTable, 
-    allocator: std.mem.Allocator
+    allocator: std.mem.Allocator,
+    options: *const imagef.ImageLoadOptions
 ) !void {
     image.width = @intCast(u32, try std.math.absInt(info.width));
     image.height = @intCast(u32, try std.math.absInt(info.height));
@@ -517,7 +511,7 @@ fn createImage(
     const pixel_buf = buffer[info.data_offset..buffer.len];
     info.data_size = @intCast(u32, buffer.len - info.data_offset);
 
-    const format_pair = try getImageTags(info, color_table);
+    const format_pair = try getImageTags(info, color_table, options);
     try image.init(allocator, format_pair.out_tag, image.width, image.height);
 
     try switch (info.compression) {

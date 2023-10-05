@@ -55,6 +55,7 @@ pub const ImageError = error{
     NonImageFormatPassedIntoOptions,
     UnevenImageLengthsInTransfer,
     TransferBetweenFormatsUnsupported,
+    UnableToVerifyFileImageFormat
 };
 
 const graphics = @import("../graphics.zig");
@@ -74,11 +75,11 @@ const LocalStringBuffer = string.LocalStringBuffer;
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // load an image from disk. format is optionally inferrable via the file extension.
-// !! Warning !! calling this function may require up to 1.5KB free stack memory.
+// !! Warning !! calling this function may require up to 3KB free stack memory.
 // !! Warning !! some OS/2 BMPs are compatible, except their width and height entries are interpreted as signed integers
 // (rather than the OS/2 standard for core headers, unsigned), which may lead to a failed read or row-inverted image.
-pub fn loadImage(
-    file_path: []const u8, format: ImageFormat, allocator: std.mem.Allocator, options: ImageLoadOptions
+pub fn loadCommonFormatImage(
+    file_path: []const u8, format: ImageFormat, allocator: std.mem.Allocator, options: *const ImageLoadOptions
 ) !Image {
     var t = bench.ScopeTimer.start("loadImage", bench.getScopeTimerID());
     defer t.stop();
@@ -107,7 +108,7 @@ pub fn loadImage(
         const extension_lower = extension_lower_buf.string();
 
         if (string.same(extension_lower, "bmp") or string.same(extension_lower, "dib")) {
-            try bmp.load(&file, &image, allocator, &options);
+            try bmp.load(&file, &image, allocator, options);
         }
         else if (string.same(extension_lower, "tga")
             or string.same(extension_lower, "icb")
@@ -119,7 +120,7 @@ pub fn loadImage(
             return ImageError.FormatUnsupported;
         }
         else if (string.same(extension_lower, "png")) {
-            try png.load(&file, &image, allocator, &options);
+            try png.load(&file, &image, allocator, options);
         }
         else if (string.same(extension_lower, "jpg") or string.same(extension_lower, "jpeg")) {
             return ImageError.FormatUnsupported;
@@ -129,17 +130,63 @@ pub fn loadImage(
         }
     }
     else switch (format) {
-        .Bmp => try bmp.load(&file, &image, allocator, &options),
+        .Bmp => try bmp.load(&file, &image, allocator, options),
         .Jpg => return ImageError.FormatUnsupported,
-        .Png => try png.load(&file, &image, allocator, &options),
+        .Png => try png.load(&file, &image, allocator, options),
         .Tga => return ImageError.FormatUnsupported, //try tga.load(&file, &image, allocator, &options),
         else => unreachable,
     }
     return image;
 }
 
-pub fn disallowPixelFormat(pixel_format: PixelTag) void {
-    pixel_format_allowed[@enumToInt(pixel_format)] = false;
+pub fn getBitCt(num: anytype) comptime_int {
+    return switch(@TypeOf(num)) {
+        u1 => 1,
+        u4 => 4,
+        u5 => 5,
+        u6 => 6,
+        u8 => 8,
+        u16 => 16,
+        u24 => 24,
+        u32 => 32,
+        else => 0
+    };
+}
+
+// for determining what format is probably best to output given the input format
+pub fn autoSelectImageFormat(file_pixel_type: PixelTag, load_options: *const ImageLoadOptions) !PixelTag {
+    var preference_order: [4]PixelTag = undefined;
+    if (file_pixel_type.isColor()) {
+        if (file_pixel_type.hasAlpha()) {
+            preference_order = .{
+                .RGBA32, .RGB16, .R8, .R16
+            };
+        }
+        else if (file_pixel_type.size() == 2) {
+            preference_order = .{ 
+                .RGB16, .RGBA32, .R8, .R16
+            };
+        } else {
+            preference_order = .{ 
+                .RGBA32, .RGB16, .R8, .R16
+            };
+        }
+    } else if (file_pixel_type == .U16_R) {
+        preference_order = .{ 
+            .R16, .R8, .RGBA32, .RGB16
+        };
+    } else {
+        preference_order = .{ 
+            .R8, .R16, .RGBA32, .RGB16
+        };
+    }
+
+    inline for (0..4) |i| {
+        if (load_options.output_format_allowed[@enumToInt(preference_order[i])]) {
+            return preference_order[i];
+        }
+    }
+    return ImageError.NoImageFormatsAllowed;
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -171,17 +218,47 @@ pub const ImageAlpha = enum { None, Normal, Premultiplied };
 
 // --- Image pixel types ---
 
-pub const RGB24 = extern struct {
-    r: u8 = 0,
-    g: u8 = 0,
-    b: u8 = 0,
-};
-
 pub const RGBA32 = extern struct {
     r: u8 = 0,
     g: u8 = 0,
     b: u8 = 0,
     a: u8 = 0,
+};
+
+// I was unable to get a packed struct with r:u5, g:u6, b:u5 components to work
+// so, 'c' stands for components!
+pub const RGB16 = extern struct {
+    c: u16,
+
+    pub inline fn getR(self: *RGB16) u8 {
+        return @intCast(u8, (self.c & 0xf800) >> 8);
+    }
+
+    pub inline fn getG(self: *RGB16) u8 {
+        return @intCast(u8, (self.c & 0x07e0) >> 3);
+    }
+
+    pub inline fn getB(self: *RGB16) u8 {
+        return @intCast(u8, (self.c & 0x001f) << 3);
+    }
+
+    pub inline fn setR(self: *RGB16, r: u8) void {
+        self.c = (self.c & ~0xf800) | ((r & 0xf8) << 8);
+    } 
+
+    pub inline fn setG(self: *RGB16, g: u8) void {
+        self.c = (self.c & ~0x07e0) | ((g & 0xfc) << 3);
+    }
+
+    pub inline fn setB(self: *RGB16, b: u8) void {
+        self.c = (self.c & ~0x001f) | ((b & 0xf8) >> 3);
+    }
+
+    pub inline fn setRGB(self: *RGB16, r: u8, g: u8, b: u8) void {
+        self.c = ((@intCast(u16, r) & 0xf8) << 8)
+            | ((@intCast(u16, g) & 0xfc) << 3)
+            | ((@intCast(u16, b) & 0xf8) >> 3);
+    }
 };
 
 pub const R8 = extern struct {
@@ -196,35 +273,36 @@ pub const R32 = extern struct {
     r: u32 = 0,
 };
 
-pub const RA16 = extern struct {
-    r: u8 = 0,
-    a: u8 = 0,
+pub const RGBA128F = extern struct {
+    r: f32 = 0.0,
+    g: f32 = 0.0,
+    b: f32 = 0.0,
+    a: f32 = 0.0,
 };
 
-pub const RA32 = extern struct {
-    r: u16 = 0,
-    a: u16 = 0,
+pub const RGBA128 = extern struct {
+    r: u32 = 0,
+    g: u32 = 0,
+    b: u32 = 0,
+    a: u32 = 0,
 };
 
-pub const RGB16 = extern struct {
-    c: u16,
+pub const R32F = extern struct {
+    r: f32 = 0.0,
 };
 
-pub fn getBitCt(num: anytype) comptime_int {
-    return switch(@TypeOf(num)) {
-        u1 => 1,
-        u4 => 4,
-        u5 => 5,
-        u6 => 6,
-        u8 => 8,
-        u16 => 16,
-        u24 => 24,
-        u32 => 32,
-        else => 0
-    };
-}
+pub const RG64F = extern struct {
+    r: f32 = 0.0,
+    g: f32 = 0.0,
+};
 
 // --- extra file load-only pixel types ---
+
+pub const RGB24 = extern struct {
+    r: u8 = 0,
+    g: u8 = 0,
+    b: u8 = 0,
+};
 
 pub const RGB32 = extern struct {
     r: u8 = 0,
@@ -260,32 +338,7 @@ pub const RGBA64 = extern struct {
     a: u16 = 0,
 };
 
-pub const RGBA128F = extern struct {
-    r: f32 = 0.0,
-    g: f32 = 0.0,
-    b: f32 = 0.0,
-    a: f32 = 0.0,
-};
-
-pub const RGBA128 = extern struct {
-    r: u32 = 0,
-    g: u32 = 0,
-    b: u32 = 0,
-    a: u32 = 0,
-};
-
-pub const R32F = extern struct {
-    r: f32 = 0.0,
-};
-
-pub const RG64F = extern struct {
-    r: f32 = 0.0,
-    g: f32 = 0.0,
-};
-
 // --------------------------
-
-var pixel_format_allowed: [4]bool = .{ true, true, true, true };
 
 pub const PixelTag = enum { 
     // valid image pixel formats
@@ -323,6 +376,13 @@ pub const PixelTag = enum {
     pub fn hasAlpha(self: PixelTag) bool {
         return switch(self) {
             .RGBA32, .RGBA128F, .RGBA128, .U32_RGBA, .U16_RGBA => true,
+            else => false,
+        };
+    }
+
+    pub fn canBeLoadedFromCommonFormat(self: PixelTag) bool {
+        return switch(self) {
+            .RGBA32, .RGB16, .R8, .R16 => true,
             else => false,
         };
     }
@@ -373,40 +433,15 @@ pub const PixelTagPair = struct {
     out_tag: PixelTag = PixelTag.RGBA32,
 };
 
-pub fn autoSelectImageFormat(file_pixel_type: PixelTag) !PixelTag {
-    var preference_order: [4]PixelTag = undefined;
-    if (file_pixel_type.isColor()) {
-        if (file_pixel_type.hasAlpha()) {
-            preference_order = .{
-                .RGBA32, .RGB16, .R8, .R16
-            };
-        }
-        else if (file_pixel_type.size() == 2) {
-            preference_order = .{ 
-                .RGB16, .RGBA32, .R8, .R16
-            };
-        } else {
-            preference_order = .{ 
-                .RGBA32, .RGB16, .R8, .R16
-            };
-        }
-    } else if (file_pixel_type == .U16_R) {
-        preference_order = .{ 
-            .R16, .R8, .RGBA32, .RGB16
-        };
-    } else {
-        preference_order = .{ 
-            .R8, .R16, .RGBA32, .RGB16
-        };
-    }
+pub const F32x2 = struct {
+    x: f32 = 0.0,
+    y: f32 = 0.0,
+};
 
-    inline for (0..4) |i| {
-        if (pixel_format_allowed[@enumToInt(preference_order[i])]) {
-            return preference_order[i];
-        }
-    }
-    return ImageError.NoImageFormatsAllowed;
-}
+pub const ImageLoadBuffer = struct {
+    allocation: ?[]u8 = null,
+    alignment: u29 = 0
+};
 
 pub const PixelSlice = union(PixelTag) {
     RGBA32: []RGBA32,
@@ -425,7 +460,6 @@ pub const PixelSlice = union(PixelTag) {
     U16_R: []u16,
     U8_R: []u8
 };
-
 
 pub const PixelContainer = struct {
     bytes: ?[]u8 = null,
@@ -560,38 +594,6 @@ pub const Image = struct {
         };
     }
 
-    pub inline fn getPixelsRGBA32(self: *const Image) []RGBA32 {
-        return self.px_container.pixels.RGBA32;
-    }
-
-    pub inline fn getPixelsRGB16(self: *const Image) []RGB16 {
-        return self.px_container.pixels.RGB16;
-    }
-
-    pub inline fn getPixelsR8(self: *const Image) []R8 {
-        return self.px_container.pixels.RGBA32;
-    }
-
-    pub inline fn getPixelsR16(self: *const Image) []R16 {
-        return self.px_container.pixels.R16;
-    }
-
-    pub inline fn getPixelsR32F(self: *const Image) []R32F {
-        return self.px_container.pixels.R32F;
-    }
-
-    pub inline fn getPixelsRG64F(self: *const Image) []RG64F {
-        return self.px_container.pixels.RG64F;
-    }
-
-    pub inline fn getPixelsRGBA128F(self: *const Image) []RGBA128F {
-        return self.px_container.pixels.RGBA128F;
-    }
-
-    pub inline fn getPixelsRGBA128(self: *const Image) []RGBA128 {
-        return self.px_container.pixels.RGBA128;
-    }
-
     pub inline fn XYToIdx(self: *const Image, x: u32, y: u32) usize {
         return y * self.width + x;
     }
@@ -605,36 +607,21 @@ pub const Image = struct {
 
 };
 
-pub const F32x2 = struct {
-    x: f32 = 0.0,
-    y: f32 = 0.0,
-};
-
-pub const ImageLoadBuffer = struct {
-    allocation: ?[]u8 = null,
-    alignment: u29 = 0
-};
-
 pub const ImageLoadOptions = struct {
     // image loading system is not allowed to attempt to load the image as any other format than whichever
     // is first inferred or assigned. Also used internally when attempting to load as a fmt other than the first, to
     // prevent infinite recursion.
     format_comitted: bool = false,
-    // if you want to provide a buffer that will be used during image loading, rather than allocating and freeing
-    // a loading buffer. will be ignored if too small or if alignment is incorrect for the format. WARNING: providing a
-    // load buffer with incorrectly denoted alignment can cause an image to be loaded improperly or fail to load.
-    // - BMPs have an alignment of 4 bytes
-    load_buffer: ImageLoadBuffer = ImageLoadBuffer{},
     // for setting which pixel formats are allowed with functions; RGBA32, RGB16, R8, R16
-    output_formats_allowed: [4]bool = .{ true, true, true, true },
+    output_format_allowed: [4]bool = .{ true, true, true, true },
 
     pub fn setOnlyAllowedFormat(self: *ImageLoadOptions, type_tag: PixelTag) !void {
         switch (type_tag) {
             .RGBA32, .RGB16, .R8, .R16 => {
                 inline for (0..4) |i| {
-                    self.output_formats_allowed[i] = false;
+                    self.output_format_allowed[i] = false;
                 }
-                self.output_formats_allowed[@enumToInt(type_tag)] = true;
+                self.output_format_allowed[@enumToInt(type_tag)] = true;
             },
             else => return ImageError.NonImageFormatPassedIntoOptions,
         }
@@ -643,7 +630,7 @@ pub const ImageLoadOptions = struct {
     pub fn setFormatAllowed(self: *ImageLoadOptions, type_tag: PixelTag) !void {
         switch (type_tag) {
             .RGBA32, .RGB16, .R8, .R16 => {
-                self.output_formats_allowed[@enumToInt(type_tag)] = true;
+                self.output_format_allowed[@enumToInt(type_tag)] = true;
             },
             else => return ImageError.NonImageFormatPassedIntoOptions,
         }
@@ -652,13 +639,17 @@ pub const ImageLoadOptions = struct {
     pub fn setFormatDisallowed(self: *ImageLoadOptions, type_tag: PixelTag) !void {
         switch (type_tag) {
             .RGBA32, .RGB16, .R8, .R16 => {
-                self.output_formats_allowed[@enumToInt(type_tag)] = false;
+                self.output_format_allowed[@enumToInt(type_tag)] = false;
             },
             else => return ImageError.NonImageFormatPassedIntoOptions,
         }
     }
 
 };
+
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ---------------------------------------------------------------------------------------------------------------- data
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------------
@@ -697,14 +688,6 @@ test "load bitmap [image]" {
     var corrupt_total: u32 = 0;
     var corrupt_supported: u32 = 0;
 
-    const alloc_sz = 4_194_304 / 2; // 2MB
-    const load_options = ImageLoadOptions{
-        .load_buffer = ImageLoadBuffer{
-            .alignment = 4,
-            .allocation = try allocator.alignedAlloc(u8, 4, alloc_sz)
-        },
-    };
-
     for (0..directory_ct) |i| {
         try path_buf.replace(test_paths[i]);
         path_buf.setAnchor();
@@ -727,7 +710,7 @@ test "load bitmap [image]" {
             try path_buf.append(entry.name);
             defer path_buf.revertToAnchor();
 
-            var image = loadImage(path_buf.string(), ImageFormat.Bmp, allocator, load_options) catch |e| blk: {
+            var image = loadCommonFormatImage(path_buf.string(), ImageFormat.Bmp, allocator, &.{}) catch |e| blk: {
                 if (i < 2) {
                     print("valid file {s} {any}\n", .{filename_lower.string(), e});
                 }
@@ -797,7 +780,7 @@ pub fn targaTest() !void {
     //     var t = bench.ScopeTimer.start("loadTga", bench.getScopeTimerID());
     //     defer t.stop();
 
-    //     var image = loadImage(path_buf.string(), ImageFormat.Infer, allocator, .{}) 
+    //     var image = loadImage(path_buf.string(), ImageFormat.Infer, allocator, &.{}) 
     //         catch |e| blk: {
     //             print("error {any} loading tga file {s}\n", .{e, filename_lower.string()});
     //             break :blk Image{};

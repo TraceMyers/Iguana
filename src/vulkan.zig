@@ -519,7 +519,6 @@ fn setAllowedImageFormats(device: c.VkPhysicalDevice) !void {
         .maxResourceSize = std.math.pow(u64, 2, 31),
     };
 
-    var image_format_allowed: [image_type_to_vk_format.len]bool = undefined;
     var disallowed_ct: u8 = 0;
 
     inline for (0..image_type_to_vk_format.len) |i| {
@@ -992,7 +991,9 @@ fn createCommandPools() !void {
 
 fn createTextureImage() !ImageTypeMapping {
     // var texture = try loadImage("d:/projects/zig/core/test/images/puppy.bmp", ImageFormat.Infer, allocator, .{});
-    var color_texture = try loadImage("d:/projects/zig/core/test/nocommit/large_images/javaw.bmp", ImageFormat.Bmp, allocator, .{});
+    var color_texture = try loadCommonFormatImage(
+        "d:/projects/zig/core/test/nocommit/large_images/javaw.bmp", ImageFormat.Bmp, allocator, &.{}
+    );
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/rgb16.bmp", ImageFormat.Infer, allocator, .{});
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/q/rgba32abf.bmp", ImageFormat.Infer, allocator);
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/rle8-encoded-320x240.bmp", ImageFormat.Infer, allocator);
@@ -1840,6 +1841,7 @@ fn createImage(width: u32, height: u32, format: c.VkFormat, tiling: c.VkImageTil
 
     _ = c.vkBindImageMemory(vk_logical, image.*, image_memory.*, 0);
 }
+
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ------------------------------------------------------------------------------------------------ allocation callbacks
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2010,68 +2012,6 @@ fn findMemoryType(type_filter: u32, props: c.VkMemoryPropertyFlags) !u32 {
     return VkError.NoSuitableGraphicsMemoryType;
 }
 
-const image_type_to_vk_format: [8]c.VkFormat = .{
-    c.VK_FORMAT_R8G8B8A8_UNORM,
-    c.VK_FORMAT_R5G6B5_UNORM_PACK16,
-    c.VK_FORMAT_R8_UNORM,
-    c.VK_FORMAT_R16_UNORM,
-    c.VK_FORMAT_R32_SFLOAT,
-    c.VK_FORMAT_R32G32_SFLOAT,
-    c.VK_FORMAT_R32G32B32A32_SFLOAT,
-    c.VK_FORMAT_R32G32B32A32_UINT,
-};
-
-const image_type_to_mapping: [8]c.VkComponentMapping = .{
-    c.VkComponentMapping{
-        .r = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-        .g = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-        .b = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-        .a = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-    },
-    c.VkComponentMapping{
-        .r = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-        .g = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-        .b = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-        .a = c.VK_COMPONENT_SWIZZLE_ONE,
-    },
-    c.VkComponentMapping{
-        .r = c.VK_COMPONENT_SWIZZLE_R,
-        .g = c.VK_COMPONENT_SWIZZLE_R,
-        .b = c.VK_COMPONENT_SWIZZLE_R,
-        .a = c.VK_COMPONENT_SWIZZLE_ONE,
-    },
-    c.VkComponentMapping{
-        .r = c.VK_COMPONENT_SWIZZLE_R,
-        .g = c.VK_COMPONENT_SWIZZLE_R,
-        .b = c.VK_COMPONENT_SWIZZLE_R,
-        .a = c.VK_COMPONENT_SWIZZLE_ONE,
-    },
-    c.VkComponentMapping{
-        .r = c.VK_COMPONENT_SWIZZLE_R,
-        .g = c.VK_COMPONENT_SWIZZLE_ONE,
-        .b = c.VK_COMPONENT_SWIZZLE_ONE,
-        .a = c.VK_COMPONENT_SWIZZLE_ONE,
-    },
-    c.VkComponentMapping{
-        .r = c.VK_COMPONENT_SWIZZLE_R,
-        .g = c.VK_COMPONENT_SWIZZLE_G,
-        .b = c.VK_COMPONENT_SWIZZLE_ONE,
-        .a = c.VK_COMPONENT_SWIZZLE_ONE,
-    },
-    c.VkComponentMapping{
-        .r = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-        .g = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-        .b = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-        .a = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-    },
-    c.VkComponentMapping{
-        .r = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-        .g = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-        .b = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-        .a = c.VK_COMPONENT_SWIZZLE_ONE,
-    },
-};
-
 const ImageTypeMapping = struct {
     format: c.VkFormat = undefined,
     color_mapping: c.VkComponentMapping = undefined,
@@ -2158,6 +2098,70 @@ const test_paths: [2][]const u8 = .{
 };
 var filename_lower = LocalStringBuffer(128).new();
 
+const image_type_to_vk_format: [8]c.VkFormat = .{
+    c.VK_FORMAT_R8G8B8A8_UNORM,
+    c.VK_FORMAT_R5G6B5_UNORM_PACK16,
+    c.VK_FORMAT_R8_UNORM,
+    c.VK_FORMAT_R16_UNORM,
+    c.VK_FORMAT_R32_SFLOAT,
+    c.VK_FORMAT_R32G32_SFLOAT,
+    c.VK_FORMAT_R32G32B32A32_SFLOAT,
+    c.VK_FORMAT_R32G32B32A32_UINT,
+};
+
+var image_format_allowed: [image_type_to_vk_format.len]bool = undefined;
+
+const image_type_to_mapping: [image_type_to_vk_format.len]c.VkComponentMapping = .{
+    c.VkComponentMapping{
+        .r = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .g = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .b = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .a = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+    },
+    c.VkComponentMapping{
+        .r = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .g = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .b = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .a = c.VK_COMPONENT_SWIZZLE_ONE,
+    },
+    c.VkComponentMapping{
+        .r = c.VK_COMPONENT_SWIZZLE_R,
+        .g = c.VK_COMPONENT_SWIZZLE_R,
+        .b = c.VK_COMPONENT_SWIZZLE_R,
+        .a = c.VK_COMPONENT_SWIZZLE_ONE,
+    },
+    c.VkComponentMapping{
+        .r = c.VK_COMPONENT_SWIZZLE_R,
+        .g = c.VK_COMPONENT_SWIZZLE_R,
+        .b = c.VK_COMPONENT_SWIZZLE_R,
+        .a = c.VK_COMPONENT_SWIZZLE_ONE,
+    },
+    c.VkComponentMapping{
+        .r = c.VK_COMPONENT_SWIZZLE_R,
+        .g = c.VK_COMPONENT_SWIZZLE_ONE,
+        .b = c.VK_COMPONENT_SWIZZLE_ONE,
+        .a = c.VK_COMPONENT_SWIZZLE_ONE,
+    },
+    c.VkComponentMapping{
+        .r = c.VK_COMPONENT_SWIZZLE_R,
+        .g = c.VK_COMPONENT_SWIZZLE_G,
+        .b = c.VK_COMPONENT_SWIZZLE_ONE,
+        .a = c.VK_COMPONENT_SWIZZLE_ONE,
+    },
+    c.VkComponentMapping{
+        .r = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .g = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .b = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .a = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+    },
+    c.VkComponentMapping{
+        .r = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .g = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .b = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        .a = c.VK_COMPONENT_SWIZZLE_ONE,
+    },
+};
+
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ----------------------------------------------------------------------------------------------------------- constants
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2232,7 +2236,7 @@ const input = @import("io/input.zig");
 const string = @import("string.zig");
 const readerf = @import("image/reader.zig");
 
-const loadImage = imagef.loadImage;
+const loadCommonFormatImage = imagef.loadCommonFormatImage;
 const ImageFormat = imagef.ImageFormat;
 const print = std.debug.print;
 const c = @import("ext.zig").c;
