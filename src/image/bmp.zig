@@ -434,7 +434,7 @@ fn getImageTags(
 ) !imagef.PixelTagPair {
     var tag_pair = imagef.PixelTagPair{};
     switch (info.compression) {
-        .RGB. BITFIELDS, .ALPHABITFIELDS => {
+        .RGB, .BITFIELDS, .ALPHABITFIELDS => {
             if (info.color_depth <= 8) {
                 tag_pair.in_tag = color_table.palette.activePixelTag();
             } else {
@@ -455,19 +455,6 @@ fn getImageTags(
     tag_pair.out_tag = try imagef.autoSelectImageFormat(tag_pair.in_tag, options);
     return tag_pair;
 }
-
-fn bitCtToIntType(comptime val: comptime_int) type {
-    return switch(val) {
-        1 => u1,
-        4 => u4,
-        8 => u8,
-        16 => u16,
-        24 => u24,
-        32 => u32,
-        else => void
-    };
-}
-
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ------------------------------------------------------------------------------------------------------------ creation
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -509,7 +496,7 @@ fn createImage(
     try switch (info.compression) {
         .RGB => switch (info.color_depth) {
             inline 1, 4, 8, 16, 24, 32 => |val| {
-                const IntType = bitCtToIntType(val);
+                const IntType = imagef.bitCtToIntType(val);
                 if (val <= 8) {
                     try transferColorTableImage(IntType, format_pair, pixel_buf, info, color_table, image, row_length);
                 } else {
@@ -526,7 +513,7 @@ fn createImage(
         },
         .BITFIELDS, .ALPHABITFIELDS => switch (info.color_depth) {
             inline 16, 32 => |val| {
-                const IntType = bitCtToIntType(val);
+                const IntType = imagef.bitCtToIntType(val);
                 try transferInlinePixelImage(IntType, format_pair, pixel_buf, info, image, row_length, false);
             },
             else => return ImageError.BmpInvalidCompression,

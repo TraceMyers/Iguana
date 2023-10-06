@@ -9,7 +9,6 @@ const LocalBuffer = @import("../array.zig").LocalBuffer;
 const ARGB64 = imagef.ARGB64;
 const ImageAlpha = imagef.ImageAlpha;
 const graphics = @import("../graphics.zig");
-const RGBA32 = graphics.RGBA32;
 const readerf = @import("reader.zig");
 const BitmapColorMaskSet = readerf.InlinePixelReader;
 const TgaReadInfo = readerf.TgaReadInfo;
@@ -230,7 +229,7 @@ fn loadColorMapAndImageData(
     info.color_map.buffer_sz = ct_end - ct_start;
 
     switch (image_spec.color_depth) {
-        8, 16, 24, 32 => {},
+        8, 15, 16, 24, 32 => {},
         else => return ImageError.TgaNonStandardColorDepthUnsupported,
     }
 
@@ -274,7 +273,7 @@ fn readColorMapData(info: *TgaInfo, allocator: std.mem.Allocator, buffer: []cons
     }
 
     const cm_spec = info.header.colormap_spec;
-    info.color_map.table = try allocator.alloc(RGBA32, cm_spec.len);
+    info.color_map.table = try allocator.alloc(imagef.RGBA32, cm_spec.len);
 
     var alpha_present: u8 = 0;
     if (info.file_type == .V2) {
@@ -291,12 +290,12 @@ fn readColorMapData(info: *TgaInfo, allocator: std.mem.Allocator, buffer: []cons
     var i: usize = 0;
     var offset: usize = 0;
     while (offset < info.color_map.buffer_sz) {
-        var entry: *RGBA32 = &info.color_map.table.?[i];
+        var entry: *imagef.RGBA32 = &info.color_map.table.?[i];
         switch (cm_spec.entry_bit_ct) {
             15 => {
                 const color: u16 = std.mem.readIntSliceLittle(u16, buffer[offset..offset+2]);
                 entry.r = @intCast(u8, (color & 0x7c00) >> 7);
-                entry.g = @intCast(u8, (color & 0x03e0) >> 2);
+                entry.g = @intCast(u8, (color & 0x03e0) >> 3);
                 entry.b = @intCast(u8, (color & 0x001f) << 3);
                 entry.a = 255;
             }, 16 => {
@@ -326,30 +325,38 @@ fn getImageTags(
     info: *const TgaInfo, options: *const imagef.ImageLoadOptions
 ) !imagef.PixelTagPair {
     var tag_pair = imagef.PixelTagPair{};
-    const image_spec = info.header.image_spec;
-    switch (info.header.image_type) {
-        .TrueColor, .RleTrueColor => try switch(image_spec.color_depth) {
-            15 => .U16_RGB15, 
-            16 => .U16_RGB,
-            24 => .U24_RGB,
-            32 => .U32_RGB,
-            else => return ImageError.TgaNonStandardColorDepthUnsupported,
+    const color_depth = info.header.image_spec.color_depth;
+    const image_type = info.header.info.image_type;
+
+    switch (image_type) {
+        .TrueColor, .RleTrueColor => {
+            tag_pair.in_tag = switch(color_depth) {
+                15 => imagef.PixelTag.U16_RGB15, 
+                16 => imagef.PixelTag.U16_RGB,
+                24 => imagef.PixelTag.U24_RGB,
+                32 => if (info.alpha == .Normal) imagef.PixelTag.U32_RGBA else imagef.PixelTag.U32_RGB,
+                else => return ImageError.TgaNonStandardColorDepthUnsupported,
+            };
         },
-        .Greyscale, .RleGreyscale => try switch(image_spec.color_depth) {
-            8 => .U8_R,
-            15, 16 => .U16_R,
-            else => return ImageError.TgaNonStandardColorDepthUnsupported,
+        .Greyscale, .RleGreyscale => {
+            tag_pair.in_tag = switch(color_depth) {
+                8 => imagef.PixelTag.U8_R,
+                15, 16 => imagef.PixelTag.U16_R,
+                else => return ImageError.TgaNonStandardColorDepthUnsupported,
+            };
         },
-        .ColorMap, .RleColorMap => try switch(image_spec.color_depth) {
-            8 => .RGBA32,
-            else => return ImageError.TgaColorTableImageNot8BitColorDepth,
+        .ColorMap, .RleColorMap => {
+            tag_pair.in_tag = switch(color_depth) {
+                8 => imagef.PixelTag.RGBA32,
+                else => return ImageError.TgaColorTableImageNot8BitColorDepth,
+            };
         },
         else => {},
     }
+
     tag_pair.out_tag = try imagef.autoSelectImageFormat(tag_pair.in_tag, options);
     return tag_pair;
 }
-
 
 fn createImage(
     info: *const TgaInfo, 
@@ -371,43 +378,44 @@ fn createImage(
     }
 
     const format_tags: imagef.PixelTagPair = try getImageTags(info, options);
-    image.init(allocator, format_tags.out_tag, image_spec.image_width, image_spec.image_height);
+    try image.init(allocator, format_tags.out_tag, image_spec.image_width, image_spec.image_height);
 
     const bufptr = @ptrCast([*]const u8, &buffer[0]);
 
     switch (info.header.info.image_type) {
-        .TrueColor => try switch(image_spec.color_depth) {
-            15, 16 => readInlinePixelImage(info, image, bufptr, u16, false),
-            24 => readInlinePixelImage(info, image, bufptr, u24, false),
-            32 => readInlinePixelImage(info, image, bufptr, u32, false),
+        .TrueColor => switch(image_spec.color_depth) {
+            inline 16, 24, 32 => |depth| {
+                const IntType = imagef.bitCtToIntType(depth);
+                try readInlinePixelImage(IntType, format_tags, info, image, bufptr);
+            },
             else => return ImageError.TgaNonStandardColorDepthUnsupported,
         },
-        .Greyscale => try switch(image_spec.color_depth) {
-            8 => readInlinePixelImage(info, image, bufptr, u8, true),
-            15, 16 => readInlinePixelImage(info, image, bufptr, u16, true),
-            32 => readInlinePixelImage(info, image, bufptr, u32, true),
-            else => return ImageError.TgaNonStandardColorDepthUnsupported,
-        },
-        .ColorMap => try switch(image_spec.color_depth) {
-            8 => readColorMapImage(info, image, bufptr, u8),
-            else => return ImageError.TgaColorTableImageNot8BitColorDepth,
-        },
-        .RleColorMap => try switch(image_spec.color_depth) {
-            8 => readRunLengthEncodedImage(info, image, bufptr, u8, true, false),
-            else => return ImageError.TgaColorTableImageNot8BitColorDepth,
-        },
-        .RleTrueColor => try switch(image_spec.color_depth) {
-            8 => readRunLengthEncodedImage(info, image, bufptr, u8, false, false),
-            15, 16 => readRunLengthEncodedImage(info, image, bufptr, u16, false, false),
-            24 => readRunLengthEncodedImage(info, image, bufptr, u24, false, false),
-            32 => readRunLengthEncodedImage(info, image, bufptr, u32, false, false),
-            else => return ImageError.TgaNonStandardColorDepthUnsupported,
-        },
-        .RleGreyscale => try switch(image_spec.color_depth) {
-            8 => readRunLengthEncodedImage(info, image, bufptr, u8, false, true),
-            else => return ImageError.TgaGreyscale8BitOnly,
-        },
-        else => unreachable,
+        // .Greyscale => try switch(image_spec.color_depth) {
+        //     8 => readInlinePixelImage(info, image, bufptr, u8, true),
+        //     15, 16 => readInlinePixelImage(info, image, bufptr, u16, true),
+        //     32 => readInlinePixelImage(info, image, bufptr, u32, true),
+        //     else => return ImageError.TgaNonStandardColorDepthUnsupported,
+        // },
+        // .ColorMap => try switch(image_spec.color_depth) {
+        //     8 => readColorMapImage(info, image, bufptr, u8),
+        //     else => return ImageError.TgaColorTableImageNot8BitColorDepth,
+        // },
+        // .RleColorMap => try switch(image_spec.color_depth) {
+        //     8 => readRunLengthEncodedImage(info, image, bufptr, u8, true, false),
+        //     else => return ImageError.TgaColorTableImageNot8BitColorDepth,
+        // },
+        // .RleTrueColor => try switch(image_spec.color_depth) {
+        //     8 => readRunLengthEncodedImage(info, image, bufptr, u8, false, false),
+        //     15, 16 => readRunLengthEncodedImage(info, image, bufptr, u16, false, false),
+        //     24 => readRunLengthEncodedImage(info, image, bufptr, u24, false, false),
+        //     32 => readRunLengthEncodedImage(info, image, bufptr, u32, false, false),
+        //     else => return ImageError.TgaNonStandardColorDepthUnsupported,
+        // },
+        // .RleGreyscale => try switch(image_spec.color_depth) {
+        //     8 => readRunLengthEncodedImage(info, image, bufptr, u8, false, true),
+        //     else => return ImageError.TgaGreyscale8BitOnly,
+        // },
+        else => return ImageError.TgaFlavorUnsupported,
     }
 }
 
@@ -448,26 +456,51 @@ fn extentOverlap(extents: *const ExtentBuffer, begin: u32, end: u32) bool {
 }
 
 fn readInlinePixelImage(
-    info: *const TgaInfo, image: *Image, buffer: [*]const u8, comptime PixelType: type, comptime greyscale: bool
+    comptime PixelIntType: type, 
+    format_pair: imagef.PixelTagPair, 
+    info: *const TgaInfo, 
+    image: *Image, 
+    buffer: [*]const u8, 
 ) !void {
-    var read_info = try TgaReadInfo(PixelType).new(info, image);
+    switch(format_pair.in_tag) {
+        inline .U32_RGB, .U32_RGBA, .U24_RGB, .U16_RGB, .U16_RGB15, .U8_R, .U16_R => |in_tag| {
+            switch(format_pair.out_tag) {
+                inline .RGBA32, .RGB16, .R8, .R16 => |out_tag| {
+                    try readInlinePixelImageImpl(PixelIntType, in_tag, out_tag, info, image, buffer);
+                }, else => unreachable,
+            }
+        }, else => unreachable,
+    }
+}
 
-    const alpha_mask = if (PixelType == u32) 0xff000000 else 0;
-    const using_alpha = alpha_mask != 0;
-    const mask_set = try BitmapColorMaskSet(PixelType, .ABGR).standard(alpha_mask);
+fn readInlinePixelImageImpl(
+    comptime PixelIntType: type, 
+    comptime in_tag: imagef.PixelTag,
+    comptime out_tag: imagef.PixelTag,
+    info: *const TgaInfo, 
+    image: *Image, 
+    buffer: [*]const u8
+) !void {
+    const alpha_mask = if (PixelIntType == u32) 0xff000000 else 0;
+
+    const ImagePixelType: type = out_tag.toType();
+    var image_pixels: []ImagePixelType = try image.getPixels(out_tag);
+
+    const transfer = try readerf.BitmapColorTransfer(in_tag, out_tag).standard(alpha_mask);
+    var read_info = try TgaReadInfo(PixelIntType).new(info, image);
 
     while (read_info.read_start < read_info.image_sz) {
         const read_end: i32 = read_info.read_start + read_info.read_row_step;
         const write_end: i32 = read_info.write_start + @intCast(i32, image.width);
 
-        if (write_end < 0 or write_end > image.pixels.RGBA32.?.len or read_end < 0 or read_end > read_info.image_sz) {
+        if (write_end < 0 or write_end > image_pixels.len or read_end < 0 or read_end > read_info.image_sz) {
             return ImageError.UnexpectedEndOfImageBuffer;
         }
 
-        var buffer_row = buffer[@intCast(usize, read_info.read_start)..@intCast(usize, read_end)];
-        var image_row = image.pixels.RGBA32.?[@intCast(usize, read_info.write_start)..@intCast(usize, write_end)];
+        var buffer_row: [*]const u8 = @ptrCast([*]const u8, &buffer[@intCast(usize, read_info.read_start)]);
+        var image_row = image_pixels[@intCast(usize, read_info.write_start)..@intCast(usize, write_end)];
 
-        mask_set.extractRow(image_row, buffer_row, using_alpha, greyscale);
+        transfer.transferRowFromBytes(buffer_row, image_row);
 
         read_info.read_start += read_info.read_row_step;
         read_info.write_start += read_info.write_row_step;
@@ -590,7 +623,7 @@ const TgaFooter = extern struct {
 const TgaColorMap = struct {
     buffer_sz: u32 = 0,
     step_sz: u32 = 0,
-    table: ?[]RGBA32 = null,
+    table: ?[]imagef.RGBA32 = null,
 };
 
 pub const TgaInfo = struct {
@@ -604,7 +637,7 @@ pub const TgaInfo = struct {
     postage_stamp_table: ?[]u8 = null,
     color_correction_table: ?[]ARGB64 = null,
     color_map: TgaColorMap = TgaColorMap{},
-    alpha: ImageAlpha = ImageAlpha.None,
+    alpha: imagef.ImageAlpha = imagef.ImageAlpha.None,
 };
 
 const BlockExtent = struct {

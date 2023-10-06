@@ -55,7 +55,8 @@ pub const ImageError = error{
     NonImageFormatPassedIntoOptions,
     UnevenImageLengthsInTransfer,
     TransferBetweenFormatsUnsupported,
-    UnableToVerifyFileImageFormat
+    UnableToVerifyFileImageFormat,
+    TgaFlavorUnsupported,
 };
 
 const graphics = @import("../graphics.zig");
@@ -116,8 +117,7 @@ pub fn loadCommonFormatImage(
             or string.same(extension_lower, "vst")
             or string.same(extension_lower, "tpic")
         ) {
-            // try tga.load(&file, &image, allocator, &options);
-            return ImageError.FormatUnsupported;
+            try tga.load(&file, &image, allocator, options);
         }
         else if (string.same(extension_lower, "png")) {
             try png.load(&file, &image, allocator, options);
@@ -133,7 +133,7 @@ pub fn loadCommonFormatImage(
         .Bmp => try bmp.load(&file, &image, allocator, options),
         .Jpg => return ImageError.FormatUnsupported,
         .Png => try png.load(&file, &image, allocator, options),
-        .Tga => return ImageError.FormatUnsupported, //try tga.load(&file, &image, allocator, &options),
+        .Tga => try tga.load(&file, &image, allocator, options),
         else => unreachable,
     }
     return image;
@@ -187,6 +187,18 @@ pub fn autoSelectImageFormat(file_pixel_type: PixelTag, load_options: *const Ima
         }
     }
     return ImageError.NoImageFormatsAllowed;
+}
+
+pub fn bitCtToIntType(comptime val: comptime_int) type {
+    return switch(val) {
+        1 => u1,
+        4 => u4,
+        8 => u8,
+        16 => u16,
+        24 => u24,
+        32 => u32,
+        else => void
+    };
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -801,43 +813,43 @@ test "load bitmap [image]" {
     // try std.testing.expect(passed_all);
 }
 
-pub fn targaTest() !void {
-// test "load targa [image]" {
-    // try memory.autoStartup();
-    // defer memory.shutdown();
-    // const allocator = memory.GameAllocator.allocator();
+// pub fn targaTest() !void {
+test "load targa [image]" {
+    try memory.autoStartup();
+    defer memory.shutdown();
+    const allocator = memory.GameAllocator.allocator();
 
-    // print("\n", .{});
+    print("\n", .{});
 
-    // var path_buf = LocalStringBuffer(128).new();
-    // try path_buf.append("d:/projects/zig/core/test/nocommit/mytgatestsuite/good/");
-    // path_buf.setAnchor();
+    var path_buf = LocalStringBuffer(128).new();
+    try path_buf.append("d:/projects/zig/core/test/nocommit/mytgatestsuite/good/");
+    path_buf.setAnchor();
 
-    // var filename_lower = LocalStringBuffer(64).new();
+    var filename_lower = LocalStringBuffer(64).new();
 
-    // var test_dir = try std.fs.openIterableDirAbsolute(path_buf.string(), .{});
-    // var dir_it = test_dir.iterate();
+    var test_dir = try std.fs.openIterableDirAbsolute(path_buf.string(), .{});
+    var dir_it = test_dir.iterate();
 
-    // while (try dir_it.next()) |entry| {
-    //     try filename_lower.replaceLower(entry.name);
-    //     try path_buf.append(filename_lower.string());
-    //     defer path_buf.revertToAnchor();
+    while (try dir_it.next()) |entry| {
+        try filename_lower.replaceLower(entry.name);
+        try path_buf.append(filename_lower.string());
+        defer path_buf.revertToAnchor();
 
-    //     var t = bench.ScopeTimer.start("loadTga", bench.getScopeTimerID());
-    //     defer t.stop();
+        var t = bench.ScopeTimer.start("loadTga", bench.getScopeTimerID());
+        defer t.stop();
 
-    //     var image = loadImage(path_buf.string(), ImageFormat.Infer, allocator, &.{}) 
-    //         catch |e| blk: {
-    //             print("error {any} loading tga file {s}\n", .{e, filename_lower.string()});
-    //             break :blk Image{};
-    //         };
+        var image = loadCommonFormatImage(path_buf.string(), ImageFormat.Infer, allocator, &.{}) 
+            catch |e| blk: {
+                print("error {any} loading tga file {s}\n", .{e, filename_lower.string()});
+                break :blk Image{};
+            };
 
-    //     if (image.pixels != null) {
-    //         print("loaded tga file {s} successfully\n", .{filename_lower.string()});
-    //     }
+        if (!image.isEmpty()) {
+            print("loaded tga file {s} successfully\n", .{filename_lower.string()});
+        }
 
-    //     image.clear();
-    // }
+        image.clear();
+    }
 
-    // bench.printAllScopeTimers();
+    bench.printAllScopeTimers();
 }
