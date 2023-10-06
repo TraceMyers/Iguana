@@ -13,7 +13,6 @@ const readerf = @import("reader.zig");
 const BitmapColorMaskSet = readerf.InlinePixelReader;
 const TgaReadInfo = readerf.TgaReadInfo;
 const TgaRLEReader = readerf.TgaRLEReader;
-const readColorTableImageRow = readerf.readColorTableImageRow;
 const iVec2 = @import("../math.zig").iVec2;
 
 // TODO: test images for color correction table
@@ -383,38 +382,26 @@ fn createImage(
     const bufptr = @ptrCast([*]const u8, &buffer[0]);
 
     switch (info.header.info.image_type) {
-        .TrueColor => switch(image_spec.color_depth) {
-            inline 16, 24, 32 => |depth| {
+        .TrueColor, .Greyscale => switch(image_spec.color_depth) {
+            inline 8, 15, 16, 24, 32 => |depth| {
                 const IntType = imagef.bitCtToIntType(depth);
                 try readInlinePixelImage(IntType, format_tags, info, image, bufptr);
-            },
-            else => return ImageError.TgaNonStandardColorDepthUnsupported,
+            }, else => return ImageError.TgaNonStandardColorDepthForPixelFormat,
         },
-        // .Greyscale => try switch(image_spec.color_depth) {
-        //     8 => readInlinePixelImage(info, image, bufptr, u8, true),
-        //     15, 16 => readInlinePixelImage(info, image, bufptr, u16, true),
-        //     32 => readInlinePixelImage(info, image, bufptr, u32, true),
-        //     else => return ImageError.TgaNonStandardColorDepthUnsupported,
-        // },
-        // .ColorMap => try switch(image_spec.color_depth) {
-        //     8 => readColorMapImage(info, image, bufptr, u8),
-        //     else => return ImageError.TgaColorTableImageNot8BitColorDepth,
-        // },
-        // .RleColorMap => try switch(image_spec.color_depth) {
-        //     8 => readRunLengthEncodedImage(info, image, bufptr, u8, true, false),
-        //     else => return ImageError.TgaColorTableImageNot8BitColorDepth,
-        // },
-        // .RleTrueColor => try switch(image_spec.color_depth) {
-        //     8 => readRunLengthEncodedImage(info, image, bufptr, u8, false, false),
-        //     15, 16 => readRunLengthEncodedImage(info, image, bufptr, u16, false, false),
-        //     24 => readRunLengthEncodedImage(info, image, bufptr, u24, false, false),
-        //     32 => readRunLengthEncodedImage(info, image, bufptr, u32, false, false),
-        //     else => return ImageError.TgaNonStandardColorDepthUnsupported,
-        // },
-        // .RleGreyscale => try switch(image_spec.color_depth) {
-        //     8 => readRunLengthEncodedImage(info, image, bufptr, u8, false, true),
-        //     else => return ImageError.TgaGreyscale8BitOnly,
-        // },
+        .ColorMap => try switch(image_spec.color_depth) {
+            8 => readColorMapImage(u8, format_tags, info, image, bufptr),
+            else => return ImageError.TgaNonStandardColorDepthForPixelFormat,
+        },
+        .RleColorMap => try switch(image_spec.color_depth) {
+            8 => readRunLengthEncodedImage(u8, true, format_tags, info, image, bufptr),
+            else => return ImageError.TgaNonStandardColorDepthForPixelFormat,
+        },
+        .RleTrueColor, .RleGreyscale => switch(image_spec.color_depth) {
+            inline 8, 15, 16, 24, 32 => |depth| {
+                const IntType = imagef.bitCtToIntType(depth);
+                try readRunLengthEncodedImage(IntType, false, format_tags, info, image, bufptr);
+            }, else => return ImageError.TgaNonStandardColorDepthForPixelFormat,
+        },
         else => return ImageError.TgaFlavorUnsupported,
     }
 }
@@ -483,11 +470,11 @@ fn readInlinePixelImageImpl(
 ) !void {
     const alpha_mask = if (PixelIntType == u32) 0xff000000 else 0;
 
-    const ImagePixelType: type = out_tag.toType();
-    var image_pixels: []ImagePixelType = try image.getPixels(out_tag);
-
     const transfer = try readerf.BitmapColorTransfer(in_tag, out_tag).standard(alpha_mask);
     var read_info = try TgaReadInfo(PixelIntType).new(info, image);
+
+    const ImagePixelType: type = out_tag.toType();
+    var image_pixels: []ImagePixelType = try image.getPixels(out_tag);
 
     while (read_info.read_start < read_info.image_sz) {
         const read_end: i32 = read_info.read_start + read_info.read_row_step;
@@ -497,10 +484,10 @@ fn readInlinePixelImageImpl(
             return ImageError.UnexpectedEndOfImageBuffer;
         }
 
-        var buffer_row: [*]const u8 = @ptrCast([*]const u8, &buffer[@intCast(usize, read_info.read_start)]);
+        var file_row: [*]const u8 = @ptrCast([*]const u8, &buffer[@intCast(usize, read_info.read_start)]);
         var image_row = image_pixels[@intCast(usize, read_info.write_start)..@intCast(usize, write_end)];
 
-        transfer.transferRowFromBytes(buffer_row, image_row);
+        transfer.transferRowFromBytes(file_row, image_row);
 
         read_info.read_start += read_info.read_row_step;
         read_info.write_start += read_info.write_row_step;
@@ -508,23 +495,47 @@ fn readInlinePixelImageImpl(
 }
 
 fn readColorMapImage(
-    info: *const TgaInfo, image: *Image, buffer: [*]const u8, comptime PixelType: type
+    comptime IndexIntType: type, 
+    format_pair: imagef.PixelTagPair, 
+    info: *const TgaInfo, 
+    image: *Image, 
+    buffer: [*]const u8
 ) !void {
-    var read_info = try TgaReadInfo(PixelType).new(info, image);
+    switch(format_pair.out_tag) {
+        inline .RGBA32, .RGB16, .R8, .R16 => |out_tag| {
+            try readColorMapImageImpl(IndexIntType, imagef.PixelTag.RGBA32, out_tag, info, image, buffer);
+        }, else => unreachable,
+    }
+}
+
+fn readColorMapImageImpl(
+    comptime IndexIntType: type,
+    comptime in_tag: imagef.PixelTag,
+    comptime out_tag: imagef.PixelTag,
+    info: *const TgaInfo, 
+    image: *Image, 
+    buffer: [*]const u8, 
+) !void {
+
+    const transfer = try readerf.BitmapColorTransfer(in_tag, out_tag).standard(0xff000000);
+    var read_info = try TgaReadInfo(IndexIntType).new(info, image);
+
+    const ImagePixelType: type = out_tag.toType();
+    var image_pixels: []ImagePixelType = try image.getPixels(out_tag);
 
     while (read_info.read_start < read_info.image_sz) {
         const read_end: i32 = read_info.read_start + read_info.read_row_step;
         const write_end: i32 = read_info.write_start + @intCast(i32, image.width);
 
-        if (write_end < 0 or write_end > image.pixels.RGBA32.?.len or read_end < 0 or read_end > read_info.image_sz) {
+        if (write_end < 0 or write_end > image_pixels.len or read_end < 0 or read_end > read_info.image_sz) {
             return ImageError.UnexpectedEndOfImageBuffer;
         }
 
-        var buffer_row = buffer[@intCast(usize, read_info.read_start)..@intCast(usize, read_end)];
-        var image_row = image.pixels.RGBA32.?[@intCast(usize, read_info.write_start)..@intCast(usize, write_end)];
+        var index_row = buffer[@intCast(usize, read_info.read_start)..@intCast(usize, read_end)];
+        var image_row = image_pixels[@intCast(usize, read_info.write_start)..@intCast(usize, write_end)];
 
-        try readColorTableImageRow(
-            buffer_row, image_row, info.color_map.table.?, @intCast(u32, read_info.read_row_step), 0xff, PixelType
+        try transfer.transferColorTableImageRow(
+            IndexIntType, index_row, info.color_map.table.?, image_row, @intCast(u32, read_info.read_row_step)
         );
 
         read_info.read_start += read_info.read_row_step;
@@ -533,14 +544,36 @@ fn readColorMapImage(
 }
 
 fn readRunLengthEncodedImage(
+    comptime InlineIntType: type, 
+    comptime color_table_img: bool, 
+    format_pair: imagef.PixelTagPair, 
+    info: *const TgaInfo,
+    image: *Image,
+    buffer: [*]const u8,
+) !void {
+    switch(format_pair.in_tag) {
+        inline .RGBA32, .U32_RGB, .U32_RGBA, .U24_RGB, .U16_RGB, .U16_RGB15, .U8_R, .U16_R => |in_tag| {
+            switch(format_pair.out_tag) {
+                inline .RGBA32, .RGB16, .R8, .R16 => |out_tag| {
+                    try readRunLengthEncodedImageImpl(
+                        InlineIntType, color_table_img, in_tag, out_tag, info, image, buffer
+                    );
+                }, else => unreachable,
+            }
+        }, else => unreachable,
+    }
+}
+
+fn readRunLengthEncodedImageImpl(
+    comptime InlineIntType: type, 
+    comptime color_table_img: bool,
+    comptime in_tag: imagef.PixelTag,
+    comptime out_tag: imagef.PixelTag,
     info: *const TgaInfo, 
     image: *Image, 
     buffer: [*]const u8, 
-    comptime PixelType: type, 
-    comptime color_table_img: bool,
-    comptime greyscale: bool
 ) !void {
-    var reader = try TgaRLEReader(PixelType, color_table_img, greyscale).new(info, image);
+    var reader = try TgaRLEReader(InlineIntType, color_table_img, in_tag, out_tag).new(info, image);
 
     var i: usize = 0;
     const iter_max: usize = image.width * image.height;

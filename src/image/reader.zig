@@ -459,17 +459,17 @@ pub fn BitmapColorTransfer(comptime InPixelTag: imagef.PixelTag, comptime OutPix
 }
 
 pub fn transferImage(in_image: *const Image, out_image: *Image) !void {
-    try switch(in_image.activePixelTag()) {
+    switch(in_image.activePixelTag()) {
         inline .RGBA32, .RGB16, .R8, .R16 => |in_tag| {
-            try switch (out_image.activePixelTag()) {
+            switch (out_image.activePixelTag()) {
                 inline .RGBA32, .RGB16, .R8, .R16 => |out_tag| {
-                    transferImageKnownTags(in_tag, out_tag, in_image, out_image);
+                    try transferImageKnownTags(in_tag, out_tag, in_image, out_image);
                 },
                 else => {}
-            };
+            }
         },
         else => {},
-    };
+    }
 }
 
 pub fn transferImageKnownTags(
@@ -518,7 +518,12 @@ pub fn imageIsRedundantGreyscale(comptime PixelIntType: type, buffer: []const u8
     }   
 }
 
-pub fn TgaRLEReader(comptime IntType: type, comptime color_table_img: bool, comptime greyscale: bool) type {
+pub fn TgaRLEReader(
+    comptime IntType: type, 
+    comptime color_table_img: bool, 
+    comptime in_tag: imagef.PixelTag,
+    comptime out_tag: imagef.PixelTag
+) type {
     return struct {
         const RLEReaderType = @This();
         const ReadInfoType = TgaReadInfo(IntType);
@@ -526,25 +531,22 @@ pub fn TgaRLEReader(comptime IntType: type, comptime color_table_img: bool, comp
         read_info: TgaReadInfo(IntType) = undefined,
         byte_pos: u32 = 0,
         action_ct: u32 = 0,
-        cur_color: RGBA32 = RGBA32{},
-        alpha_present: u8 = 0,
+        cur_color: in_tag.toType() = undefined,
+        transfer: BitmapColorTransfer(in_tag, out_tag) = undefined,
 
         pub fn new(info: *const TgaInfo, image: *const Image) !RLEReaderType {
             if (color_table_img and info.color_map.table == null) {
                 return ImageError.ColorTableImageEmptyTable;
             }
-            if (greyscale and IntType != u8) {
-                return ImageError.TgaGreyscale8BitOnly;
-            }
             return RLEReaderType {
                 .read_info = try TgaReadInfo(IntType).new(info, image),
-                .alpha_present = @intCast(u8, @boolToInt(info.alpha != ImageAlpha.None)),
+                .transfer = try BitmapColorTransfer(in_tag, out_tag).standard(0xff000000),
             };
         }
 
         pub fn readAction(self: *RLEReaderType, image: *const Image, info: *const TgaInfo, buffer: []const u8) !RLEAction {
             const image_index = self.imageIndex(image);
-            if (self.byte_pos >= buffer.len or image_index <= 0 or image_index >= image.pixels.RGBA32.?.len) {
+            if (self.byte_pos >= buffer.len or image_index <= 0 or image_index >= image.len()) {
                 return RLEAction.EndImage;
             }
 
@@ -567,15 +569,17 @@ pub fn TgaRLEReader(comptime IntType: type, comptime color_table_img: bool, comp
         }
 
         pub fn repeatPixel(self: *RLEReaderType, image: *Image) !void {
+            var image_pixels = try image.getPixels(out_tag);
             for (0..@intCast(usize, self.action_ct)) |i| {
                 _ = i;
                 const image_idx: usize = try self.imageIndexChecked(image);
-                image.pixels.RGBA32.?[image_idx] = self.cur_color;
+                self.transfer.transferColor(self.cur_color, &image_pixels[image_idx]);
                 self.pixelStep(image);
             }
         }
 
         pub fn readPixels(self: *RLEReaderType, buffer: []const u8, info: *const TgaInfo, image: *Image) !void {
+            var image_pixels = try image.getPixels(out_tag);
             for (0..@intCast(usize, self.action_ct)) |i| {
                 _ = i;
                 const image_idx: usize = try self.imageIndexChecked(image);
@@ -584,7 +588,7 @@ pub fn TgaRLEReader(comptime IntType: type, comptime color_table_img: bool, comp
                 } else {
                     try self.readNextInlineColor(buffer);
                 }
-                image.pixels.RGBA32.?[image_idx] = self.cur_color;
+                self.transfer.transferColor(self.cur_color, &image_pixels[image_idx]);
                 self.pixelStep(image);
             }
         }
@@ -614,43 +618,29 @@ pub fn TgaRLEReader(comptime IntType: type, comptime color_table_img: bool, comp
         }
 
         fn readNextInlineColor(self: *RLEReaderType, buffer: []const u8) !void {
+            if (@TypeOf(self.cur_color) == imagef.RGBA32) {
+                return;
+            }
             const new_byte_pos = self.byte_pos + ReadInfoType.pixelSz();
             if (new_byte_pos > buffer.len) {
                 return ImageError.UnexpectedEndOfImageBuffer;
             }
-            switch (IntType) {
-                u8 => {
-                    const grey_color = buffer[self.byte_pos];
-                    self.cur_color.r = grey_color;
-                    self.cur_color.g = grey_color;
-                    self.cur_color.b = grey_color;
-                    self.cur_color.a = 255;
-                },
-                u16 => {
-                    const pixel = std.mem.readIntSliceLittle(IntType, buffer[self.byte_pos..new_byte_pos]);
-                    self.cur_color.r = @intCast(u8, (pixel & 0x7c00) >> 7);
-                    self.cur_color.g = @intCast(u8, (pixel & 0x03e0) >> 2);
-                    self.cur_color.b = @intCast(u8, (pixel & 0x001f) << 3);
-                    self.cur_color.a = 255;
-                },
-                u24 => {
-                    self.cur_color.b = buffer[self.byte_pos];
-                    self.cur_color.g = buffer[self.byte_pos+1];
-                    self.cur_color.r = buffer[self.byte_pos+2];
-                    self.cur_color.a = 255;
-                },
-                u32 => {
-                    self.cur_color.b = buffer[self.byte_pos];
-                    self.cur_color.g = buffer[self.byte_pos+1];
-                    self.cur_color.r = buffer[self.byte_pos+2];
-                    self.cur_color.a = buffer[self.byte_pos+3];
-                },
-                else => unreachable,
+            if (in_tag.toType() == u24) {
+                self.cur_color = (@intCast(u24, buffer[self.byte_pos+2]) << @as(u5, 16)) 
+                    | (@intCast(u24, buffer[self.byte_pos+1]) << @as(u4, 8)) 
+                    | (buffer[self.byte_pos]);
+            } else {
+                self.cur_color = std.mem.readIntSliceLittle(
+                    in_tag.toType(), buffer[self.byte_pos..self.byte_pos+in_tag.size()]
+                );
             }
             self.byte_pos = new_byte_pos;
         }
 
         fn readNextColorTableColor(self: *RLEReaderType, info: *const TgaInfo, buffer: []const u8) !void {
+            if (@TypeOf(self.cur_color) != imagef.RGBA32) {
+                return;
+            }
             const new_byte_pos = self.byte_pos + ReadInfoType.pixelSz();
             if (new_byte_pos > buffer.len) {
                 return ImageError.UnexpectedEndOfImageBuffer;

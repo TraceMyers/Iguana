@@ -44,6 +44,7 @@ pub const ImageError = error{
     TgaColorMapDataInNonColorMapImage,
     TgaNonStandardColorTableUnsupported,
     TgaNonStandardColorDepthUnsupported,
+    TgaNonStandardColorDepthForPixelFormat,
     TgaNoData,
     TgaUnexpectedReadStartIndex,
     TgaUnsupportedImageOrigin,
@@ -194,6 +195,7 @@ pub fn bitCtToIntType(comptime val: comptime_int) type {
         1 => u1,
         4 => u4,
         8 => u8,
+        15 => u16,
         16 => u16,
         24 => u24,
         32 => u32,
@@ -243,15 +245,15 @@ pub const RGB16 = extern struct {
     // r: 5, g: 6, b: 5
     c: u16,
 
-    pub inline fn getR(self: *RGB16) u8 {
+    pub inline fn getR(self: *const RGB16) u8 {
         return @intCast(u8, (self.c & 0xf800) >> 8);
     }
 
-    pub inline fn getG(self: *RGB16) u8 {
+    pub inline fn getG(self: *const RGB16) u8 {
         return @intCast(u8, (self.c & 0x07e0) >> 3);
     }
 
-    pub inline fn getB(self: *RGB16) u8 {
+    pub inline fn getB(self: *const RGB16) u8 {
         return @intCast(u8, (self.c & 0x001f) << 3);
     }
 
@@ -280,15 +282,15 @@ pub const RGB15 = extern struct {
     // r: 5, g: 5, b: 5
     c: u16, 
 
-    pub inline fn getR(self: *RGB16) u8 {
+    pub inline fn getR(self: *const RGB16) u8 {
         return @intCast(u8, (self.c & 0x7c00) >> 8);
     }
 
-    pub inline fn getG(self: *RGB16) u8 {
+    pub inline fn getG(self: *const RGB16) u8 {
         return @intCast(u8, (self.c & 0x03e0) >> 3);
     }
 
-    pub inline fn getB(self: *RGB16) u8 {
+    pub inline fn getB(self: *const RGB16) u8 {
         return @intCast(u8, (self.c & 0x001f) << 3);
     }
 

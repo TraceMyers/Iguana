@@ -528,7 +528,7 @@ fn setAllowedImageFormats(device: c.VkPhysicalDevice) !void {
         );
         image_format_allowed[i] = (result == VK_SUCCESS);
         if (!image_format_allowed[i]) {
-            imagef.disallowPixelFormat(@intToEnum(imagef.PixelTag, i));
+            // imagef.disallowPixelFormat(@intToEnum(imagef.PixelTag, i));
             print("image format {any} disallowed\n", .{@intToEnum(imagef.PixelTag, i)});
             disallowed_ct += 1;
         }
@@ -991,9 +991,9 @@ fn createCommandPools() !void {
 
 fn createTextureImage() !ImageTypeMapping {
     // var texture = try loadImage("d:/projects/zig/core/test/images/puppy.bmp", ImageFormat.Infer, allocator, .{});
-    var color_texture = try loadCommonFormatImage(
-        "d:/projects/zig/core/test/nocommit/large_images/javaw.bmp", ImageFormat.Bmp, allocator, &.{}
-    );
+    // var color_texture = try loadCommonFormatImage(
+    //     "d:/projects/zig/core/test/nocommit/large_images/javaw.bmp", ImageFormat.Bmp, allocator, &.{}
+    // );
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/rgb16.bmp", ImageFormat.Infer, allocator, .{});
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/q/rgba32abf.bmp", ImageFormat.Infer, allocator);
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/rle8-encoded-320x240.bmp", ImageFormat.Infer, allocator);
@@ -1002,8 +1002,8 @@ fn createTextureImage() !ImageTypeMapping {
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmptestsuite-0.9/valid/565-321x240-topdown.bmp", ImageFormat.Infer, allocator, .{});
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/bmpsuite-2.7/g/pal1.bmp", ImageFormat.Infer, allocator, .{});
     // var texture = try loadImage("d:/projects/zig/core/test/nocommit/mytgatestsuite/good/ucm8.tga", ImageFormat.Tga, allocator, .{});
-    // var texture = try loadImage("d:/projects/zig/core/test/nocommit/mytgatestsuite/good/xing_b24.tga", ImageFormat.Tga, allocator, .{});
-    // var texture = try loadImage("d:/projects/zig/core/test/nocommit/mytgatestsuite/good/xing_b24.tga", ImageFormat.Tga, allocator, .{});
+    // var color_texture = try loadCommonFormatImage("d:/projects/zig/core/test/nocommit/mytgatestsuite/good/shuttle.tga", ImageFormat.Tga, allocator, &.{});
+    var color_texture = try loadCommonFormatImage("d:/projects/zig/core/test/nocommit/mytgatestsuite/good/xing_b24.tga", ImageFormat.Tga, allocator, &.{});
     defer color_texture.clear();
 
     var texture = imagef.Image{};
