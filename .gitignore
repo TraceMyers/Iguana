@@ -6,3 +6,4 @@ test/nocommit/
 translatevulk.bat
 vulkincl.h
 core.s
+.git
