@@ -2236,7 +2236,7 @@ const input = @import("io/input.zig");
 const string = @import("string.zig");
 const readerf = @import("image/reader.zig");
 
-const loadCommonFormatImage = imagef.loadCommonFormatImage;
+const loadCommonFormatImage = imagef.loadImage;
 const ImageFormat = imagef.ImageFormat;
 const print = std.debug.print;
 const c = @import("ext.zig").c;

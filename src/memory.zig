@@ -5,17 +5,18 @@
 // TODO: page size host environment dependent
 
 const std = @import("std");
+const time = @import("utils/time.zig");
+const math = @import("math.zig");
+const c = @import("ext.zig").c;
+const builtin = @import("builtin");
+
 const assert = std.debug.assert;
 const print = std.debug.print;
 const windows = std.os.windows;
 const mem = std.mem;
 const expect = std.testing.expect;
-const benchmark = @import("benchmark.zig");
-const ScopeTimer = benchmark.ScopeTimer;
-const getScopeTimerID = benchmark.getScopeTimerID;
-const math = @import("math.zig");
-const c = @import("ext.zig").c;
-const builtin = @import("builtin");
+const ScopeTimer = time.ScopeTimer;
+const getScopeTimerID = time.getScopeTimerID;
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // -------------------------------------------------------------------------------------------------------------- config
@@ -1329,7 +1330,7 @@ test "Perf vs GPA" {
     var allocator = EnclaveAllocator(@intToEnum(Enclave, 0)).allocator();
 
     for (0..100_000) |i| {
-        var t = ScopeTimer.start("m6 SMALL alloc/free x5", getScopeTimerID());
+        var t = ScopeTimer.start("m6 SMALL alloc/free x5", getScopeTimerID(0));
         defer t.stop();
         _ = i;
         var testalloc = try allocator.alloc(u8, 4);
@@ -1347,14 +1348,14 @@ test "Perf vs GPA" {
     var allocations: [100_000][]u8 = undefined;
 
     {
-        var t = ScopeTimer.start("m6 SMALL alloc 100k", getScopeTimerID());
+        var t = ScopeTimer.start("m6 SMALL alloc 100k", getScopeTimerID(0));
         defer t.stop();
         for (0..100_000) |i| {
             allocations[i] = try allocator.alloc(u8, 16);
         }
     }
     {
-        var t = ScopeTimer.start("m6 SMALL free 100k", getScopeTimerID());
+        var t = ScopeTimer.start("m6 SMALL free 100k", getScopeTimerID(0));
         defer t.stop();
         for (0..100_000) |i| {
             allocator.free(allocations[i]);
@@ -1362,7 +1363,7 @@ test "Perf vs GPA" {
     }
 
     for (0..100_000) |i| {
-        var t = ScopeTimer.start("m6 MEDIUM alloc/free x5", getScopeTimerID());
+        var t = ScopeTimer.start("m6 MEDIUM alloc/free x5", getScopeTimerID(0));
         defer t.stop();
         _ = i;
         var testalloc = try allocator.alloc(u8, 100);
@@ -1380,14 +1381,14 @@ test "Perf vs GPA" {
     }
 
     {
-        var t = ScopeTimer.start("m6 MEDIUM alloc 10k", getScopeTimerID());
+        var t = ScopeTimer.start("m6 MEDIUM alloc 10k", getScopeTimerID(0));
         defer t.stop();
         for (0..10_000) |i| {
             allocations[i] = try allocator.alloc(u8, 2048);
         }
     }
     {
-        var t = ScopeTimer.start("m6 MEDIUM free 10k", getScopeTimerID());
+        var t = ScopeTimer.start("m6 MEDIUM free 10k", getScopeTimerID(0));
         defer t.stop();
         for (0..10_000) |i| {
             allocator.free(allocations[i]);
@@ -1395,7 +1396,7 @@ test "Perf vs GPA" {
     }
 
     for (0..1_000) |i| {
-        var t = ScopeTimer.start("m6 LARGE alloc/free x5", getScopeTimerID());
+        var t = ScopeTimer.start("m6 LARGE alloc/free x5", getScopeTimerID(0));
         defer t.stop();
         _ = i;
         var testalloc = try allocator.alloc(u8, LARGE_BLOCK_SIZES[0]);
@@ -1413,14 +1414,14 @@ test "Perf vs GPA" {
     }
 
     {
-        var t = ScopeTimer.start("m6 LARGE alloc 1k", getScopeTimerID());
+        var t = ScopeTimer.start("m6 LARGE alloc 1k", getScopeTimerID(0));
         defer t.stop();
         for (0..1_000) |i| {
             allocations[i] = try allocator.alloc(u8, LARGE_BLOCK_SIZES[1]);
         }
     }
     {
-        var t = ScopeTimer.start("m6 LARGE free 1k", getScopeTimerID());
+        var t = ScopeTimer.start("m6 LARGE free 1k", getScopeTimerID(0));
         defer t.stop();
         for (0..1_000) |i| {
             allocator.free(allocations[i]);
@@ -1438,7 +1439,7 @@ test "Perf vs GPA" {
 
     for (0..100_000) |i| {
         _ = i;
-        var t = ScopeTimer.start("gpa SMALL alloc/free x5", getScopeTimerID()); defer t.stop();
+        var t = ScopeTimer.start("gpa SMALL alloc/free x5", getScopeTimerID(0)); defer t.stop();
         var testalloc = try gpa_allocator.alloc(u8, 4);
         gpa_allocator.free(testalloc);
         testalloc = try gpa_allocator.alloc(u8, 8);
@@ -1452,20 +1453,20 @@ test "Perf vs GPA" {
     }
 
     {
-        var t = ScopeTimer.start("gpa SMALL alloc 100k", getScopeTimerID()); defer t.stop();
+        var t = ScopeTimer.start("gpa SMALL alloc 100k", getScopeTimerID(0)); defer t.stop();
         for (0..100_000) |i| {
             allocations[i] = try gpa_allocator.alloc(u8, 16);
         }
     }
     {
-        var t = ScopeTimer.start("gpa SMALL free 100k", getScopeTimerID()); defer t.stop();
+        var t = ScopeTimer.start("gpa SMALL free 100k", getScopeTimerID(0)); defer t.stop();
         for (0..100_000) |i| {
             gpa_allocator.free(allocations[i]);
         }
     }
     for (0..100_000) |i| {
         _ = i;
-        var t = ScopeTimer.start("gpa MEDIUM alloc/free x5", getScopeTimerID()); defer t.stop();
+        var t = ScopeTimer.start("gpa MEDIUM alloc/free x5", getScopeTimerID(0)); defer t.stop();
         var testalloc = try gpa_allocator.alloc(u8, 100);
         gpa_allocator.free(testalloc);
         testalloc = try gpa_allocator.alloc(u8, 255);
@@ -1481,19 +1482,19 @@ test "Perf vs GPA" {
     }
 
     {
-        var t = ScopeTimer.start("gpa MEDIUM alloc 10k", getScopeTimerID()); defer t.stop();
+        var t = ScopeTimer.start("gpa MEDIUM alloc 10k", getScopeTimerID(0)); defer t.stop();
         for (0..10_000) |i| {
             allocations[i] = try gpa_allocator.alloc(u8, 2048);
         }
     }
     {
-        var t = ScopeTimer.start("gpa MEDIUM free 10k", getScopeTimerID()); defer t.stop();
+        var t = ScopeTimer.start("gpa MEDIUM free 10k", getScopeTimerID(0)); defer t.stop();
         for (0..10_000) |i| {
             gpa_allocator.free(allocations[i]);
         }
     }
 
-    benchmark.printAllScopeTimers();
+    time.printAllScopeTimers();
 }
 
 test "Medium Alloc" {

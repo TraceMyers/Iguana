@@ -1,19 +1,19 @@
 const std = @import("std");
 const imagef = @import("image.zig");
-const Image = imagef.Image;
-const memory = @import("../memory.zig");
+const string = @import("../utils/string.zig");
+const readerf = @import("reader.zig");
+const types = @import("types.zig");
+const config = @import("config.zig");
+
+const LocalBuffer = @import("../utils/localbuffer.zig").LocalBuffer;
+const Image = types.Image;
 const ImageError = imagef.ImageError;
 const print = std.debug.print;
-const string = @import("../string.zig");
-const LocalBuffer = @import("../array.zig").LocalBuffer;
-const ARGB64 = imagef.ARGB64;
+const ARGB64 = types.ARGB64;
 const ImageAlpha = imagef.ImageAlpha;
-const graphics = @import("../graphics.zig");
-const readerf = @import("reader.zig");
 const BitmapColorMaskSet = readerf.InlinePixelReader;
 const TgaReadInfo = readerf.TgaReadInfo;
 const TgaRLEReader = readerf.TgaRLEReader;
-const iVec2 = @import("../math.zig").iVec2;
 
 // TODO: test images for color correction table
 
@@ -24,7 +24,7 @@ const iVec2 = @import("../math.zig").iVec2;
 /// - TGA files are little-endian
 
 pub fn load(
-    file: *std.fs.File, image: *Image, allocator: std.mem.Allocator, options: *const imagef.ImageLoadOptions
+    file: *std.fs.File, image: *Image, allocator: std.mem.Allocator, options: *const types.ImageLoadOptions
 ) !void {
     var info = TgaInfo{};
     var extents = ExtentBuffer.new();
@@ -43,11 +43,11 @@ pub fn load(
 
 fn readFooter(file: *std.fs.File, info: *TgaInfo, extents: *ExtentBuffer) !void {
     const stat = try file.stat();
-    if (stat.size > memory.MAX_SZ) {
-        return ImageError.TooLarge;
+    if (stat.size > config.max_alloc_sz) {
+        return ImageError.AllocTooLarge;
     }
 
-    info.file_sz = @intCast(u32, stat.size);
+    info.file_sz = @intCast(stat.size);
     if (info.file_sz < tga_min_sz) {
         return ImageError.InvalidSizeForFormat;
     }
@@ -56,7 +56,7 @@ fn readFooter(file: *std.fs.File, info: *TgaInfo, extents: *ExtentBuffer) !void 
     try file.seekTo(footer_begin);
     info.footer = try file.reader().readStruct(TgaFooter);
 
-    if (string.same(info.footer.?.signature[0..], tga_signature)) {
+    if (string.same(info.footer.?.signature[0..], imagef.tga_identifier)) {
         info.file_type = TgaFileType.V2;
         extents.append(BlockExtent{ .begin=footer_begin, .end=info.file_sz });
     } else {
@@ -104,6 +104,16 @@ fn readExtensionData(file: *std.fs.File, info: *TgaInfo, allocator: std.mem.Allo
     try validateAndAddExtent(extents, info, extension_area_begin, extension_area_end);
     try readExtensionArea(file, info);
 
+    const alpha_identifier = info.extension_area.?.attributes_type;
+    const colormap_spec = info.header.colormap_spec;
+    const image_spec = info.header.image_spec;
+
+    if (alpha_identifier == 3 and (image_spec.color_depth == 32 or colormap_spec.entry_bit_ct == 32)) {
+        info.alpha = .Normal;
+    } else if (alpha_identifier == 4) {
+        info.alpha = .Premultiplied;
+    }
+
     if (info.extension_area.?.scanline_offset != 0) {
         info.scanline_table = try loadTable(
             file, info, allocator, extents, info.extension_area.?.scanline_offset, u32, info.header.image_spec.image_height
@@ -123,8 +133,10 @@ fn readExtensionArea(file: *std.fs.File, info: *TgaInfo) !void {
     const extbuf: [493]u8 = try file.reader().readBytesNoEof(493);
     info.extension_area.?.author_name = extbuf[0..41].*;
     info.extension_area.?.author_comments = extbuf[41..365].*;
-    const timestamp_slice = @ptrCast([*]const u16, @alignCast(@alignOf(u16), &extbuf[365]))[0..6];
-    info.extension_area.?.timestamp = timestamp_slice.*;
+    const timestamp_ptr: [*]const u16 = @ptrCast(@alignCast(&extbuf[365]));
+    // const timestamp_slice: []const u16 = timestamp_ptr[0..6];
+    @memcpy(info.extension_area.?.timestamp[0..6], timestamp_ptr[0..6]);
+    // info.extension_area.?.timestamp = 
     info.extension_area.?.job_name = extbuf[377..418].*;
     inline for(0..3) |i| {
         info.extension_area.?.job_time[i] = std.mem.readIntLittle(u16, extbuf[418+(i*2)..420+(i*2)]);
@@ -158,7 +170,7 @@ fn loadTable(
     try validateAndAddExtent(extents, info, offset, end);
 
     var table: []TableType = try allocator.alloc(TableType, table_ct);
-    var bytes_ptr = @ptrCast([*]u8, @alignCast(@alignOf(u8), &table[0]));
+    var bytes_ptr: [*]u8 = @ptrCast(@alignCast(&table[0]));
 
     try file.seekTo(offset);
     try file.reader().readNoEof(bytes_ptr[0..sz]);
@@ -270,38 +282,25 @@ fn readColorMapData(info: *TgaInfo, allocator: std.mem.Allocator, buffer: []cons
     if (info.color_map.buffer_sz == 0) {
         return;
     }
-
     const cm_spec = info.header.colormap_spec;
-    info.color_map.table = try allocator.alloc(imagef.RGBA32, cm_spec.len);
-
-    var alpha_present: u8 = 0;
-    if (info.file_type == .V2) {
-        const alpha_identifier = info.extension_area.?.attributes_type;
-        if (alpha_identifier == 3) {
-            info.alpha = .Normal;
-            alpha_present = 1;
-        } else if (alpha_identifier == 4) {
-            info.alpha = .Premultiplied;
-            alpha_present = 1;
-        }
-    }
+    info.color_map.table = try allocator.alloc(types.RGBA32, cm_spec.len);
 
     var i: usize = 0;
     var offset: usize = 0;
     while (offset < info.color_map.buffer_sz) {
-        var entry: *imagef.RGBA32 = &info.color_map.table.?[i];
+        var entry: *types.RGBA32 = &info.color_map.table.?[i];
         switch (cm_spec.entry_bit_ct) {
             15 => {
                 const color: u16 = std.mem.readIntSliceLittle(u16, buffer[offset..offset+2]);
-                entry.r = @intCast(u8, (color & 0x7c00) >> 7);
-                entry.g = @intCast(u8, (color & 0x03e0) >> 3);
-                entry.b = @intCast(u8, (color & 0x001f) << 3);
+                entry.r = @intCast((color & 0x7c00) >> 7);
+                entry.g = @intCast((color & 0x03e0) >> 3);
+                entry.b = @intCast((color & 0x001f) << 3);
                 entry.a = 255;
             }, 16 => {
                 const color: u16 = std.mem.readIntSliceLittle(u16, buffer[offset..offset+2]);
-                entry.r = @intCast(u8, (color & 0xf800) >> 8);
-                entry.g = @intCast(u8, (color & 0x07e0) >> 3);
-                entry.b = @intCast(u8, (color & 0x001f) << 3);
+                entry.r = @intCast((color & 0xf800) >> 8);
+                entry.g = @intCast((color & 0x07e0) >> 3);
+                entry.b = @intCast((color & 0x001f) << 3);
                 entry.a = 255;
             }, 24 => {
                 entry.b = buffer[offset];
@@ -321,32 +320,32 @@ fn readColorMapData(info: *TgaInfo, allocator: std.mem.Allocator, buffer: []cons
 }
 
 fn getImageTags(
-    info: *const TgaInfo, options: *const imagef.ImageLoadOptions
-) !imagef.PixelTagPair {
-    var tag_pair = imagef.PixelTagPair{};
+    info: *const TgaInfo, options: *const types.ImageLoadOptions
+) !types.PixelTagPair {
+    var tag_pair = types.PixelTagPair{};
     const color_depth = info.header.image_spec.color_depth;
     const image_type = info.header.info.image_type;
 
     switch (image_type) {
         .TrueColor, .RleTrueColor => {
             tag_pair.in_tag = switch(color_depth) {
-                15 => imagef.PixelTag.U16_RGB15, 
-                16 => imagef.PixelTag.U16_RGB,
-                24 => imagef.PixelTag.U24_RGB,
-                32 => if (info.alpha == .Normal) imagef.PixelTag.U32_RGBA else imagef.PixelTag.U32_RGB,
+                15 => types.PixelTag.U16_RGB15, 
+                16 => types.PixelTag.U16_RGB,
+                24 => types.PixelTag.U24_RGB,
+                32 => if (info.alpha == .Normal) types.PixelTag.U32_RGBA else types.PixelTag.U32_RGB,
                 else => return ImageError.TgaNonStandardColorDepthUnsupported,
             };
         },
         .Greyscale, .RleGreyscale => {
             tag_pair.in_tag = switch(color_depth) {
-                8 => imagef.PixelTag.U8_R,
-                15, 16 => imagef.PixelTag.U16_R,
+                8 => types.PixelTag.U8_R,
+                15, 16 => types.PixelTag.U16_R,
                 else => return ImageError.TgaNonStandardColorDepthUnsupported,
             };
         },
         .ColorMap, .RleColorMap => {
             tag_pair.in_tag = switch(color_depth) {
-                8 => imagef.PixelTag.RGBA32,
+                8 => types.PixelTag.RGBA32,
                 else => return ImageError.TgaColorTableImageNot8BitColorDepth,
             };
         },
@@ -362,13 +361,13 @@ fn createImage(
     image: *Image, 
     allocator: std.mem.Allocator, 
     buffer: []const u8,
-    options: *const imagef.ImageLoadOptions,
+    options: *const types.ImageLoadOptions,
 ) !void {
     const image_spec = info.header.image_spec;
-    const pixel_ct: usize = @intCast(u32, image_spec.image_width) * @intCast(u32, image_spec.image_height);
-    const image_sz = pixel_ct * (image_spec.color_depth >> 3);
+    const pixel_ct: usize = @as(u32, @intCast(image_spec.image_width)) * @as(u32, @intCast(image_spec.image_height));
+    const file_image_sz = pixel_ct * (image_spec.color_depth >> 3);
     const image_type: TgaImageType = info.header.info.image_type;
-    if (image_sz > buffer.len 
+    if (file_image_sz > buffer.len 
         and image_type != .RleColorMap 
         and image_type != .RleTrueColor 
         and image_type != .RleGreyscale
@@ -376,11 +375,18 @@ fn createImage(
         return ImageError.UnexpectedEndOfImageBuffer;
     }
 
-    const format_tags: imagef.PixelTagPair = try getImageTags(info, options);
-    try image.init(allocator, format_tags.out_tag, image_spec.image_width, image_spec.image_height);
+    const format_tags: types.PixelTagPair = try getImageTags(info, options);
+    const image_sz: usize = @as(usize, @intCast(image_spec.image_width)) 
+        * @as(usize, @intCast(image_spec.image_height))
+        * format_tags.out_tag.size();
 
-    const bufptr = @ptrCast([*]const u8, &buffer[0]);
+    if (image_sz > config.max_alloc_sz) {
+        return ImageError.AllocTooLarge;
+    }
 
+    try image.init(allocator, format_tags.out_tag, image_spec.image_width, image_spec.image_height, info.alpha);
+
+    const bufptr = @as([*]const u8, @ptrCast(&buffer[0]));
     switch (info.header.info.image_type) {
         .TrueColor, .Greyscale => switch(image_spec.color_depth) {
             inline 8, 15, 16, 24, 32 => |depth| {
@@ -444,7 +450,7 @@ fn extentOverlap(extents: *const ExtentBuffer, begin: u32, end: u32) bool {
 
 fn readInlinePixelImage(
     comptime PixelIntType: type, 
-    format_pair: imagef.PixelTagPair, 
+    format_pair: types.PixelTagPair, 
     info: *const TgaInfo, 
     image: *Image, 
     buffer: [*]const u8, 
@@ -462,8 +468,8 @@ fn readInlinePixelImage(
 
 fn readInlinePixelImageImpl(
     comptime PixelIntType: type, 
-    comptime in_tag: imagef.PixelTag,
-    comptime out_tag: imagef.PixelTag,
+    comptime in_tag: types.PixelTag,
+    comptime out_tag: types.PixelTag,
     info: *const TgaInfo, 
     image: *Image, 
     buffer: [*]const u8
@@ -478,14 +484,14 @@ fn readInlinePixelImageImpl(
 
     while (read_info.read_start < read_info.image_sz) {
         const read_end: i32 = read_info.read_start + read_info.read_row_step;
-        const write_end: i32 = read_info.write_start + @intCast(i32, image.width);
+        const write_end: i32 = read_info.write_start + @as(i32, @intCast(image.width));
 
         if (write_end < 0 or write_end > image_pixels.len or read_end < 0 or read_end > read_info.image_sz) {
             return ImageError.UnexpectedEndOfImageBuffer;
         }
 
-        var file_row: [*]const u8 = @ptrCast([*]const u8, &buffer[@intCast(usize, read_info.read_start)]);
-        var image_row = image_pixels[@intCast(usize, read_info.write_start)..@intCast(usize, write_end)];
+        var file_row: [*]const u8 = @ptrCast(&buffer[@intCast(read_info.read_start)]);
+        var image_row = image_pixels[@intCast(read_info.write_start)..@intCast(write_end)];
 
         transfer.transferRowFromBytes(file_row, image_row);
 
@@ -496,22 +502,22 @@ fn readInlinePixelImageImpl(
 
 fn readColorMapImage(
     comptime IndexIntType: type, 
-    format_pair: imagef.PixelTagPair, 
+    format_pair: types.PixelTagPair, 
     info: *const TgaInfo, 
     image: *Image, 
     buffer: [*]const u8
 ) !void {
     switch(format_pair.out_tag) {
         inline .RGBA32, .RGB16, .R8, .R16 => |out_tag| {
-            try readColorMapImageImpl(IndexIntType, imagef.PixelTag.RGBA32, out_tag, info, image, buffer);
+            try readColorMapImageImpl(IndexIntType, types.PixelTag.RGBA32, out_tag, info, image, buffer);
         }, else => unreachable,
     }
 }
 
 fn readColorMapImageImpl(
     comptime IndexIntType: type,
-    comptime in_tag: imagef.PixelTag,
-    comptime out_tag: imagef.PixelTag,
+    comptime in_tag: types.PixelTag,
+    comptime out_tag: types.PixelTag,
     info: *const TgaInfo, 
     image: *Image, 
     buffer: [*]const u8, 
@@ -525,17 +531,17 @@ fn readColorMapImageImpl(
 
     while (read_info.read_start < read_info.image_sz) {
         const read_end: i32 = read_info.read_start + read_info.read_row_step;
-        const write_end: i32 = read_info.write_start + @intCast(i32, image.width);
+        const write_end: i32 = read_info.write_start + @as(i32, @intCast(image.width));
 
         if (write_end < 0 or write_end > image_pixels.len or read_end < 0 or read_end > read_info.image_sz) {
             return ImageError.UnexpectedEndOfImageBuffer;
         }
 
-        var index_row = buffer[@intCast(usize, read_info.read_start)..@intCast(usize, read_end)];
-        var image_row = image_pixels[@intCast(usize, read_info.write_start)..@intCast(usize, write_end)];
+        var index_row = buffer[@intCast(read_info.read_start)..@intCast(read_end)];
+        var image_row = image_pixels[@intCast(read_info.write_start)..@intCast(write_end)];
 
         try transfer.transferColorTableImageRow(
-            IndexIntType, index_row, info.color_map.table.?, image_row, @intCast(u32, read_info.read_row_step)
+            IndexIntType, index_row, info.color_map.table.?, image_row, @intCast(read_info.read_row_step)
         );
 
         read_info.read_start += read_info.read_row_step;
@@ -546,7 +552,7 @@ fn readColorMapImageImpl(
 fn readRunLengthEncodedImage(
     comptime InlineIntType: type, 
     comptime color_table_img: bool, 
-    format_pair: imagef.PixelTagPair, 
+    format_pair: types.PixelTagPair, 
     info: *const TgaInfo,
     image: *Image,
     buffer: [*]const u8,
@@ -567,8 +573,8 @@ fn readRunLengthEncodedImage(
 fn readRunLengthEncodedImageImpl(
     comptime InlineIntType: type, 
     comptime color_table_img: bool,
-    comptime in_tag: imagef.PixelTag,
-    comptime out_tag: imagef.PixelTag,
+    comptime in_tag: types.PixelTag,
+    comptime out_tag: types.PixelTag,
     info: *const TgaInfo, 
     image: *Image, 
     buffer: [*]const u8, 
@@ -577,7 +583,7 @@ fn readRunLengthEncodedImageImpl(
 
     var i: usize = 0;
     const iter_max: usize = image.width * image.height;
-    const pixel_buf = buffer[0..@intCast(usize, reader.read_info.image_sz)];
+    const pixel_buf = buffer[0..@intCast(reader.read_info.image_sz)];
 
     while (i < iter_max) : (i += 1) {
         const action = try reader.readAction(image, info, pixel_buf);
@@ -647,7 +653,7 @@ const ExtensionArea = extern struct {
     attributes_type: u8 = undefined,
 };
 
-const TgaFooter = extern struct {
+pub const TgaFooter = extern struct {
     extension_area_offset: u32,
     developer_directory_offset: u32,
     signature: [16]u8
@@ -656,7 +662,7 @@ const TgaFooter = extern struct {
 const TgaColorMap = struct {
     buffer_sz: u32 = 0,
     step_sz: u32 = 0,
-    table: ?[]imagef.RGBA32 = null,
+    table: ?[]types.RGBA32 = null,
 };
 
 pub const TgaInfo = struct {
@@ -670,7 +676,7 @@ pub const TgaInfo = struct {
     postage_stamp_table: ?[]u8 = null,
     color_correction_table: ?[]ARGB64 = null,
     color_map: TgaColorMap = TgaColorMap{},
-    alpha: imagef.ImageAlpha = imagef.ImageAlpha.None,
+    alpha: ImageAlpha = .None,
 };
 
 const BlockExtent = struct {
@@ -688,7 +694,6 @@ const ExtentBuffer = LocalBuffer(BlockExtent, 10);
 const tga_header_sz = 18;
 const tga_image_spec_offset = 8;
 const tga_min_sz = @sizeOf(TgaHeader);
-const footer_end_offset = @sizeOf(TgaFooter) + 2;
-const tga_signature = "TRUEVISION-XFILE";
+pub const footer_end_offset = @sizeOf(TgaFooter) + 2;
 const extension_area_file_sz = 495;
 const color_correction_table_sz = @sizeOf(ARGB64) * 256;

@@ -1,11 +1,10 @@
 const std = @import("std");
-const string = @import("../string.zig");
-const memory = @import("../memory.zig");
+const string = @import("../utils/string.zig");
 const imagef = @import("image.zig");
-const bench = @import("../benchmark.zig");
-const png = @import("png.zig");
-const math = @import("../math.zig");
+const time = @import("../utils/time.zig");
 const readerf = @import("reader.zig");
+const types = @import("types.zig");
+const config = @import("config.zig");
 
 const LocalStringBuffer = string.LocalStringBuffer;
 const print = std.debug.print;
@@ -42,30 +41,14 @@ const ColorLayout = readerf.ColorLayout;
 // --------------------------------------------------------------------------------------------------------------- load!
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub fn load(file: *std.fs.File, image: *Image, allocator: std.mem.Allocator, options: *const imagef.ImageLoadOptions) !void {
-    var externally_allocated: bool = undefined;
-    var buffer: []u8 = try loadFileAndCoreHeaders(file, allocator, bmp_min_sz);
-    defer if (!externally_allocated) allocator.free(buffer);
+pub fn load(
+    file: *std.fs.File, image: *Image, allocator: std.mem.Allocator, options: *const types.ImageLoadOptions
+) !void {
+    var buffer: []align(4) u8 = try loadFileAndCoreHeaders(file, allocator, bmp_min_sz);
+    defer allocator.free(buffer);
 
     const format: imagef.ImageFormat = try validateIdentity(buffer);
-    if (format != .Bmp) {
-        if (options.format_comitted) {
-            return ImageError.UnableToVerifyFileImageFormat;
-        }
-        switch (format) {
-            .Tga => {
-
-            },
-            .Jpg => {
-                return ImageError.FormatUnsupported;
-            },
-            .Png => {
-                try redirectToPng(file, image, allocator, options);
-                return;
-            },
-            else => unreachable,
-        }
-    }
+    _ = format;
 
     var info = BitmapInfo{};
     if (!readInitial(buffer, &info)) {
@@ -97,16 +80,14 @@ pub fn load(file: *std.fs.File, image: *Image, allocator: std.mem.Allocator, opt
     try createImage(buffer, image, &info, &color_table, allocator, options);
 }
 
-fn redirectToPng(
-    file: *std.fs.File, 
-    image: *Image, 
-    allocator: std.mem.Allocator, 
-    options: *const imagef.ImageLoadOptions
-) !void {
-    var retry_options = options.*;
-    retry_options.format_comitted = true;
-    try file.seekTo(0);
-    try png.load(file, image, allocator, &retry_options);
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// --------------------------------------------------------------------------------------------------------------- save!
+// /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub fn save(file: *std.fs.File, image: *const Image, options: *const imagef.ImageSaveOptions) !void {
+    _ = file;
+    _ = image; 
+    _ = options;
 }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -117,16 +98,16 @@ fn loadFileAndCoreHeaders(
     file: *std.fs.File, 
     allocator: std.mem.Allocator, 
     min_sz: usize, 
-) ![]u8 {
+) ![]align(4) u8 {
     const stat = try file.stat();
-    // if (stat.size + 4 > memory.MAX_SZ) {
-    //     return ImageError.TooLarge;
-    // }
+    if (stat.size + 4 > config.max_alloc_sz) {
+        return ImageError.AllocTooLarge;
+    }
     if (stat.size < min_sz) {
         return ImageError.InvalidSizeForFormat;
     }
 
-    var buffer: []u8 = try allocator.alignedAlloc(u8, 4, stat.size + 4);
+    var buffer: []align(4) u8 = try allocator.alignedAlloc(u8, 4, stat.size + 4);
 
     for (0..bmp_file_header_sz + bmp_info_header_sz_core) |i| {
         buffer[i] = try file.reader().readByte();
@@ -137,7 +118,7 @@ fn loadFileAndCoreHeaders(
 
 fn loadRemainder(file: *std.fs.File, buffer: []u8, info: *BitmapInfo) !void {
     const cur_offset = bmp_file_header_sz + bmp_info_header_sz_core;
-    if (info.data_offset > bmp_file_header_sz + bmp_info_header_sz_v5 + @sizeOf(imagef.RGBA32) * 256 + 4 
+    if (info.data_offset > bmp_file_header_sz + bmp_info_header_sz_v5 + @sizeOf(types.RGBA32) * 256 + 4 
         or info.data_offset <= cur_offset
     ) {
         return ImageError.BmpInvalidBytesInInfoHeader;
@@ -149,7 +130,7 @@ fn loadRemainder(file: *std.fs.File, buffer: []u8, info: *BitmapInfo) !void {
 
     // aligning pixel data to a 4 byte boundary (requirement)
     const offset_mod_4 = info.data_offset % 4;
-    const offset_mod_4_neq_0 = @intCast(u32, @boolToInt(offset_mod_4 != 0));
+    const offset_mod_4_neq_0: u32 = @intFromBool(offset_mod_4 != 0);
     info.data_offset = info.data_offset + offset_mod_4_neq_0 * (4 - offset_mod_4);
 
     var data_buf: []u8 = buffer[info.data_offset..];
@@ -192,18 +173,18 @@ fn validateIdentity(buffer: []const u8) !imagef.ImageFormat {
 
 fn readCoreInfo(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !usize {
     info.header_type = BitmapHeaderType.Core;
-    info.width = @intCast(i32, std.mem.readIntNative(i16, buffer[18..20]));
-    info.height = @intCast(i32, std.mem.readIntNative(i16, buffer[20..22]));
-    info.color_depth = @intCast(u32, std.mem.readIntNative(u16, buffer[24..26]));
-    const data_size_signed = @intCast(i32, info.file_sz) - @intCast(i32, info.data_offset);
+    info.width = @intCast(std.mem.readIntNative(i16, buffer[18..20]));
+    info.height = @intCast(std.mem.readIntNative(i16, buffer[20..22]));
+    info.color_depth = @intCast(std.mem.readIntNative(u16, buffer[24..26]));
+    const data_size_signed = @as(i32, @intCast(info.file_sz)) - @as(i32, @intCast(info.data_offset));
     if (data_size_signed < 4) {
         return ImageError.BmpInvalidBytesInInfoHeader;
     }
-    info.data_size = @intCast(u32, data_size_signed);
+    info.data_size = @intCast(data_size_signed);
     info.compression = BitmapCompression.RGB;
     const table_offset = bmp_file_header_sz + bmp_info_header_sz_core;
-    try readColorTable(buffer[table_offset..], info, color_table, imagef.RGB24);
-    return table_offset + color_table.palette.len() * @sizeOf(imagef.RGB24);
+    try readColorTable(buffer[table_offset..], info, color_table, types.RGB24);
+    return table_offset + color_table.palette.len() * @sizeOf(types.RGB24);
 }
 
 fn readV1Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !usize {
@@ -218,8 +199,8 @@ fn readV1Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !
         mask_offset = 16;
     }
     const table_offset = bmp_file_header_sz + bmp_info_header_sz_v1 + mask_offset;
-    try readColorTable(buffer[table_offset..], info, color_table, imagef.RGB32);
-    return table_offset + color_table.palette.len() * @sizeOf(imagef.RGB32);
+    try readColorTable(buffer[table_offset..], info, color_table, types.RGB32);
+    return table_offset + color_table.palette.len() * @sizeOf(types.RGB32);
 }
 
 fn readV4Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !usize {
@@ -227,8 +208,8 @@ fn readV4Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !
     try readV1HeaderPart(buffer, info);
     try readV4HeaderPart(buffer, info);
     const table_offset = bmp_file_header_sz + bmp_info_header_sz_v4;
-    try readColorTable(buffer[table_offset..], info, color_table, imagef.RGB32);
-    return table_offset + color_table.palette.len() * @sizeOf(imagef.RGB32);
+    try readColorTable(buffer[table_offset..], info, color_table, types.RGB32);
+    return table_offset + color_table.palette.len() * @sizeOf(types.RGB32);
 }
 
 fn readV5Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !usize {
@@ -237,19 +218,19 @@ fn readV5Info(buffer: []u8, info: *BitmapInfo, color_table: *BitmapColorTable) !
     try readV4HeaderPart(buffer, info);
     readV5HeaderPart(buffer, info);
     const table_offset = bmp_file_header_sz + bmp_info_header_sz_v5;
-    try readColorTable(buffer[table_offset..], info, color_table, imagef.RGB32);
-    return table_offset + color_table.palette.len() * @sizeOf(imagef.RGB32);
+    try readColorTable(buffer[table_offset..], info, color_table, types.RGB32);
+    return table_offset + color_table.palette.len() * @sizeOf(types.RGB32);
 }
 
 fn readV1HeaderPart(buffer: []u8, info: *BitmapInfo) !void {
     info.width = std.mem.readIntNative(i32, buffer[18..22]);
     info.height = std.mem.readIntNative(i32, buffer[22..26]);
-    info.color_depth = @intCast(u32, std.mem.readIntNative(u16, buffer[28..30]));
+    info.color_depth = @intCast(std.mem.readIntNative(u16, buffer[28..30]));
     const compression_int = std.mem.readIntNative(u32, buffer[30..34]);
     if (compression_int > 9) {
         return ImageError.BmpInvalidBytesInInfoHeader;
     }
-    info.compression = @intToEnum(BitmapCompression, compression_int);
+    info.compression = @enumFromInt(compression_int);
     info.data_size = std.mem.readIntNative(u32, buffer[34..38]);
     info.color_ct = std.mem.readIntNative(u32, buffer[46..50]);
 }
@@ -265,11 +246,11 @@ fn readV4HeaderPart(buffer: []u8, info: *BitmapInfo) !void {
     ) {
         return ImageError.BmpInvalidBytesInInfoHeader;
     }
-    info.color_space = @intToEnum(BitmapColorSpace, color_space_int);
+    info.color_space = @enumFromInt(color_space_int);
     if (info.color_space != BitmapColorSpace.CalibratedRGB) {
         return;
     }
-    var buffer_casted = @ptrCast([*]FxPt2Dot30, @alignCast(@alignOf(FxPt2Dot30), &buffer[72]));
+    var buffer_casted: [*]FxPt2Dot30 = @ptrCast(@alignCast(&buffer[72]));
     @memcpy(info.cs_points.red[0..3], buffer_casted[0..3]);
     @memcpy(info.cs_points.green[0..3], buffer_casted[3..6]);
     @memcpy(info.cs_points.blue[0..3], buffer_casted[6..9]);
@@ -299,7 +280,7 @@ fn readColorTable(
     comptime ColorType: type
 ) !void {
     // TODO: align of RGB24 must be 4, so.. how does this work with cores?
-    var data_casted = @ptrCast([*]const ColorType, @alignCast(@alignOf(ColorType), &buffer[0]));
+    var data_casted: [*]const ColorType = @ptrCast(@alignCast(&buffer[0]));
     var ct_len: u32 = 0;
 
     switch (info.color_depth) {
@@ -308,7 +289,7 @@ fn readColorTable(
             return;
         },
         8, 4, 1 => {
-            const max_color_ct = @as(u32, 1) << @intCast(u5, info.color_depth);
+            const max_color_ct = @as(u32, 1) << @intCast(info.color_depth);
             if (info.color_ct == 0) {
                 ct_len = max_color_ct;
             } else if (info.color_ct >= 2 and info.color_ct <= max_color_ct) {
@@ -333,19 +314,19 @@ fn readColorTable(
             break;
         }
         if (is_greyscale) {
-            try color_table.palette.attachToBuffer(color_table.buffer[0..1024], imagef.PixelTag.R8, ct_len, 1);
-            var ct_buffer = try color_table.palette.getPixels(imagef.PixelTag.R8);
+            try color_table.palette.attachToBuffer(color_table.buffer[0..1024], types.PixelTag.R8, ct_len, 1);
+            var ct_buffer = try color_table.palette.getPixels(types.PixelTag.R8);
             for (0..ct_len) |i| {
                 const buffer_color: *const ColorType = &data_casted[i];
-                const table_color: *imagef.R8 = &ct_buffer[i];
+                const table_color: *types.R8 = &ct_buffer[i];
                 table_color.r = buffer_color.r;
             }
         } else {
-            try color_table.palette.attachToBuffer(color_table.buffer[0..1024], imagef.PixelTag.RGBA32, ct_len, 1);
-            var ct_buffer = try color_table.palette.getPixels(imagef.PixelTag.RGBA32);
+            try color_table.palette.attachToBuffer(color_table.buffer[0..1024], types.PixelTag.RGBA32, ct_len, 1);
+            var ct_buffer = try color_table.palette.getPixels(types.PixelTag.RGBA32);
             for (0..ct_len) |i| {
                 const buffer_color: *const ColorType = &data_casted[i];
-                const table_color: *imagef.RGBA32 = &ct_buffer[i];
+                const table_color: *types.RGBA32 = &ct_buffer[i];
                 table_color.r = buffer_color.b;
                 table_color.g = buffer_color.g;
                 table_color.b = buffer_color.r;
@@ -410,7 +391,7 @@ inline fn bytesPerRow(comptime PixelIntType: type, image_width: u32) u32 {
         },
         else => unreachable,
     }
-    const row_remainder_exists = @intCast(u32, @boolToInt((image_width - byte_ct_floor * colors_per_byte) > 0));
+    const row_remainder_exists: u32 = @intFromBool((image_width - byte_ct_floor * colors_per_byte) > 0);
     return byte_ct_floor + row_remainder_exists;
 }
 
@@ -430,9 +411,9 @@ fn validColorMasks(comptime PixelIntType: type, info: *const BitmapInfo) bool {
 }
 
 fn getImageTags(
-    info: *const BitmapInfo, color_table: *const BitmapColorTable, options: *const imagef.ImageLoadOptions
-) !imagef.PixelTagPair {
-    var tag_pair = imagef.PixelTagPair{};
+    info: *const BitmapInfo, color_table: *const BitmapColorTable, options: *const types.ImageLoadOptions
+) !types.PixelTagPair {
+    var tag_pair = types.PixelTagPair{};
     switch (info.compression) {
         .RGB, .BITFIELDS, .ALPHABITFIELDS => {
             if (info.color_depth <= 8) {
@@ -440,9 +421,9 @@ fn getImageTags(
             } else {
                 const alpha_mask_present = info.alpha_mask > 0 and info.color_depth != 24;
                 tag_pair.in_tag = switch (info.color_depth) {
-                    16 => if (alpha_mask_present) imagef.PixelTag.U16_RGBA else imagef.PixelTag.U16_RGB,
-                    24 => imagef.PixelTag.U24_RGB,
-                    32 => if (alpha_mask_present) imagef.PixelTag.U32_RGBA else imagef.PixelTag.U32_RGB,
+                    16 => if (alpha_mask_present) .U16_RGBA else .U16_RGB,
+                    24 => .U24_RGB,
+                    32 => if (alpha_mask_present) .U32_RGBA else .U32_RGB,
                     else => .RGBA32,
                 };
             }
@@ -465,15 +446,12 @@ fn createImage(
     info: *BitmapInfo, 
     color_table: *const BitmapColorTable, 
     allocator: std.mem.Allocator,
-    options: *const imagef.ImageLoadOptions
+    options: *const types.ImageLoadOptions
 ) !void {
-    image.width = @intCast(u32, try std.math.absInt(info.width));
-    image.height = @intCast(u32, try std.math.absInt(info.height));
+    image.width = @intCast(@abs(info.width));
+    image.height = @intCast(@abs(info.height));
 
-    // const img_sz = @intCast(usize, image.width) * @intCast(usize, image.height) * @sizeOf(imagef.RGBA32);
-    // if (img_sz > memory.MAX_SZ) {
-    //     return ImageError.TooLarge;
-    // }
+    
     // basic check width & height information isn't corrupted
     const remain_sz_div4 = (buffer.len - info.data_offset) >> @as(u5, 2);
     if (image.width > remain_sz_div4 or image.height > remain_sz_div4) {
@@ -488,10 +466,19 @@ fn createImage(
     // get row length in bytes as a multiple of 4 (rows are padded to 4 byte increments)
     const row_length = ((image.width * info.color_depth + 31) & ~@as(u32, 31)) >> 3;
     const pixel_buf = buffer[info.data_offset..buffer.len];
-    info.data_size = @intCast(u32, buffer.len - info.data_offset);
+    info.data_size = @intCast(buffer.len - info.data_offset);
 
     const format_pair = try getImageTags(info, color_table, options);
-    try image.init(allocator, format_pair.out_tag, image.width, image.height);
+
+    const img_sz = @as(usize, @intCast(image.width)) * @as(usize, @intCast(image.height)) * format_pair.out_tag.size();
+    if (img_sz > config.max_alloc_sz) {
+        return ImageError.AllocTooLarge;
+    }
+
+    const alpha: imagef.ImageAlpha = 
+        if (color_table.palette.isEmpty() and info.alpha_mask > 0 and info.color_depth == 32) imagef.ImageAlpha.Normal
+        else .None;
+    try image.init(allocator, format_pair.out_tag, image.width, image.height, alpha);
 
     try switch (info.compression) {
         .RGB => switch (info.color_depth) {
@@ -508,7 +495,7 @@ fn createImage(
         inline .RLE4, .RLE8 => |format| {
             const IntType = if (format == .RLE4) u4 else u8;
             try transferRunLengthEncodedImage(
-                IntType, format_pair, @ptrCast([*]const u8, &pixel_buf[0]), info, color_table, image
+                IntType, format_pair, @as([*]const u8, @ptrCast(&pixel_buf[0])), info, color_table, image
             );
         },
         .BITFIELDS, .ALPHABITFIELDS => switch (info.color_depth) {
@@ -524,7 +511,7 @@ fn createImage(
 
 fn transferColorTableImage(
     comptime IdxType: type, 
-    format_pair: imagef.PixelTagPair,
+    format_pair: types.PixelTagPair,
     pixel_buf: []const u8, 
     info: *const BitmapInfo, 
     color_table: *const BitmapColorTable, 
@@ -552,8 +539,8 @@ fn transferColorTableImage(
 
 fn transferColorTableImageImpl(
     comptime IndexIntType: type,
-    comptime in_tag: imagef.PixelTag,
-    comptime out_tag: imagef.PixelTag,
+    comptime in_tag: types.PixelTag,
+    comptime out_tag: types.PixelTag,
     pixel_buf: []const u8,
     info: *const BitmapInfo,
     color_table: *const BitmapColorTable,
@@ -573,7 +560,7 @@ fn transferColorTableImageImpl(
 
     var px_row_start: usize = 0;
     for (0..image.height) |i| {
-        const row_start = @intCast(usize, direction_info.begin + direction_info.increment * @intCast(i32, i));
+        const row_start: usize = @intCast(direction_info.begin + direction_info.increment * @as(i32, @intCast(i)));
         const row_end = row_start + image.width;
 
         const index_row: []const u8 = pixel_buf[px_row_start .. px_row_start + row_sz];
@@ -588,7 +575,7 @@ fn transferColorTableImageImpl(
 
 fn transferInlinePixelImage(
     comptime PixelIntType: type, 
-    format_pair: imagef.PixelTagPair,
+    format_pair: types.PixelTagPair,
     pixel_buf: []const u8, 
     info: *const BitmapInfo, 
     image: *Image, 
@@ -621,8 +608,8 @@ fn transferInlinePixelImage(
 }
 
 fn transferInlinePixelImageImpl(
-    comptime in_tag: imagef.PixelTag,
-    comptime out_tag: imagef.PixelTag,
+    comptime in_tag: types.PixelTag,
+    comptime out_tag: types.PixelTag,
     info: *const BitmapInfo,
     pixel_buf: []const u8, 
     image: *Image, 
@@ -639,10 +626,10 @@ fn transferInlinePixelImageImpl(
     const direction_info = BitmapDirectionInfo.new(info, image.width, image.height);
     var px_start: usize = 0;
     for (0..image.height) |i| {
-        const img_start = @intCast(usize, direction_info.begin + direction_info.increment * @intCast(i32, i));
+        const img_start: usize = @intCast(direction_info.begin + direction_info.increment * @as(i32, @intCast(i)));
         const img_end = img_start + image.width;
 
-        var buffer_row: [*]const u8 = @ptrCast([*]const u8, &pixel_buf[px_start]);
+        var buffer_row: [*]const u8 = @ptrCast(&pixel_buf[px_start]);
         var image_row: []ImagePixelType = image_pixels[img_start..img_end];
 
         transfer.transferRowFromBytes(buffer_row, image_row);
@@ -653,7 +640,7 @@ fn transferInlinePixelImageImpl(
 
 fn transferRunLengthEncodedImage(
     comptime IndexIntType: type,
-    format_pair: imagef.PixelTagPair,
+    format_pair: types.PixelTagPair,
     pbuf: [*]const u8,
     info: *const BitmapInfo,
     color_table: *const BitmapColorTable,
@@ -662,7 +649,7 @@ fn transferRunLengthEncodedImage(
     if (color_table.palette.len() < 2) {
         return ImageError.BmpInvalidColorTable;
     }
-    if (info.color_depth != rle_bit_sizes[@enumToInt(info.compression)]) {
+    if (info.color_depth != rle_bit_sizes[@intFromEnum(info.compression)]) {
         return ImageError.BmpInvalidCompression;
     }
     switch (format_pair.in_tag) {
@@ -685,8 +672,8 @@ fn transferRunLengthEncodedImage(
 // // a number n (repeat ct) and pixel p in contiguous bytes. 
 fn transferRunLengthEncodedImageImpl(
     comptime IndexIntType: type,
-    comptime in_tag: imagef.PixelTag,
-    comptime out_tag: imagef.PixelTag,
+    comptime in_tag: types.PixelTag,
+    comptime out_tag: types.PixelTag,
     pbuf: [*]const u8,
     info: *const BitmapInfo,
     color_table: *const BitmapColorTable,
@@ -818,16 +805,16 @@ const BitmapDirectionInfo = struct {
     // bitmaps are stored bottom to top, meaning the top-left corner of the image is idx 0 of the last row, unless the
     // height param is negative. we always read top to bottom and write up or down depending.
     fn new(info: *const BitmapInfo, width: u32, height: u32) BitmapDirectionInfo {
-        const write_direction = @intToEnum(BitmapReadDirection, @intCast(u8, @boolToInt(info.height < 0)));
+        const write_direction: BitmapReadDirection = @enumFromInt(@as(u8, @intFromBool(info.height < 0)));
         if (write_direction == .BottomUp) {
             return BitmapDirectionInfo{
-                .begin = (@intCast(i32, height) - 1) * @intCast(i32, width),
-                .increment = -@intCast(i32, width),
+                .begin = (@as(i32, @intCast(height)) - 1) * @as(i32, @intCast(width)),
+                .increment = -@as(i32, @intCast(width)),
             };
         } else {
             return BitmapDirectionInfo{
                 .begin = 0,
-                .increment = @intCast(i32, width),
+                .increment = @as(i32, @intCast(width)),
             };
         }
     }

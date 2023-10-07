@@ -1,3 +1,19 @@
+const std = @import("std");
+const time = @import("utils/time.zig");
+const flt = @import("float.zig");
+
+const math = std.math;
+const expect = std.testing.expect;
+const print = std.debug.print;
+const ScopeTimer = time.ScopeTimer;
+const getScopeTimerID = time.getScopeTimerID;
+const Prng = std.rand.DefaultPrng;
+const epsilonLarge = flt.epsilonLarge;
+const epsilonMedium = flt.epsilonMedium;
+const epsilonSmall = flt.epsilonSmall;
+const epsilonAuto = flt.epsilonAuto;
+
+
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ------------------------------------------------------------------------------------------------------------- General
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -4082,20 +4098,6 @@ const NDMathError = error{
 // -------------------------------------------------------------------------------------------------------------- import
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const std = @import("std");
-const math = std.math;
-const expect = std.testing.expect;
-const print = std.debug.print;
-const benchmark = @import("benchmark.zig");
-const ScopeTimer = benchmark.ScopeTimer;
-const getScopeTimerID = benchmark.getScopeTimerID;
-const Prng = std.rand.DefaultPrng;
-const flt = @import("float.zig");
-const epsilonLarge = flt.epsilonLarge;
-const epsilonMedium = flt.epsilonMedium;
-const epsilonSmall = flt.epsilonSmall;
-const epsilonAuto = flt.epsilonAuto;
-
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ---------------------------------------------------------------------------------------------------------------- test
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -4655,7 +4657,7 @@ test "Multi Vec" {
     print("{any}\n", .{cross_results_single[0]});
     
 
-    benchmark.printAllScopeTimers();
+    time.printAllScopeTimers();
 }
 
 pub fn testQuaternion() void {
